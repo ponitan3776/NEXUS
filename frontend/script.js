@@ -1410,7 +1410,7 @@ const PATTERN_LABELS = {
       btns.forEach(b=>b.disabled = false);
     }
   }
-  const GACHA_COST_CLIENT = 300; // サーバー側のGACHA_COSTと合わせておくための表示用フォールバック
+  const GACHA_COST_CLIENT = 2000; // サーバー側のGACHA_COSTと合わせておくための表示用フォールバック
 
   // ===================== 🎫 バトルパス(経験値でレベルアップ、報酬はループ、レベル上限なし) =====================
   async function fetchBattlePassState(){
@@ -4403,12 +4403,59 @@ restartBtn.addEventListener('click', ()=>{
   const TETRIS_LINE_LABELS = { 1:'シングル!', 2:'ダブル!', 3:'トリプル!', 4:'テトリス!!' };
   const TETRIS_LINE_POINTS = { 1:100, 2:300, 3:500, 4:800 };
 
+  // <SRS-PURE-BEGIN>
+  // ===== SRS(スーパーローテーションシステム)のウォールキック表(時計回り) =====
+  // [x(右が+), y(上が+)] のオフセット。盤面は行が下向きなので、使うときに row -= y する。
+  // 回転状態 rot: 0=スポーン, 1=右(R), 2=反転, 3=左(L)。配列のindexは「今の回転状態からの時計回り」。
+  const SRS_KICKS_JLSTZ = [
+    [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],   // 0→R
+    [[0,0],[1,0],[1,-1],[0,2],[1,2]],       // R→2
+    [[0,0],[1,0],[1,1],[0,-2],[1,-2]],      // 2→L
+    [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]]     // L→0
+  ];
+  const SRS_KICKS_I = [
+    [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+    [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+    [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+    [[0,0],[1,0],[-2,0],[1,-2],[-2,1]]
+  ];
+  // ===== Tスピン判定(3コーナールール) =====
+  // Tの中心の斜め4マス(壁・床も「埋まっている」扱い)のうち3つ以上が埋まっていて、
+  // 最後の操作が回転ならTスピン。向いている側の2マス(front)が両方埋まっていれば本物、
+  // frontが片方だけならミニ。ただし最後の回転が5番目のキック(1×2マス動く)ならミニでも本物扱い。
+  // 座標は T の3×3の箱の中の [row, col]
+  const T_FRONT_CORNERS = [ [[0,0],[0,2]], [[0,2],[2,2]], [[2,0],[2,2]], [[0,0],[2,0]] ];
+  const T_BACK_CORNERS  = [ [[2,0],[2,2]], [[0,0],[2,0]], [[0,0],[0,2]], [[0,2],[2,2]] ];
+  function detectTSpin(isOccupied, row, col, rot, lastRotated, lastKickIndex){
+    if(!lastRotated) return null;
+    const count = (list) => list.reduce((n,[dr,dc]) => n + (isOccupied(row+dr, col+dc) ? 1 : 0), 0);
+    const front = count(T_FRONT_CORNERS[rot]);
+    const back = count(T_BACK_CORNERS[rot]);
+    if(front + back < 3) return null;
+    if(front === 2 || lastKickIndex === 4) return 'tspin';
+    return 'mini';
+  }
+  // ===== 得点(すべて × レベル) =====
+  const TSPIN_POINTS = {
+    tspin: { 0:400, 1:800, 2:1200, 3:1600 },
+    mini:  { 0:100, 1:200, 2:400,  3:1600 }
+  };
+  const PERFECT_CLEAR_POINTS = { 1:800, 2:1200, 3:1800, 4:2000 };
+  const PERFECT_CLEAR_B2B_TETRIS = 3200;
+  function perfectClearBonus(lines, b2bTetris, level){
+    if(lines === 4 && b2bTetris) return PERFECT_CLEAR_B2B_TETRIS * level;
+    return (PERFECT_CLEAR_POINTS[lines] || 0) * level;
+  }
+  // <SRS-PURE-END>
+  const TSPIN_LINE_NAMES = { 1:'シングル', 2:'ダブル', 3:'トリプル' };
+
   let tetrisActive = false, tetrisGameOver = false;
   let tetrisGrid = null, tetrisPiece = null, tetrisNextType = null, tetrisBag = [];
   let tetrisScore = 0, tetrisLevel = 1, tetrisLines = 0, tetrisCombo = 0, tetrisBackToBack = false;
   let tetrisTimer = null, tetrisCellEls = [];
   let tetrisBest = 0;
   let tetrisHoldType = null, tetrisHoldUsed = false;
+  let tetrisLastRotate = false, tetrisLastKick = 0; // Tスピン判定用: 最後の操作が回転か / 何番目のキックか
 
 // ===================== 🤖 AI対戦用の状態 =====================
   let aiGrid = null, aiPiece = null, aiNextType = null, aiBag = [];
@@ -4558,9 +4605,10 @@ restartBtn.addEventListener('click', ()=>{
     tetrisTimer = setInterval(tetrisTick, tetrisDropIntervalMs());
   }
   function tetrisTick(){
-    if(!tetrisActive || tetrisGameOver) return;
+    if(!tetrisActive || tetrisGameOver || !tetrisPiece) return;
     if(!tetrisCollides(tetrisPiece.matrix, tetrisPiece.row+1, tetrisPiece.col)){
       tetrisPiece.row++;
+      tetrisLastRotate = false;
       renderTetris();
     } else {
       tetrisLockPiece();
@@ -4574,7 +4622,8 @@ restartBtn.addEventListener('click', ()=>{
     const matrix = def.matrix.map(row=>row.slice());
     const col = Math.floor((TETRIS_COLS - matrix.length)/2);
     const row = -1;
-    tetrisPiece = { type, matrix, color: def.color, row, col };
+    tetrisPiece = { type, matrix, color: def.color, row, col, rot: 0 };
+    tetrisLastRotate = false;
     if(tetrisCollides(matrix, row, col)){
       tetrisTriggerGameOver();
       return;
@@ -4588,18 +4637,27 @@ restartBtn.addEventListener('click', ()=>{
     const nc = tetrisPiece.col+dx;
     if(!tetrisCollides(tetrisPiece.matrix, tetrisPiece.row, nc)){
       tetrisPiece.col = nc;
+      tetrisLastRotate = false;
       renderTetris();
     }
   }
 
   function tetrisRotate(){
     if(!tetrisActive || tetrisGameOver || !tetrisPiece || tetrisPiece.type==='O') return;
-    const rotated = rotateMatrixCW(tetrisPiece.matrix);
-    const kicks = [0,-1,1,-2,2];
-    for(const k of kicks){
-      if(!tetrisCollides(rotated, tetrisPiece.row, tetrisPiece.col+k)){
-        tetrisPiece.matrix = rotated;
-        tetrisPiece.col += k;
+    const p = tetrisPiece;
+    const rotated = rotateMatrixCW(p.matrix);
+    const table = (p.type === 'I') ? SRS_KICKS_I : SRS_KICKS_JLSTZ;
+    const kicks = table[p.rot];
+    for(let i=0;i<kicks.length;i++){
+      const [dx, dy] = kicks[i];
+      const nr = p.row - dy, nc = p.col + dx;
+      if(!tetrisCollides(rotated, nr, nc)){
+        p.matrix = rotated;
+        p.row = nr;
+        p.col = nc;
+        p.rot = (p.rot + 1) % 4;
+        tetrisLastRotate = true;
+        tetrisLastKick = i;
         renderTetris();
         return;
       }
@@ -4610,6 +4668,7 @@ restartBtn.addEventListener('click', ()=>{
     if(!tetrisActive || tetrisGameOver || !tetrisPiece) return;
     if(!tetrisCollides(tetrisPiece.matrix, tetrisPiece.row+1, tetrisPiece.col)){
       tetrisPiece.row++;
+      tetrisLastRotate = false;
       tetrisScore += 1;
       scoreValEl.textContent = tetrisScore;
       renderTetris();
@@ -4626,6 +4685,7 @@ restartBtn.addEventListener('click', ()=>{
       dist++;
     }
     if(dist>0){
+      tetrisLastRotate = false;
       tetrisScore += dist*2;
       scoreValEl.textContent = tetrisScore;
     }
@@ -4647,7 +4707,8 @@ restartBtn.addEventListener('click', ()=>{
       const matrix = def.matrix.map(row=>row.slice());
       const col = Math.floor((TETRIS_COLS - matrix.length)/2);
       if(tetrisCollides(matrix, -1, col)){ tetrisTriggerGameOver(); return; }
-      tetrisPiece = { type:swapType, matrix, color:def.color, row:-1, col };
+      tetrisPiece = { type:swapType, matrix, color:def.color, row:-1, col, rot:0 };
+      tetrisLastRotate = false;
       renderTetris();
       tetrisStartLoop();
     }
@@ -4689,10 +4750,32 @@ restartBtn.addEventListener('click', ()=>{
     });
   }
 
+  function tetrisRefreshScore(){
+    animateNumberTo(scoreValEl, tetrisScore);
+    tetrisPlayerScoreEl.textContent = tetrisScore;
+    if(tetrisScore > tetrisBest){
+      tetrisBest = tetrisScore;
+      bestScores.tetris = tetrisBest;
+      saveBestScores();
+      animateNumberTo(bestValEl, tetrisBest);
+    }
+  }
+
   function tetrisLockPiece(){
+    if(!tetrisPiece) return; // ★ロック済み(ライン消去アニメ中など)の二重ロックを防ぐ
     tetrisStopLoop();
     tetrisHoldUsed = false; // 新しいピースになったのでホールドをまた使えるようにする
-    const { matrix, row, col, color } = tetrisPiece;
+    const { matrix, row, col, color, type, rot } = tetrisPiece;
+
+    // Tスピン判定(盤面にピースを書き込む前に、斜め4マスの埋まり具合を見る)
+    const spin = (type === 'T')
+      ? detectTSpin((r,c)=>{
+          if(c<0 || c>=TETRIS_COLS || r>=TETRIS_ROWS) return true; // 壁・床は埋まっている扱い
+          if(r<0) return false;
+          return tetrisGrid[r][c] !== -1;
+        }, row, col, rot, tetrisLastRotate, tetrisLastKick)
+      : null;
+
     let offBoard = false;
     for(let r=0;r<matrix.length;r++){
       for(let c=0;c<matrix[r].length;c++){
@@ -4702,6 +4785,10 @@ restartBtn.addEventListener('click', ()=>{
         tetrisGrid[gr][gc] = color;
       }
     }
+    // ★盤面に確定した時点で「操作中のピース」をなくす。
+    //   以前はライン消去アニメ(約0.3秒)の間も操作できてしまい、▼長押しなどで同じピースが何度もロックされ、
+    //   消去・行の削除・ピース生成が重複して、ブロックが一気に消えていた。
+    tetrisPiece = null;
     if(offBoard){ tetrisTriggerGameOver(); return; }
 
     const cleared = [];
@@ -4711,31 +4798,36 @@ restartBtn.addEventListener('click', ()=>{
 
     if(cleared.length>0){
       tetrisCombo++;
-      const isTetris4 = cleared.length===4;
-      let gained = TETRIS_LINE_POINTS[cleared.length] * tetrisLevel;
+      const n = cleared.length;
+      const isTetris4 = n===4;
+      const isDifficult = isTetris4 || !!spin; // テトリス、またはラインを消したTスピンは「難しい消し方」(B2B対象)
+      const linePts = spin ? (TSPIN_POINTS[spin][n] || TSPIN_POINTS.tspin[n]) : TETRIS_LINE_POINTS[n];
+      let gained = linePts * tetrisLevel;
       const comboBonus = tetrisCombo>1 ? Math.round(50 * tetrisCombo * tetrisLevel) : 0;
-      const btbMult = (isTetris4 && tetrisBackToBack) ? 1.5 : 1;
-      tetrisBackToBack = isTetris4;
+      const btbMult = (isDifficult && tetrisBackToBack) ? 1.5 : 1;
+      const b2bTetris = isTetris4 && tetrisBackToBack;
+      tetrisBackToBack = isDifficult;
       gained = Math.round(gained*btbMult) + comboBonus;
+
+      // パーフェクトクリア: 消えるラインを除いて盤面が空なら、ボーナスを上乗せ
+      const perfect = !tetrisGrid.some((rowArr, r)=> !cleared.includes(r) && rowArr.some(v=>v!==-1));
+      if(perfect) gained += perfectClearBonus(n, b2bTetris, tetrisLevel);
+
       tetrisScore += gained;
-      tetrisLines += cleared.length;
+      tetrisLines += n;
       tetrisLevel = Math.floor(tetrisLines/10)+1;
+      tetrisRefreshScore();
 
-      animateNumberTo(scoreValEl, tetrisScore);
-      tetrisPlayerScoreEl.textContent = tetrisScore;
-      if(tetrisScore > tetrisBest){
-        tetrisBest = tetrisScore;
-        bestScores.tetris = tetrisBest;
-        saveBestScores();
-        animateNumberTo(bestValEl, tetrisBest);
-      }
-
-      let msg = TETRIS_LINE_LABELS[cleared.length] || `${cleared.length}ライン!`;
+      let msg = spin
+        ? `${spin==='mini'?'ミニ':''}Tスピン ${TSPIN_LINE_NAMES[n] || n+'ライン'}!`
+        : (TETRIS_LINE_LABELS[n] || `${n}ライン!`);
+      if(btbMult>1) msg += ' B2B!';
       if(tetrisCombo>1) msg += ` ${tetrisCombo}コンボ!`;
+      if(perfect) msg = `✨パーフェクトクリア!! ✨ ${msg}`;
       msg += ` +${gained}`;
-      showTetrisCombo(msg, isTetris4 ? 'mega' : (tetrisCombo>1 ? 'bonus' : ''));
-      playSound('clear', isTetris4 ? 4 : cleared.length);
-      if(tetrisCombo>=3) playSound('coin');
+      showTetrisCombo(msg, (isDifficult || perfect) ? 'mega' : (tetrisCombo>1 ? 'bonus' : ''));
+      playSound('clear', (isDifficult) ? 4 : n);
+      if(tetrisCombo>=3 || perfect) playSound('coin');
 
       tetrisClearRowsAnimated(cleared, ()=>{
         tetrisCollapseRows(cleared);
@@ -4745,7 +4837,16 @@ restartBtn.addEventListener('click', ()=>{
     }
 
     tetrisCombo = 0;
-    playSound('place');
+    if(spin){
+      // ラインを消さないTスピンも得点(ただしB2Bには影響しない)
+      const pts = TSPIN_POINTS[spin][0] * tetrisLevel;
+      tetrisScore += pts;
+      tetrisRefreshScore();
+      showTetrisCombo(`${spin==='mini'?'ミニ':''}Tスピン! +${pts}`, 'bonus');
+      playSound('coin');
+    } else {
+      playSound('place');
+    }
     tetrisSpawnPiece();
   }
 
@@ -5136,6 +5237,7 @@ function tetrisTriggerGameOver(){
       let gained = TETRIS_LINE_POINTS[cleared.length] * aiLevel;
       const comboBonus = aiCombo > 1 ? Math.round(50 * aiCombo * aiLevel) : 0;
       const btbMult = (isTetris4 && aiBackToBack) ? 1.5 : 1;
+      const aiB2bTetris = isTetris4 && aiBackToBack;
       aiBackToBack = isTetris4;
       gained = Math.round(gained * btbMult) + comboBonus;
 
@@ -5143,6 +5245,10 @@ function tetrisTriggerGameOver(){
         aiGrid.splice(r, 1);
         aiGrid.unshift(new Array(TETRIS_COLS).fill(-1));
       });
+      // パーフェクトクリア(プレイヤーと同じ得点)
+      if(aiGrid.every(rowArr => rowArr.every(v => v === -1))){
+        gained += perfectClearBonus(cleared.length, aiB2bTetris, aiLevel);
+      }
       aiLines += cleared.length;
       aiLevel = Math.floor(aiLines/10)+1;
       aiScore += gained;
@@ -5402,7 +5508,10 @@ function enterTetrisMode(){
     ↑ / W：回転<br>
     ↓ / S：ソフトドロップ<br>
     スペース：ハードドロップ<br>
-    Q：ホールド
+    Q：ホールド<br>
+    <b style="margin-top:8px;">✨ ボーナス</b>
+    Tスピン：Tを回転でスキマにはめて消すと高得点<br>
+    パーフェクトクリア：盤面を全部消すと大ボーナス
   `;
   tetrisHelpBtnEl.addEventListener('pointerdown', (e)=>{
     e.preventDefault();
@@ -5674,6 +5783,12 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'2.2.0', date:'2026-10-13', items:[
+      '🌀 テトリスに「Tスピン」を追加(ミニTスピン・B2B対応、回転はSRS準拠のウォールキックに)',
+      '✨ テトリスに「パーフェクトクリア」を追加',
+      '🐛 ライン消去中に▼長押しすると、ブロックが一気に消えるバグを修正',
+      '🎰 ガチャの料金を1回2000コインに変更'
+    ]},
     { version:'2.1.0', date:'2026-10-08', items:[
       '🎰 ガチャに「10連」を追加(無料チケットがあれば先に消費)',
       '🎁 バトルパスに「まとめて受け取る」ボタンを追加',
