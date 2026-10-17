@@ -2117,7 +2117,23 @@ function ensurePlayable(){
     }
     return sign + Math.floor(abs);
   }
-  function updateCoinUI(){ coinValEl.textContent = formatNumber(coins); saveCoins(coins); }
+  let coinShown = null, coinRaf = 0;
+  function updateCoinUI(){
+    saveCoins(coins);
+    const target = Number(coins) || 0;
+    if(coinShown === null || Math.abs(target - coinShown) < 1 || document.body.classList.contains('reduce-motion')){
+      coinShown = target; coinValEl.textContent = formatNumber(target); return;
+    }
+    cancelAnimationFrame(coinRaf);
+    const from = coinShown, t0 = performance.now(), dur = 520;
+    const step = (t)=>{
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      coinShown = from + (target - from) * e;
+      coinValEl.textContent = formatNumber(Math.round(coinShown));
+      if(k < 1) coinRaf = requestAnimationFrame(step); else coinShown = target;
+    };
+    coinRaf = requestAnimationFrame(step);
+  }
 
   function awardGameEndCoins(){
     const earned = Math.floor((score/500) * coinMultiplier());
@@ -3141,8 +3157,19 @@ restartBtn.addEventListener('click', ()=>{
   });
 
   // ===================== モーダル共通 =====================
+  let modalCloseTimer = null;
   function closeModal(){
-    modalOverlay.classList.remove('show');
+    if(modalOverlay.classList.contains('show') && !motionOff()){
+      modalOverlay.classList.add('closing');
+      clearTimeout(modalCloseTimer);
+      modalCloseTimer = setTimeout(()=>{
+        modalOverlay.classList.remove('closing');
+        // 閉じている間に別のウィンドウが開かれていたら(modeが入っていたら)閉じない
+        if(!modalContent.dataset.mode) modalOverlay.classList.remove('show');
+      }, 200);
+    } else {
+      modalOverlay.classList.remove('show');
+    }
     modalContent.dataset.mode = '';
     if (chatPollingInterval) {
       clearInterval(chatPollingInterval);
@@ -4869,6 +4896,8 @@ restartBtn.addEventListener('click', ()=>{
       tetrisLastRotate = false;
       tetrisScore += dist*2;
       scoreValEl.textContent = tetrisScore;
+      const tb = document.getElementById('tetrisBoard');
+      if(tb){ tb.classList.remove('hd-shake'); void tb.offsetWidth; tb.classList.add('hd-shake'); }
     }
     tetrisLockPiece();
   }
@@ -5937,10 +5966,30 @@ function enterTetrisMode(){
     if(currentMode==='timeattack') stopTimeAttackTimer();
     overlayEl.classList.remove('show');
     modalOverlay.classList.remove('show');
-    titleScreenEl.classList.remove('hidden');
+    clearTimeout(titleHideTimer);
+    titleScreenEl.classList.remove('hidden', 'leaving');
+    replayLobbyIn();
+  }
+  let titleHideTimer = null;
+  function motionOff(){ return document.body.classList.contains('reduce-motion') || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  // ロビーの入場アニメを最初から再生する(終わったらクラスを外し、PLAYボタンの常時アニメを戻す)
+  function replayLobbyIn(){
+    if(motionOff()) return;
+    titleScreenEl.classList.remove('lobby-in');
+    void titleScreenEl.offsetWidth;
+    titleScreenEl.classList.add('lobby-in');
+    setTimeout(()=>titleScreenEl.classList.remove('lobby-in'), 1400);
   }
   function hideTitleScreen(){
-    titleScreenEl.classList.add('hidden');
+    if(titleScreenEl.classList.contains('hidden')) return;
+    const appEl = document.getElementById('app');
+    if(motionOff()){ titleScreenEl.classList.add('hidden'); return; }
+    // ロビーが拡大しながら消え、ゲーム画面が下から浮かび上がる
+    titleScreenEl.classList.add('leaving');
+    appEl.classList.remove('app-enter'); void appEl.offsetWidth; appEl.classList.add('app-enter');
+    setTimeout(()=>appEl.classList.remove('app-enter'), 700);
+    clearTimeout(titleHideTimer);
+    titleHideTimer = setTimeout(()=>{ titleScreenEl.classList.add('hidden'); titleScreenEl.classList.remove('leaving'); }, 260);
   }
 
   document.getElementById('titleStartBtn').addEventListener('click', ()=>{
@@ -6137,6 +6186,13 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.2.0', date:'2026-10-18', items:[
+      '✨ 全体にアニメーションを追加(画面の切り替え・ボタン・ウィンドウ・リスト・ゲージ・数字・ゲーム中)',
+      '👆 タップした場所に波紋が広がり、ボタンはぽよんと弾みます',
+      '🪙 コインがふわっとカウントアップ / スコアが変わるとぽんっと弾む',
+      '🧱 ハードドロップで盤面がズシンと揺れる',
+      '⚙ 「動きを減らす」をオンにすると、アニメーションをまとめて止められます'
+    ]},
     { version:'3.1.0', date:'2026-10-18', items:[
       '🏠 ホーム画面をロビー型に刷新(大きなPLAYボタン + 機能タイル + コイン・アカウント表示)',
       '🎮 ゲーム中のヘッダーを細いバーにして盤面を最大化。アイコン類は ☰ メニューにまとめました',
@@ -6748,7 +6804,15 @@ function renderOtherGamesModal(){
     const lobbyName = document.getElementById('lobbyAccountName');
     const lobbyCoins = document.getElementById('lobbyCoins');
     const menuDot = document.getElementById('menuDot');
-    const toggle = (on)=> sheet.classList.toggle('show', !!on);
+    let sheetTimer = null;
+    const toggle = (on)=>{
+      clearTimeout(sheetTimer);
+      if(on){ sheet.classList.remove('closing'); sheet.classList.add('show'); return; }
+      if(!sheet.classList.contains('show')) return;
+      if(motionOff()){ sheet.classList.remove('show'); return; }
+      sheet.classList.add('closing');
+      sheetTimer = setTimeout(()=>{ sheet.classList.remove('show', 'closing'); }, 200);
+    };
     openBtn.addEventListener('click', ()=>toggle(true));
     // 背景タップ・項目タップで閉じる(サウンドのON/OFFだけは開いたまま)
     sheet.addEventListener('click', (e)=>{
@@ -6758,13 +6822,59 @@ function renderOtherGamesModal(){
     });
     document.getElementById('lobbyAccount').addEventListener('click', ()=>{ hideTitleScreen(); accountBtn.click(); });
     const update = ()=>{
-      lobbyName.textContent = currentUserId || 'ゲスト';
-      lobbyCoins.textContent = formatNumber(coins);
+      const nm = currentUserId || 'ゲスト', cn = formatNumber(coins);
+      if(lobbyName.textContent !== nm) lobbyName.textContent = nm;
+      if(lobbyCoins.textContent !== cn) lobbyCoins.textContent = cn;   // 変わったときだけ書き換える(アニメが毎秒走らないように)
       // 未読(フレンド・チャット)があれば ☰ にも赤い点を出す
       menuDot.classList.toggle('show', friendsDot.classList.contains('show') || chatDot.classList.contains('show'));
     };
     update();
     setInterval(update, 1000);
+  })();
+
+  // ===================== ✨ アニメーション(波紋・タブ切替・数字のぽんっ) =====================
+  (function setupAnimations(){
+    // ① タップした場所に波紋(ボタンの種類を問わず全部)
+    const CLICKABLE = 'button, .icon-btn, .pill-btn, .tab-btn, .mode-card, .claim-btn, .primary-btn, .ghost-btn, .tetris-btn, .lobby-tile, .lobby-wide, .lobby-play, .lobby-chip, .lobby-icon, .lobby-event, header .title, .other-game-item, .close-x, .switch-slider';
+    document.addEventListener('pointerdown', (e)=>{
+      if(motionOff()) return;
+      const el = e.target.closest && e.target.closest(CLICKABLE);
+      if(!el || el.disabled) return;
+      const ring = document.createElement('span');
+      ring.className = 'tap-ring';
+      ring.style.left = e.clientX + 'px';
+      ring.style.top = e.clientY + 'px';
+      document.body.appendChild(ring);
+      setTimeout(()=>ring.remove(), 520);
+    }, { passive:true });
+
+    // ② ウィンドウ内のタブを切り替えたら、中身がスッと入れ替わる
+    const mc = document.getElementById('modalContent');
+    let swapTimer = null;
+    document.addEventListener('click', (e)=>{
+      if(motionOff() || !e.target.closest || !e.target.closest('.tab-btn') || !mc.contains(e.target)) return;
+      mc.classList.remove('tab-swap'); void mc.offsetWidth; mc.classList.add('tab-swap');
+      clearTimeout(swapTimer);
+      swapTimer = setTimeout(()=>mc.classList.remove('tab-swap'), 450);
+    });
+
+    // ③ 数字が変わったら、ぽんっと弾ませる(カウントアップ中は連発しない)
+    const last = {};
+    const watch = (id)=>{
+      const el = document.getElementById(id);
+      if(!el) return;
+      new MutationObserver(()=>{
+        const now = performance.now();
+        if(motionOff() || (last[id] && now - last[id] < 700)) return;
+        last[id] = now;
+        el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+      }).observe(el, { childList:true, characterData:true, subtree:true });
+      el.addEventListener('animationend', ()=>el.classList.remove('bump'));
+    };
+    ['scoreVal','bestVal','coinVal','lobbyCoins','tetrisPlayerScore','tetrisAiScore','tetrisLevel','tetrisLines'].forEach(watch);
+
+    // ④ 起動時、ロビーの入場アニメが終わったらクラスを外す(PLAYボタンの常時アニメを動かすため)
+    setTimeout(()=>document.getElementById('titleScreen').classList.remove('lobby-in'), 1400);
   })();
 
   // ===================== 💤 スリープ対策 =====================
