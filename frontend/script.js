@@ -127,24 +127,30 @@ const ADMIN_USER_ID = 'spirit';
       desc: 'AIがミスを連発。のんびり遊べます。',
       speed: 320,        // ★1アクション(回転/移動/落下)あたりの間隔(ms)
       randomChance: 0.7,
-      weightScale: 0.3,
-      noise: 50
+      weightScale: 0.5,
+      noise: 2.5,      // 評価値(おおむね-10〜+1)に対するゆらぎ。大きいほど判断がブレる
+      think: 650,        // 新しいピースを見てから動き出すまでの「考える時間」(ms)
+      slip: 0.2,         // 操作ミス(ずれて落とす/迷って戻る)の確率
+      holdUse: 0,        // ホールドを使う確率
+      hardDrop: 0.45     // 最後にハードドロップする確率(残りはソフトドロップで落とす)
     },
     normal: {
       label: '🙂 普通',
       desc: 'AIがたまにミスをします。',
       speed: 190,
       randomChance: 0.35,
-      weightScale: 0.6,
-      noise: 20
+      weightScale: 0.8,
+      noise: 1.0,
+      think: 420, slip: 0.09, holdUse: 0.15, hardDrop: 0.7
     },
     hard: {
       label: '😤 難しい',
       desc: 'AIはほぼミスをしません。',
       speed: 110,
       randomChance: 0.1,
-      weightScale: 0.9,
-      noise: 5
+      weightScale: 1.0,
+      noise: 0.35,
+      think: 260, slip: 0.035, holdUse: 0.6, hardDrop: 0.9
     },
     modern: {
       label: '🔥 現代最強',
@@ -152,7 +158,8 @@ const ADMIN_USER_ID = 'spirit';
       speed: 60,
       randomChance: 0,
       weightScale: 1.0,
-      noise: 0
+      noise: 0,
+      think: 110, slip: 0.01, holdUse: 1, hardDrop: 1
     },
     history: {
       label: '👑 史上最強',
@@ -161,12 +168,13 @@ const ADMIN_USER_ID = 'spirit';
       randomChance: 0,
       weightScale: 1.0,
       noise: 0,
+      think: 40, slip: 0, holdUse: 1, hardDrop: 1,
       lookahead: true   // 1手先読みを有効化
     }
   };
 
   // テトリス関連のモード設定
-  let tetrisSubMode = 'solo';    // 'solo' | 'vs'
+  let tetrisSubMode = 'solo';    // 'solo' | 'vs' | 'sprint'(40ライン) | 'ultra'(2分)
   let aiDifficulty = 'normal';   // AI_DIFFICULTIES のキー
   let tetrisVsMode = false;      // 実行時フラグ: VS AIモードかどうか
 
@@ -860,6 +868,89 @@ const PATTERN_LABELS = {
 
   SKINS.push(...GACHA_SKINS);
 
+  // ===================== 🎃 ハロウィン限定スキン(期間限定ガチャ/ロード/交換所でのみ入手。購入不可) =====================
+  // ※スキンのデータ自体はずっと残る(入手済みのスキンはイベント終了後も使える)。入手経路だけがサーバーの期間設定で閉じる。
+  const hwc = (pairs)=>pairs.map(([a,b])=>({bg:`linear-gradient(135deg,${a},${b})`}));
+  const HALLOWEEN_SKINS = [
+    { id:'hween_pumpkinking', name:'🎃 パンプキンキング', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'畑を支配するカボチャの王。燃えるようなオレンジと王冠の金色が盤面を照らす、ハロウィンガチャ最上級のスキン。',
+      vars:{ '--bg-deep':'#120600','--bg-deep2':'#2a0e00','--panel':'#3d1704','--panel-light':'#561f06',
+        '--gold':'#FFC02E','--coral':'#FF6A00','--mint':'#FFD98A','--blue':'#FF9A3D','--purple':'#C25BFF',
+        '--pink':'#FF7A3D','--lime':'#F2E34A','--text':'#FFF4E4','--text-dim':'#D9A878' },
+      titleGrad:'linear-gradient(90deg,#FFC02E,#FF6A00,#C25BFF)',
+      colors:hwc([['#FFC02E','#FF6A00'],['#FF8A3D','#E04A00'],['#FFD98A','#FFA43D'],['#C25BFF','#7A2BD9'],['#FF6A00','#B83A00'],['#F2E34A','#FFB020'],['#FF9A3D','#FF4A00']]) },
+    { id:'hween_vampire', name:'🧛 ヴァンパイアロード', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'深紅の夜に君臨する吸血鬼の貴族。黒いビロードと血のようなルビーが織りなす、気高く危険な配色。',
+      vars:{ '--bg-deep':'#0b0207','--bg-deep2':'#1e040f','--panel':'#2f0818','--panel-light':'#45102a',
+        '--gold':'#E8C27A','--coral':'#D01A45','--mint':'#FF6B8B','--blue':'#9A3B70','--purple':'#7B2CBF',
+        '--pink':'#E0457B','--lime':'#E8C27A','--text':'#FFEFF2','--text-dim':'#C99AAA' },
+      titleGrad:'linear-gradient(90deg,#E8C27A,#D01A45,#7B2CBF)',
+      colors:hwc([['#D01A45','#7A0A26'],['#E8C27A','#B8893A'],['#FF6B8B','#D01A45'],['#7B2CBF','#4A1280'],['#E0457B','#A01A55'],['#9A3B70','#5A1A45'],['#FF8FA6','#E0457B']]) },
+    { id:'hween_ghostparade', name:'👻 ゴーストパレード', price:0, gacha:true, event:'halloween', animType:'pulse',
+      desc:'月夜にふわふわ漂うおばけの行列。ブロックがほんのり明滅し続ける、幻想的なアニメーションスキン。',
+      vars:{ '--bg-deep':'#070f16','--bg-deep2':'#0e1f2c','--panel':'#16303f','--panel-light':'#1f4358',
+        '--gold':'#BFF5FF','--coral':'#A78BFA','--mint':'#7FFFD4','--blue':'#7FB8FF','--purple':'#B8A4FF',
+        '--pink':'#E0B8FF','--lime':'#C8FFE6','--text':'#F0FBFF','--text-dim':'#8FB8C8' },
+      titleGrad:'linear-gradient(90deg,#BFF5FF,#B8A4FF,#7FFFD4)',
+      colors:hwc([['#E6F9FF','#9FDDF2'],['#D9CCFF','#A78BFA'],['#BFFFEA','#7FFFD4'],['#CFE5FF','#7FB8FF'],['#F3DDFF','#C98CFF'],['#FFFFFF','#BFE8F5'],['#C8FFE6','#8FF0C8']]) },
+    { id:'hween_witchbrew', name:'🔮 ウィッチブリュー', price:0, gacha:true, event:'halloween',
+      desc:'魔女の大鍋でぐつぐつ煮えるポーション。毒々しいライムグリーンと妖しい紫が渦を巻く。',
+      vars:{ '--bg-deep':'#0d0620','--bg-deep2':'#1b0b3a','--panel':'#2a1255','--panel-light':'#3b1a73',
+        '--gold':'#B8FF3D','--coral':'#FF4FD8','--mint':'#3DFFA8','--blue':'#7A5CFF','--purple':'#B14DFF',
+        '--pink':'#FF4FD8','--lime':'#B8FF3D','--text':'#F6EEFF','--text-dim':'#AE95D9' },
+      titleGrad:'linear-gradient(90deg,#B8FF3D,#B14DFF,#FF4FD8)',
+      colors:hwc([['#B8FF3D','#6FD000'],['#B14DFF','#6A1FC2'],['#FF4FD8','#B82A9A'],['#3DFFA8','#12B878'],['#7A5CFF','#4A2FC2'],['#D6FF7A','#9AE000'],['#E08CFF','#A83DE0']]) },
+    { id:'hween_blackcat', name:'🐈‍⬛ ブラックキャットムーン', price:0, gacha:true, event:'halloween',
+      desc:'満月を見上げる黒猫の瞳。漆黒の闇に、金色の月明かりと小さな星々が浮かぶ。',
+      vars:{ '--bg-deep':'#050507','--bg-deep2':'#0d0d18','--panel':'#171729','--panel-light':'#222240',
+        '--gold':'#FFE066','--coral':'#FF8A00','--mint':'#FFF3B0','--blue':'#6C7BFF','--purple':'#8A6CFF',
+        '--pink':'#FFB36C','--lime':'#FFE066','--text':'#FFFBEA','--text-dim':'#A9A7C9' },
+      titleGrad:'linear-gradient(90deg,#FFE066,#FF8A00,#8A6CFF)',
+      colors:hwc([['#FFE066','#E0A800'],['#FF8A00','#C25A00'],['#FFF3B0','#FFD84D'],['#6C7BFF','#3A45C2'],['#8A6CFF','#5638C2'],['#FFB36C','#E07A1A'],['#3A3A5A','#1A1A30']]) },
+    { id:'hween_candycorn', name:'🍬 キャンディコーン', price:0, gacha:true, event:'halloween',
+      desc:'ハロウィン定番のお菓子。黄・橙・白の三色ストライプがポップに映える。',
+      vars:{ '--bg-deep':'#1a0c05','--bg-deep2':'#2e1608','--panel':'#4a230d','--panel-light':'#65310f',
+        '--gold':'#FFE14D','--coral':'#FF8A1F','--mint':'#FFF4C2','--blue':'#FFB347','--purple':'#E08A5C',
+        '--pink':'#FF9F5C','--lime':'#FFE14D','--text':'#FFF8E8','--text-dim':'#D9B58A' },
+      titleGrad:'linear-gradient(90deg,#FFE14D,#FF8A1F,#FFF4C2)',
+      colors:hwc([['#FFE14D','#F2B800'],['#FF8A1F','#D95F00'],['#FFF4C2','#FFD98A'],['#FFB347','#E08A1F'],['#FFFFFF','#FFE9B0'],['#FF9F5C','#E0702A'],['#F2CC30','#D9A000']]) },
+    { id:'hween_moonlight', name:'🌕 ムーンライト・マナー', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'月明かりに浮かぶ古い洋館。深い藍色と銀の光に包まれる、ハロウィンロード20段目の報酬。',
+      vars:{ '--bg-deep':'#050a1a','--bg-deep2':'#0b1536','--panel':'#14224f','--panel-light':'#1d3070',
+        '--gold':'#E6ECFF','--coral':'#8FA8FF','--mint':'#9FE8FF','--blue':'#5C7CFF','--purple':'#9C8CFF',
+        '--pink':'#C0B0FF','--lime':'#CFE8FF','--text':'#F2F5FF','--text-dim':'#8F9CCF' },
+      titleGrad:'linear-gradient(90deg,#E6ECFF,#8FA8FF,#9C8CFF)',
+      colors:hwc([['#E6ECFF','#A8B8F0'],['#8FA8FF','#4A62D9'],['#9FE8FF','#5CB8E0'],['#5C7CFF','#2A3FB8'],['#9C8CFF','#5C48D9'],['#C0B0FF','#8A78E0'],['#CFE8FF','#8FB8E0']]) },
+    { id:'hween_eternalnight', name:'🕯 エターナルナイト', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'終わらない夜に灯るろうそくの炎。紫黒と金の最高級スキン。ハロウィンロード40段目(完走)の記念報酬。',
+      vars:{ '--bg-deep':'#07030f','--bg-deep2':'#14082a','--panel':'#221044','--panel-light':'#321764',
+        '--gold':'#FFD36B','--coral':'#FF7A3D','--mint':'#FFB86B','--blue':'#8A5CFF','--purple':'#B14DFF',
+        '--pink':'#FF5CA8','--lime':'#FFD36B','--text':'#FFF4E4','--text-dim':'#B8A0D9' },
+      titleGrad:'linear-gradient(90deg,#FFD36B,#FF7A3D,#B14DFF)',
+      colors:hwc([['#FFD36B','#E0A020'],['#FF7A3D','#C24A00'],['#B14DFF','#6A1FC2'],['#FF5CA8','#C22A70'],['#8A5CFF','#4A2FC2'],['#FFB86B','#E07A1A'],['#E0A0FF','#9A4DE0']]) },
+    { id:'hween_spiderweb', name:'🕸 スパイダーウェブ', price:0, gacha:true, event:'halloween',
+      desc:'銀の蜘蛛の巣が張る古い屋根裏。モノクロームに紫のアクセントが効いた、交換所限定スキン。',
+      vars:{ '--bg-deep':'#09090d','--bg-deep2':'#14141c','--panel':'#22222e','--panel-light':'#30303f',
+        '--gold':'#D8D8E8','--coral':'#B08CFF','--mint':'#C8C8D8','--blue':'#8A8AA8','--purple':'#9A6CFF',
+        '--pink':'#C8A8FF','--lime':'#E8E8F4','--text':'#F4F4FA','--text-dim':'#9A9AB0' },
+      titleGrad:'linear-gradient(90deg,#E8E8F4,#9A6CFF,#8A8AA8)',
+      colors:hwc([['#E8E8F4','#B0B0C8'],['#B08CFF','#6A44C2'],['#C8C8D8','#8A8AA8'],['#9A6CFF','#5A38C2'],['#D8D8E8','#9A9AB8'],['#C8A8FF','#8A64E0'],['#F4F4FA','#C0C0D8']]) },
+    { id:'hween_batswarm', name:'🦇 バットスウォーム', price:0, gacha:true, event:'halloween', animType:'pan',
+      desc:'夜空を埋め尽くすコウモリの群れ。紫と赤のグラデーションが流れ続ける、交換所限定のアニメーションスキン。',
+      vars:{ '--bg-deep':'#08030f','--bg-deep2':'#150822','--panel':'#24103c','--panel-light':'#341856',
+        '--gold':'#FF9A6B','--coral':'#E0245A','--mint':'#C25BFF','--blue':'#6A4CFF','--purple':'#9A3DFF',
+        '--pink':'#FF3D8A','--lime':'#FFB86B','--text':'#F8EEFF','--text-dim':'#AC90D0' },
+      titleGrad:'linear-gradient(90deg,#FF9A6B,#E0245A,#9A3DFF)',
+      colors:hwc([['#E0245A','#7A0F30'],['#9A3DFF','#4A1580'],['#FF3D8A','#A01A55'],['#6A4CFF','#2F1FA0'],['#FF9A6B','#D0502A'],['#C25BFF','#7A2BD9'],['#2A1A3E','#12081E']]) }
+  ];
+  const HALLOWEEN_SKIN_IDS = HALLOWEEN_SKINS.map(x=>x.id);
+  // ハロウィン開催中、標準スキンを装備している人に自動で適用される配色(黒紫 × 金 × カボチャ色)
+  const HW_DEFAULT_VARS = { '--bg-deep':'#0a0613','--bg-deep2':'#170b2b','--panel':'#231238','--panel-light':'#34194f',
+    '--gold':'#F4C95D','--coral':'#FF7A2F','--mint':'#8BE9B0','--blue':'#7BA9FF','--purple':'#B58CFF',
+    '--pink':'#FF7AB6','--lime':'#C8E34A','--text':'#FBF3E8','--text-dim':'#B9A6D6' };
+  const HW_TITLE_GRAD = 'linear-gradient(90deg,#F4C95D,#FF7A2F,#B58CFF)';
+  SKINS.push(...HALLOWEEN_SKINS);
+
   // ===================== 模様入りスキンを自動生成（既存パレット×パターンの組み合わせ）=====================
   // 通常スキンより高価に設定し、ボードの各ブロックに柄（ストライプ・ドットなど）を重ねて描画する
   (function generatePatternedSkins(){
@@ -1142,7 +1233,7 @@ const PATTERN_LABELS = {
 
   function updateModeBadge(){
     if(currentMode==='tetris'){
-      modeBadgeEl.textContent = tetrisVsMode ? '⚔️ テトリス VS AI' : '🧱 テトリス ソロ';
+      modeBadgeEl.textContent = ({ vs:'⚔️ テトリス VS AI', sprint:'🏁 テトリス スプリント', ultra:'⏳ テトリス ウルトラ', solo:'🧱 テトリス ソロ' })[tetrisRunMode] || '🧱 テトリス';
       return;
     }
     if(currentMode==='timeattack'){ modeBadgeEl.textContent = '⏱ タイムアタック'; return; }
@@ -1286,7 +1377,9 @@ const PATTERN_LABELS = {
     renderGachaModal(state);
   }
 
+  let gachaRateInfo = { ratePerSkin:0.01, rateTotal:0.08 };   // サーバーの排出率(表示用)。再描画でも保持する
   function renderGachaModal(state){
+    if(state && state.rateTotal != null) gachaRateInfo = { ratePerSkin: state.ratePerSkin, rateTotal: state.rateTotal };
     if(!state){
       modalContent.innerHTML = `<h2 style="color:var(--gold);">🎰 ガチャ</h2><div class="empty-hint">読み込みに失敗しました。</div>`;
       return;
@@ -1302,7 +1395,8 @@ const PATTERN_LABELS = {
     `).join('');
     let html = `
       <h2 style="color:var(--gold);">🎰 ガチャ</h2>
-      <div class="sub" style="margin-bottom:8px;">1回 🪙${formatNumber(state.cost)}。低確率でガチャ限定スキンが手に入ります(被った場合は🪙${formatNumber(500)}に還元)。</div>
+      <div class="sub" style="margin-bottom:8px;">1回 🪙${formatNumber(state.cost)}。ガチャ限定スキンが手に入ります(被った場合は🪙${formatNumber(500)}に還元)。</div>
+      <div class="sub" style="margin-bottom:8px;">📊 排出率: 1スキンあたり ${(gachaRateInfo.ratePerSkin*100).toFixed(2).replace(/\.?0+$/,'')}% ／ 合計 ${(gachaRateInfo.rateTotal*100).toFixed(2).replace(/\.?0+$/,'')}%</div>
       <div class="quest-item" style="text-align:center;">
         <div class="qtitle">🐉🔥👑 ガチャ限定スキン</div>
         ${gachaSkinCards}
@@ -1327,7 +1421,7 @@ const PATTERN_LABELS = {
     });
   }
 
-  function gachaSkinName(id){ return (GACHA_SKINS.find(s=>s.id===id) || {}).name || id; }
+  function gachaSkinName(id){ return (SKINS.find(s=>s.id===id) || {}).name || id; }
 
   function gachaSingleResultHtml(r){
     if(r.resultType === 'win'){
@@ -2002,12 +2096,19 @@ function ensurePlayable(){
     }
   }
   // コインなどの大きな数値を K/M/B/T 表記で見やすく表示する(内部の値自体は正確な数値のまま保持)
+  // 大きな数を短く表示(K, M, B, T, Q… と続け、1e36以上は指数表記)。
+  // ※JavaScriptのNumberは約9×10^15(9,007,199,254,740,991)を超えると下の桁が不正確になる
+  const NUMBER_UNITS = [
+    {v:1e33,s:'Dc'},{v:1e30,s:'No'},{v:1e27,s:'Oc'},{v:1e24,s:'Sp'},{v:1e21,s:'Sx'},{v:1e18,s:'Qi'},
+    {v:1e15,s:'Q'},{v:1e12,s:'T'},{v:1e9,s:'B'},{v:1e6,s:'M'},{v:1e3,s:'K'}
+  ];
   function formatNumber(n){
     n = Number(n) || 0;
     const sign = n < 0 ? '-' : '';
     const abs = Math.abs(n);
-    const units = [ {v:1e15, s:'Q'}, {v:1e12, s:'T'}, {v:1e9, s:'B'}, {v:1e6, s:'M'}, {v:1e3, s:'K'} ];
-    for(const u of units){
+    if(!isFinite(abs)) return sign + '∞';
+    if(abs >= 1e36) return sign + abs.toExponential(2).replace('+','');
+    for(const u of NUMBER_UNITS){
       if(abs >= u.v){
         const val = abs / u.v;
         const formatted = val >= 100 ? Math.floor(val) : (Math.round(val*10)/10);
@@ -2341,6 +2442,18 @@ function issueNewQuest(excludePoolIds){
         <span>🌙 ダークモード</span>
         <label class="switch"><input type="checkbox" id="darkModeToggle" ${darkMode?'checked':''}><span class="switch-slider"></span></label>
       </div>
+      <div class="settings-row">
+        <span>🎃 ハロウィンUI <span class="sub">(開催中のみ)</span></span>
+        <label class="switch"><input type="checkbox" id="hwThemeToggle" ${uiPrefs.hwTheme?'checked':''}><span class="switch-slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>✨ 動きを減らす <span class="sub">(背景の演出など)</span></span>
+        <label class="switch"><input type="checkbox" id="reduceMotionToggle" ${uiPrefs.reduceMotion?'checked':''}><span class="switch-slider"></span></label>
+      </div>
+      <div class="settings-row">
+        <span>📳 振動 <span class="sub">(ライン消去など・対応端末)</span></span>
+        <label class="switch"><input type="checkbox" id="vibrateToggle" ${uiPrefs.vibrate?'checked':''}><span class="switch-slider"></span></label>
+      </div>
       <div class="settings-row" id="settingsAccountRow" style="cursor:pointer;">
         <span>👤 アカウント</span><span class="sub">${currentUserId ? currentUserId : 'ゲスト'} ›</span>
       </div>
@@ -2368,6 +2481,12 @@ function issueNewQuest(excludePoolIds){
       applyDarkMode();
       saveAppSettings();
     });
+    const bindPref = (id, key, after)=> document.getElementById(id).addEventListener('change', (e)=>{
+      uiPrefs[key] = e.target.checked; saveUiPrefs(); if(after) after();
+    });
+    bindPref('hwThemeToggle', 'hwTheme', refreshEventTheme);
+    bindPref('reduceMotionToggle', 'reduceMotion', refreshEventTheme);
+    bindPref('vibrateToggle', 'vibrate', ()=>{ if(uiPrefs.vibrate) vibrate(40); });
     document.getElementById('settingsAccountRow').addEventListener('click', ()=>{
       closeModal();
       accountBtn.click();
@@ -2422,9 +2541,10 @@ function issueNewQuest(excludePoolIds){
   function applySkin(id){
     const skin = SKINS.find(s=>s.id===id) || SKINS[0];
     equippedSkin = skin.id;
-    Object.entries(skin.vars).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
+    const hwDefault = (skin.id==='default' && document.body.classList.contains('hw'));   // 🎃 開催中は標準スキンもハロウィン配色
+    Object.entries(hwDefault ? HW_DEFAULT_VARS : skin.vars).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
 const titleEl = document.querySelector('.title');
-    if(titleEl) titleEl.style.backgroundImage = skin.titleGrad;  // background → backgroundImage
+    if(titleEl) titleEl.style.backgroundImage = hwDefault ? HW_TITLE_GRAD : skin.titleGrad;  // background → backgroundImage
     COLORS.length = 0;
     buildPatternedColors(skin.colors, skin.pattern).forEach(c=>COLORS.push(c));
     if(cellEls.length){
@@ -2484,7 +2604,7 @@ const titleEl = document.querySelector('.title');
         currentMode = (MODES[parsed.mode] || parsed.mode==='tetris') ? parsed.mode : 'baked';
         SIZE = (currentMode==='extreme') ? 8 : Math.min(18, Math.max(5, parsed.size||8));
         // ★テトリスのサブモードとAI難易度を復元
-        if(parsed.tetrisSubMode === 'solo' || parsed.tetrisSubMode === 'vs'){
+        if(['solo','vs','sprint','ultra'].includes(parsed.tetrisSubMode)){
           tetrisSubMode = parsed.tetrisSubMode;
         }
         if(parsed.aiDifficulty && AI_DIFFICULTIES[parsed.aiDifficulty]){
@@ -2541,6 +2661,16 @@ const titleEl = document.querySelector('.title');
           <div class="mode-card-head"><span class="mode-emoji">⚔️</span><span>VS AI</span>
             <span class="coin-tag">AIと勝負</span></div>
         </div>
+        <div class="mode-card ${tetrisSubMode==='sprint'?'selected':''}" data-tetris-sub="sprint">
+          <div class="mode-card-head"><span class="mode-emoji">🏁</span><span>スプリント(40ライン)</span>
+            <span class="coin-tag">NEW</span></div>
+          <div class="sub" style="margin-top:4px; font-size:11px;">40ライン消すまでのタイムを競う。自己ベストを記録します。</div>
+        </div>
+        <div class="mode-card ${tetrisSubMode==='ultra'?'selected':''}" data-tetris-sub="ultra">
+          <div class="mode-card-head"><span class="mode-emoji">⏳</span><span>ウルトラ(2分)</span>
+            <span class="coin-tag">NEW</span></div>
+          <div class="sub" style="margin-top:4px; font-size:11px;">2分間でどれだけスコアを稼げるか。フレンド対決もこのルールです。</div>
+        </div>
       `;
 
       // VS AIの時は難易度選択を表示
@@ -2557,8 +2687,9 @@ const titleEl = document.querySelector('.title');
         });
       }
 
-      const startLabel = tetrisSubMode==='solo'
-        ? '🧱 ソロモードを始める'
+      const startLabel = tetrisSubMode==='solo' ? '🧱 ソロモードを始める'
+        : tetrisSubMode==='sprint' ? '🏁 スプリントを始める'
+        : tetrisSubMode==='ultra' ? '⏳ ウルトラを始める'
         : `⚔️ ${AI_DIFFICULTIES[aiDifficulty].label} と対戦`;
       html += `<button class="primary-btn" id="applyModeBtn" style="margin-top:12px;">${startLabel}</button>`;
       return html;
@@ -2591,31 +2722,36 @@ const titleEl = document.querySelector('.title');
       <button class="tab-btn sfilter-btn ${skinFilter==='plain'?'active':''}" data-sfilter="plain">無地</button>
       <button class="tab-btn sfilter-btn ${skinFilter==='pattern'?'active':''}" data-sfilter="pattern">🎨 柄物</button>
       <button class="tab-btn sfilter-btn ${skinFilter==='gacha'?'active':''}" data-sfilter="gacha">🎰 ガチャ限定</button>
+      <button class="tab-btn sfilter-btn ${skinFilter==='event'?'active':''}" data-sfilter="event">🎃 イベント限定</button>
     </div>`;
     // ガチャ限定スキンは通常ショップの「すべて/無地/柄物」には出さず、専用フィルタでのみ表示する(コインでの購入は不可)
     const list = SKINS.filter(s => {
-      if(skinFilter==='gacha') return !!s.gacha;
+      if(skinFilter==='event') return !!s.event;
+      if(skinFilter==='gacha') return !!s.gacha && !s.event;
       if(s.gacha) return false;
       return skinFilter==='all' ? true : skinFilter==='pattern' ? !!s.pattern : !s.pattern;
     }).slice().sort((a,b)=>a.price-b.price); // 値段の安い順に並べる
     if(skinFilter==='gacha' && list.every(s=>!ownedSkins.includes(s.id))){
       html += `<div class="empty-hint">まだガチャ限定スキンを持っていません。🎰ガチャで手に入れよう！</div>`;
     }
+    if(skinFilter==='event' && list.every(s=>!ownedSkins.includes(s.id))){
+      html += `<div class="empty-hint">まだイベント限定スキンを持っていません。🎃イベント開催中に手に入れよう！</div>`;
+    }
     list.forEach(skin=>{
       const owned = ownedSkins.includes(skin.id);
       const equipped = equippedSkin === skin.id;
       const canBuy = !owned && !skin.gacha && coins >= skin.price;
-      let btnLabel = equipped ? '装備中' : owned ? '装備する' : (skin.gacha ? '🎰ガチャ限定' : (skin.price===0 ? '入手する' : (canBuy ? '購入する' : 'コインが足りません')));
+      let btnLabel = equipped ? '装備中' : owned ? '装備する' : (skin.gacha ? (skin.event ? '🎃イベント限定' : '🎰ガチャ限定') : (skin.price===0 ? '入手する' : (canBuy ? '購入する' : 'コインが足りません')));
       let btnAction = equipped ? '' : owned ? 'equip' : (skin.gacha ? '' : 'buy');
       const swatchColors = buildPatternedColorsForPreview(skin.colors, skin.pattern);
       if(skin.gacha && !owned) return; // 未入手のガチャ限定スキンはカードごと非表示(ガチャフィルタでは「持っていない」ことが分かればよい)
       html += `
         <div class="quest-item">
-          <div class="qtitle">${skin.name}${equipped?' ✅':''}${skin.pattern?' <span class="coin-tag">柄物</span>':''}${skin.gacha?' <span class="coin-tag">🎰限定</span>':''}${skin.animType?' <span class="coin-tag">✨アニメーション</span>':''}</div>
+          <div class="qtitle">${skin.name}${equipped?' ✅':''}${skin.pattern?' <span class="coin-tag">柄物</span>':''}${skin.event?' <span class="coin-tag">🎃イベント限定</span>':(skin.gacha?' <span class="coin-tag">🎰限定</span>':'')}${skin.animType?' <span class="coin-tag">✨アニメーション</span>':''}</div>
           <div class="sub" style="margin:2px 0 8px;">${skin.desc}</div>
           <div class="skin-swatches">${swatchColors.map(c=>`<span class="swatch" style="background:${c.bg}"></span>`).join('')}</div>
           <div class="quest-foot" style="margin-top:8px;">
-            <span>${skin.gacha ? '🎰ガチャ限定' : (skin.price===0 ? '無料' : `🪙${formatNumber(skin.price)}`)}</span>
+            <span>${skin.event ? '🎃イベント限定' : skin.gacha ? '🎰ガチャ限定' : (skin.price===0 ? '無料' : `🪙${formatNumber(skin.price)}`)}</span>
             <button class="claim-btn" data-skin="${skin.id}" data-action="${btnAction}" ${(equipped || (!owned && (!canBuy && !skin.gacha)) || (skin.gacha && !owned))?'disabled':''}>${btnLabel}</button>
           </div>
         </div>`;
@@ -2939,6 +3075,7 @@ function ensureBgmGainNode(){
     updateQuestProgress();
     grantBattlePassXp(sessionScoreForXp);
     sessionScoreForXp = 0;
+    reportEventGame({ mode: currentMode, score: score, duel: !!currentDuelId });
 
     if(weeklyChallengeActive){
       weeklyChallengeActive = false;
@@ -4041,13 +4178,13 @@ restartBtn.addEventListener('click', ()=>{
     } catch (err) { /* 無視 */ }
   }
 
-  async function challengeFriend(opponentId){
+  async function challengeFriend(opponentId, game){
     if (!authToken) { alert('ログインが必要です'); return; }
     try {
       const res = await fetch(`${API_BASE_URL}/api/duels/challenge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-        body: JSON.stringify({ opponentId })
+        body: JSON.stringify({ opponentId, game: game || 'candy' })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '対決の申し込みに失敗しました');
@@ -4073,6 +4210,15 @@ restartBtn.addEventListener('click', ()=>{
   function playDuel(duel){
     currentDuelId = duel.id;
     closeModal();
+    if(duel.game === 'tetris'){
+      // テトリス対決: 2分間のウルトラ。スコアが高い方が勝ち
+      if(currentMode==='timeattack') stopTimeAttackTimer();
+      hideTitleScreen();
+      tetrisDuelPending = true;
+      if(currentMode==='tetris') exitTetrisMode();
+      enterTetrisMode();
+      return;
+    }
     startTimeAttackMode();
   }
 
@@ -4166,7 +4312,8 @@ restartBtn.addEventListener('click', ()=>{
                 <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${f.id}${unread ? `<span class="funread">${unread}</span>` : ''}
               </span>
               <span class="fsub">${f.online ? '🟢 オンライン' : 'オフライン'}</span>
-              <button class="fbtn" data-challenge="${f.id}">⚔️ 対決</button>
+              <button class="fbtn" data-challenge="${f.id}" data-game="candy">🍬 対決</button>
+              <button class="fbtn" data-challenge="${f.id}" data-game="tetris">🧱 対決</button>
               <button class="fbtn remove" data-removefriend="${f.id}">削除</button>
             </div>`;
         });
@@ -4179,12 +4326,12 @@ restartBtn.addEventListener('click', ()=>{
       const waiting = duelsList.filter(d => d.status==='accepted' &&
         ((d.challenger_id===currentUserId && d.challenger_score!==null) || (d.opponent_id===currentUserId && d.opponent_score!==null)));
       const completed = duelsList.filter(d => d.status==='completed');
-      html += `<div class="sub" style="margin-bottom:8px;">タイムアタック(${TIME_ATTACK_DURATION}秒)でフレンドと勝負！フレンド一覧の「⚔️対決」から挑戦できます。</div>`;
+      html += `<div class="sub" style="margin-bottom:8px;">🍬 キャンディ対決=タイムアタック(${TIME_ATTACK_DURATION}秒)、🧱 テトリス対決=ウルトラ(${TETRIS_ULTRA_SECONDS}秒)。スコアが高い方の勝ち！フレンド一覧の「対決」ボタンから挑戦できます。</div>`;
       html += `<div class="qtitle" style="margin:10px 0 6px;">📥 届いている挑戦</div>`;
       html += pendingIncoming.length===0 ? `<div class="empty-hint">届いている挑戦はありません。</div>` :
         pendingIncoming.map(d=>`
           <div class="friend-item pending">
-            <span class="fname">⚔️ ${d.challenger_id}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} ${d.challenger_id}</span>
             <button class="fbtn accept" data-duelaccept="${d.id}">受ける</button>
             <button class="fbtn decline" data-dueldecline="${d.id}">断る</button>
           </div>`).join('');
@@ -4194,7 +4341,7 @@ restartBtn.addEventListener('click', ()=>{
           const opp = d.challenger_id===currentUserId ? d.opponent_id : d.challenger_id;
           return `
           <div class="friend-item chat">
-            <span class="fname">⚔️ 対 ${opp}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} 対 ${opp}</span>
             <button class="fbtn" data-duelplay="${d.id}">プレイする</button>
           </div>`;
         }).join('');
@@ -4290,7 +4437,7 @@ restartBtn.addEventListener('click', ()=>{
       el.addEventListener('click', () => openDMThread(el.dataset.openthread));
     });
     modalContent.querySelectorAll('[data-challenge]').forEach(el => {
-      el.addEventListener('click', () => challengeFriend(el.dataset.challenge));
+      el.addEventListener('click', () => challengeFriend(el.dataset.challenge, el.dataset.game));
     });
     modalContent.querySelectorAll('[data-duelaccept]').forEach(el => {
       el.addEventListener('click', () => respondDuel(el.dataset.duelaccept, true));
@@ -4455,6 +4602,40 @@ restartBtn.addEventListener('click', ()=>{
   let tetrisTimer = null, tetrisCellEls = [];
   let tetrisBest = 0;
   let tetrisHoldType = null, tetrisHoldUsed = false;
+  let tetrisRunMode = 'solo';       // 今プレイ中のテトリスの種類: 'solo'|'vs'|'sprint'|'ultra'(フレンド対決は常にultra)
+  let tetrisDuelPending = false;    // フレンド対決(テトリス)として開始するか
+  const TETRIS_SPRINT_LINES = 40, TETRIS_ULTRA_SECONDS = 120;
+  let tetrisClockStart = 0, tetrisClockTimer = null;
+  let tetrisStats = { tspins:0, pcs:0, startLines:0 };       // イベント報告用(Tスピン回数・パーフェクトクリア回数)
+  const TETRIS_REC_KEY = 'candyblast-tetris-records-v1';
+  let tetrisRecords = { sprintMs:null, ultraScore:0 };
+  try{ Object.assign(tetrisRecords, JSON.parse(localStorage.getItem(TETRIS_REC_KEY) || '{}')); }catch(e){}
+  function saveTetrisRecords(){ try{ localStorage.setItem(TETRIS_REC_KEY, JSON.stringify(tetrisRecords)); }catch(e){} }
+  function fmtClock(ms){ const t = Math.max(0, ms), m = Math.floor(t/60000), sec = Math.floor(t%60000/1000), cs = Math.floor(t%1000/10); return `${m}:${String(sec).padStart(2,'0')}.${String(cs).padStart(2,'0')}`; }
+  function tetrisIsTimed(){ return tetrisRunMode==='sprint' || tetrisRunMode==='ultra'; }
+  function vibrate(ms){ if(uiPrefs.vibrate && navigator.vibrate){ try{ navigator.vibrate(ms); }catch(e){} } }
+
+  function stopTetrisClock(){ if(tetrisClockTimer){ clearInterval(tetrisClockTimer); tetrisClockTimer = null; } }
+  function startTetrisClock(){
+    stopTetrisClock();
+    tetrisClockStart = performance.now();
+    timeAttackCardEl.style.display = tetrisIsTimed() ? 'flex' : 'none';
+    timeAttackCardEl.classList.remove('urgent');
+    if(!tetrisIsTimed()) return;
+    const tick = ()=>{
+      const el = performance.now() - tetrisClockStart;
+      if(tetrisRunMode==='ultra'){
+        const left = TETRIS_ULTRA_SECONDS*1000 - el;
+        timeAttackValEl.textContent = fmtClock(left);
+        timeAttackCardEl.classList.toggle('urgent', left <= 10000);
+        if(left <= 0) tetrisEndTimed('ultra');
+      } else {
+        timeAttackValEl.textContent = fmtClock(el);
+      }
+    };
+    tick();
+    tetrisClockTimer = setInterval(tick, 50);
+  }
   let tetrisLastRotate = false, tetrisLastKick = 0; // Tスピン判定用: 最後の操作が回転か / 何番目のキックか
 
 // ===================== 🤖 AI対戦用の状態 =====================
@@ -4816,6 +4997,9 @@ restartBtn.addEventListener('click', ()=>{
       tetrisScore += gained;
       tetrisLines += n;
       tetrisLevel = Math.floor(tetrisLines/10)+1;
+      if(spin) tetrisStats.tspins++;
+      if(perfect) tetrisStats.pcs++;
+      vibrate(perfect ? [30,40,30,40,60] : (isDifficult ? [25,30,40] : 15));
       tetrisRefreshScore();
 
       let msg = spin
@@ -4829,6 +5013,12 @@ restartBtn.addEventListener('click', ()=>{
       playSound('clear', (isDifficult) ? 4 : n);
       if(tetrisCombo>=3 || perfect) playSound('coin');
 
+      // スプリント: 目標ライン数に達したら、アニメを待たずにクリア
+      if(tetrisRunMode==='sprint' && tetrisLines >= TETRIS_SPRINT_LINES){
+        tetrisClearRowsAnimated(cleared, ()=>{});
+        tetrisEndTimed('sprint');
+        return;
+      }
       tetrisClearRowsAnimated(cleared, ()=>{
         tetrisCollapseRows(cleared);
         tetrisSpawnPiece();
@@ -4840,6 +5030,8 @@ restartBtn.addEventListener('click', ()=>{
     if(spin){
       // ラインを消さないTスピンも得点(ただしB2Bには影響しない)
       const pts = TSPIN_POINTS[spin][0] * tetrisLevel;
+      tetrisStats.tspins++;
+      vibrate(20);
       tetrisScore += pts;
       tetrisRefreshScore();
       showTetrisCombo(`${spin==='mini'?'ミニ':''}Tスピン! +${pts}`, 'bonus');
@@ -4855,9 +5047,11 @@ function tetrisTriggerGameOver(){
     tetrisGameOver = true;
     tetrisActive = false;
     tetrisStopLoop();
+    stopTetrisClock();
     playSound('gameover');
     grantBattlePassXp(tetrisScore);
-    const earned = Math.max(0, Math.floor(tetrisScore/40));
+    // スプリントは「クリアしたとき」だけコイン報酬(失敗時は無し)
+    const earned = (tetrisRunMode==='sprint') ? 0 : Math.max(0, Math.floor(tetrisScore/40));
     if(earned>0){
       coins += earned;
       updateCoinUI();
@@ -4865,26 +5059,88 @@ function tetrisTriggerGameOver(){
       playSound('coin');
     }
     tetrisPlayerScoreEl.textContent = tetrisScore;
-    // ★VS AI ならAIと勝負、ソロなら通常ゲームオーバー
+    // ★VS AI ならAIと勝負、それ以外は通常の結果表示
     if(tetrisVsMode){
       endTetrisVsMatch('player');
     } else {
-      endTetrisSolo(earned);
+      endTetrisSolo(earned, tetrisRunMode==='sprint' ? 'sprint-fail' : (tetrisRunMode==='ultra' ? 'ultra-topout' : 'topout'));
     }
   }
 
-  // ソロモードのゲームオーバー表示
-  function endTetrisSolo(earned){
-    tetrisStopLoop();
+  // 時間系モードの正常終了(sprint: 40ライン到達 / ultra: 2分経過)
+  function tetrisEndTimed(kind){
+    if(tetrisGameOver) return;
+    tetrisGameOver = true;
     tetrisActive = false;
-    const isNewBest = tetrisScore >= tetrisBest && tetrisScore > 0;
-    finalScoreEl.innerHTML = ''; // VSモードで書き換えた中身をクリア
-    finalScoreEl.textContent = tetrisScore;
-    newBestNoteEl.textContent = isNewBest ? '🎉 ハイスコア更新！' : 'お疲れさまでした！';
+    tetrisStopLoop();
+    stopTetrisClock();
+    grantBattlePassXp(tetrisScore);
+    let earned;
+    if(kind==='sprint'){
+      const ms = performance.now() - tetrisClockStart;
+      // 速いほど多い: 基本300 + 60秒より速い分は1秒あたり+10(最大+500)
+      earned = 300 + Math.max(0, Math.min(500, Math.round((60000 - ms)/1000) * 10));
+    } else {
+      earned = Math.max(0, Math.floor(tetrisScore/40));
+    }
+    if(earned>0){ coins += earned; updateCoinUI(); tetrisFloatCoin(earned); }
+    playSound('coin');
+    tetrisPlayerScoreEl.textContent = tetrisScore;
+    endTetrisSolo(earned, kind==='sprint' ? 'sprint-clear' : 'ultra-end');
+  }
+
+  // ソロ系(ソロ/スプリント/ウルトラ/フレンド対決)の結果表示
+  function endTetrisSolo(earned, outcome){
+    tetrisStopLoop();
+    stopTetrisClock();
+    tetrisActive = false;
+    outcome = outcome || 'topout';
+    const elapsed = performance.now() - tetrisClockStart;
+    let note = 'お疲れさまでした！';
+    finalScoreEl.innerHTML = '';
+    if(outcome==='sprint-clear'){
+      const prev = tetrisRecords.sprintMs;
+      const isBest = prev == null || elapsed < prev;
+      if(isBest){ tetrisRecords.sprintMs = Math.round(elapsed); saveTetrisRecords(); }
+      finalScoreEl.innerHTML = `<div style="font-size:15px; color:var(--gold);">🏁 40ライン クリア！</div><div>${fmtClock(elapsed)}</div>`;
+      note = isBest ? '🎉 自己ベスト更新！' : `自己ベスト ${fmtClock(prev)}`;
+    } else if(outcome==='sprint-fail'){
+      finalScoreEl.innerHTML = `<div style="font-size:15px; color:var(--coral);">💥 ゲームオーバー</div><div>${tetrisLines} / ${TETRIS_SPRINT_LINES} ライン</div>`;
+      note = tetrisRecords.sprintMs ? `自己ベスト ${fmtClock(tetrisRecords.sprintMs)}` : 'もう一度チャレンジ！';
+    } else {
+      const isNewBest = tetrisScore >= tetrisBest && tetrisScore > 0;
+      finalScoreEl.textContent = tetrisScore;
+      if(tetrisRunMode==='ultra'){
+        const ub = tetrisScore > (tetrisRecords.ultraScore||0);
+        if(ub){ tetrisRecords.ultraScore = tetrisScore; saveTetrisRecords(); }
+        note = (outcome==='ultra-end' ? '⏳ タイムアップ！ ' : '') + (ub && tetrisScore>0 ? '🎉 ウルトラ自己ベスト更新！' : `ウルトラ自己ベスト ${tetrisRecords.ultraScore||0}`);
+      } else {
+        note = isNewBest ? '🎉 ハイスコア更新！' : 'お疲れさまでした！';
+      }
+    }
+    newBestNoteEl.textContent = note;
     coinEarnedNoteEl.textContent = earned>0 ? `🪙 +${earned} コイン獲得！` : '';
     duelResultNoteEl.textContent = '';
     overlayEl.classList.add('show');
-    if(authToken) syncToServer(tetrisScore);
+
+    // 🎃 イベント(キャンディ・ミッション)への報告
+    const wasDuel = !!currentDuelId;
+    reportEventGame({ mode:'tetris-'+tetrisRunMode, tetris:true, score: tetrisScore, lines: Math.max(0, tetrisLines - tetrisStats.startLines),
+      tspins: tetrisStats.tspins, pcs: tetrisStats.pcs, duel: wasDuel });
+
+    // フレンド対決: ウルトラのスコアを送信
+    if(currentDuelId){
+      const duelId = currentDuelId;
+      currentDuelId = null;
+      duelResultNoteEl.textContent = '対決の結果を送信中...';
+      submitDuelScore(duelId, tetrisScore).then(duel=>{
+        if(duel){
+          duelResultNoteEl.textContent = duelResultText(duel);
+          if(duel.status==='completed') syncFromServer();
+        } else duelResultNoteEl.textContent = '対決結果の送信に失敗しました。';
+      });
+    }
+    if(authToken && tetrisRunMode!=='sprint') syncToServer(tetrisScore);
     syncPlayTime();
   }
 
@@ -4900,15 +5156,13 @@ function tetrisTriggerGameOver(){
     const aiScoreVal = aiScore;
     let resultTitle = '';
     let resultColor = 'var(--gold)';
-    if(playerScore > aiScoreVal){
+    // 先に積み上がって詰まった側が負け(以前はスコア比較だったため、AIが詰まったのに「敗北」と出ることがあった)
+    if(loser === 'ai'){
       resultTitle = '🏆 あなたの勝利！';
       resultColor = 'var(--mint)';
-    } else if(playerScore < aiScoreVal){
+    } else {
       resultTitle = '😢 あなたの敗北…';
       resultColor = 'var(--coral)';
-    } else {
-      resultTitle = '🤝 引き分け！';
-      resultColor = 'var(--blue)';
     }
 
     // オーバーレイに表示
@@ -4925,6 +5179,7 @@ function tetrisTriggerGameOver(){
     duelResultNoteEl.textContent = '';
     overlayEl.classList.add('show');
 
+    reportEventGame({ mode:'tetris-vs', tetris:true, vs:true, score: playerScore, lines: tetrisLines, tspins: tetrisStats.tspins, pcs: tetrisStats.pcs });
     // サーバーにスコアを送信（プレイヤーのみ）
     if(authToken){
       syncToServer(playerScore);
@@ -4938,6 +5193,7 @@ function tetrisTriggerGameOver(){
     tetrisScore = 0; tetrisLevel = 1; tetrisLines = 0; tetrisCombo = 0; tetrisBackToBack = false;
     tetrisGameOver = false; tetrisActive = true; tetrisBag = [];
     tetrisHoldType = null; tetrisHoldUsed = false;
+    tetrisStats = { tspins:0, pcs:0, startLines:0 };
     tetrisNextType = tetrisRandomType();
     initTetrisBoard();
     scoreValEl.textContent = '0';
@@ -4945,6 +5201,7 @@ function tetrisTriggerGameOver(){
     tetrisPlayerScoreEl.textContent = '0';
     renderTetrisHold();
     tetrisSpawnPiece();
+    startTetrisClock();
     // ★VS AIモードのときだけAIを起動する
     if(tetrisVsMode){
       startAi();
@@ -5022,14 +5279,14 @@ function tetrisTriggerGameOver(){
     }
   }
 
-  function aiSpawnPiece(){
-    const type = aiNextType || tetrisRandomType();
-    aiNextType = tetrisRandomType();
+  function aiSpawnPiece(forceType){
+    const type = forceType || aiNextType || tetrisRandomType();
+    if(!forceType) aiNextType = tetrisRandomType();
     const def = TETROMINOES[type];
     const matrix = def.matrix.map(row=>row.slice());
     const col = Math.floor((TETRIS_COLS - matrix.length)/2);
     const row = -1;
-    aiPiece = { type, matrix, color: def.color, row, col };
+    aiPiece = { type, matrix, color: def.color, row, col, rot: 0 };
     if(aiCollides(matrix, row, col)){
       aiTriggerGameOver();
       return false;
@@ -5202,15 +5459,13 @@ function tetrisTriggerGameOver(){
       return { ...c, score };
     });
 
-    // ランダムで適当な手を選ぶ確率
-    if(Math.random() < diff.randomChance){
-      return scored[Math.floor(Math.random() * scored.length)];
+    scored.sort((a,b)=>b.score - a.score);
+    // 人間は「めちゃくちゃな場所」には置かず、惜しい2〜4番手の手を選ぶことがある
+    if(scored.length > 1 && Math.random() < diff.randomChance){
+      const k = Math.min(4, scored.length);
+      return scored[1 + Math.floor(Math.random() * (k - 1))];
     }
-
-    // ベスト手を選ぶ
-    let best = scored[0];
-    for(const c of scored){ if(c.score > best.score) best = c; }
-    return best;
+    return scored[0];
   }
 
   function aiLockPiece(){
@@ -5275,12 +5530,14 @@ function tetrisTriggerGameOver(){
   function aiFinishPiece(){
     aiLockPiece();
     aiPlan = null;
+    aiHoldUsed = false;
     renderAiBoard();
     if(aiGameOver) return;
     const spawned = aiSpawnPiece();
     renderAiBoard();
     if(!spawned || aiGameOver) return; // ゲームオーバーになった場合は重力タイマーを再スタートしない
     startAiGravity(); // ★新しいピース&レベルに合わせて、プレイヤーと同じ計算式で重力を再スタート
+    scheduleAiTick(aiThinkDelay()); // 新しいピースを見てから動き出すまで「考える時間」を置く
   }
 
   // ===== 重力タイマー: プレイヤーのtetrisTickと全く同じ間隔・ロジックで自然落下させる =====
@@ -5301,57 +5558,150 @@ function tetrisTriggerGameOver(){
     if(aiGravityTimer){ clearInterval(aiGravityTimer); aiGravityTimer = null; }
   }
 
-  // ===== 思考タイマー: 難易度ごとの速さで回転・移動を決め、狙い通りになったら人間と同じくハードドロップする =====
+  // ===== 🤖 AIの操作(人間らしさ重視) =====
+  //  ・新しいピースが出てから、少し「考える時間」を置く
+  //  ・操作の間隔は一定ではなく、ゆらぎ + たまに迷って止まる
+  //  ・回転と移動をバラバラに混ぜる(回転→全部移動、ではない)
+  //  ・たまに1マスずれて落としたり、行き過ぎて戻ったりする
+  //  ・ホールドを使う / 最後はハードドロップかソフトドロップで落とす
+  //  ・積み上がって追い詰められると、焦って操作が速くなる
+  let aiHoldType = null, aiHoldUsed = false;
+  const aiRand = (a,b)=> a + Math.random()*(b-a);
+  function aiStackHeight(){
+    for(let r=0;r<TETRIS_ROWS;r++){ if(aiGrid[r].some(v=>v!==-1)) return TETRIS_ROWS - r; }
+    return 0;
+  }
+  function scheduleAiTick(delay){
+    if(aiTimer) clearTimeout(aiTimer);
+    aiTimer = setTimeout(aiTick, Math.max(25, delay));
+  }
+  function aiThinkDelay(){
+    const d = getAiDiff();
+    let t = d.think * aiRand(0.7, 1.4);
+    if(aiStackHeight() >= 14) t *= 0.6;           // 追い詰められたら即決する
+    return t;
+  }
+  function aiActionDelay(){
+    const d = getAiDiff();
+    let t = Math.max(40, d.speed) * aiRand(0.65, 1.45);
+    if(Math.random() < 0.07) t += aiRand(120, 380);   // たまに一瞬止まる
+    if(aiStackHeight() >= 14) t *= 0.75;
+    return t;
+  }
+
+  function aiRotateSRS(){
+    const p = aiPiece;
+    if(p.type === 'O') return false;
+    const rm = rotateMatrixCW(p.matrix);
+    const table = (p.type === 'I') ? SRS_KICKS_I : SRS_KICKS_JLSTZ;
+    for(const [dx, dy] of table[p.rot]){
+      if(!aiCollides(rm, p.row - dy, p.col + dx)){
+        p.matrix = rm; p.row -= dy; p.col += dx; p.rot = (p.rot + 1) % 4;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 指定した種類のピースを置ける全候補(ホールド判断用)
+  function aiBestEvalFor(type){
+    const def = TETROMINOES[type];
+    let best = -Infinity;
+    for(const matrix of getRotations(def.matrix.map(r=>r.slice()))){
+      for(let col = -matrix.length; col < TETRIS_COLS; col++){
+        let row = -1;
+        while(!aiCollides(matrix, row + 1, col)) row++;
+        if(row < 0) continue;
+        const v = evaluateAiBoard(aiGrid, matrix, row, col, def.color);
+        if(v > best) best = v;
+      }
+    }
+    return best;
+  }
+  function aiDoHold(){
+    const cur = aiPiece.type;
+    aiHoldUsed = true;
+    aiPlan = null;
+    let ok;
+    if(aiHoldType === null){ aiHoldType = cur; ok = aiSpawnPiece(); }
+    else { const t = aiHoldType; aiHoldType = cur; ok = aiSpawnPiece(t); }
+    renderAiBoard();
+    if(ok) startAiGravity();
+    return ok;
+  }
+
   function aiTick(){
     if(!aiActive || aiGameOver || !aiPiece) return;
+    const diff = getAiDiff();
 
-    // ピースごとに「どこに・どの向きで置くか」を最初に1回だけ決める
+    // ① 計画: ピースごとに「どこに・どの向きで置くか」を最初に1回だけ決める
     if(!aiPlan){
-      const move = findBestAiMove();
-      if(!move){
-        aiTriggerGameOver();
-        return;
-      }
-      aiPlan = {
-        targetMatrixKey: matrixKey(move.matrix),
-        targetCol: move.col
-      };
-    }
-
-    // 1. 回転フェーズ: 目標の向きになるまで1回ずつ回す
-    if(matrixKey(aiPiece.matrix) !== aiPlan.targetMatrixKey){
-      const rotated = rotateMatrixCW(aiPiece.matrix);
-      const kicks = [0, -1, 1, -2, 2];
-      let ok = false;
-      for(const k of kicks){
-        if(!aiCollides(rotated, aiPiece.row, aiPiece.col + k)){
-          aiPiece.matrix = rotated;
-          aiPiece.col += k;
-          ok = true;
-          break;
+      // ホールド: 手札の方が明らかに良く置けそうなら入れ替える
+      if(!aiHoldUsed && Math.random() < diff.holdUse){
+        const alt = aiHoldType || aiNextType;
+        if(alt && aiBestEvalFor(alt) > aiBestEvalFor(aiPiece.type) + 0.6){
+          if(aiDoHold()) scheduleAiTick(aiActionDelay());
+          return;
         }
       }
-      if(!ok){
-        // 回転できなかった(通常起きない) → 今の向きをゴール扱いにして先へ進む
-        aiPlan.targetMatrixKey = matrixKey(aiPiece.matrix);
+      const move = findBestAiMove();
+      if(!move){ aiTriggerGameOver(); return; }
+      aiPlan = {
+        targetMatrixKey: matrixKey(move.matrix),
+        targetCol: move.col,
+        checked: false,
+        soft: Math.random() > diff.hardDrop
+      };
+      scheduleAiTick(aiActionDelay());
+      return;
+    }
+
+    // ② 回転と左右移動を混ぜながら、目標に近づく
+    const needRot = matrixKey(aiPiece.matrix) !== aiPlan.targetMatrixKey;
+    const dir = Math.sign(aiPlan.targetCol - aiPiece.col);
+    const needMove = dir !== 0 && !aiCollides(aiPiece.matrix, aiPiece.row, aiPiece.col + dir);
+    if(needRot || needMove){
+      if(needRot && (!needMove || Math.random() < 0.6)){
+        if(!aiRotateSRS()) aiPlan.targetMatrixKey = matrixKey(aiPiece.matrix);  // 回せなければ今の向きで妥協
+      } else {
+        aiPiece.col += dir;
       }
       renderAiBoard();
+      scheduleAiTick(aiActionDelay());
       return;
     }
 
-    // 2. 左右移動フェーズ: 目標の列まで1マスずつ
-    if(aiPiece.col < aiPlan.targetCol && !aiCollides(aiPiece.matrix, aiPiece.row, aiPiece.col + 1)){
-      aiPiece.col++;
-      renderAiBoard();
-      return;
-    }
-    if(aiPiece.col > aiPlan.targetCol && !aiCollides(aiPiece.matrix, aiPiece.row, aiPiece.col - 1)){
-      aiPiece.col--;
-      renderAiBoard();
-      return;
+    // ③ 目標に着いたら、たまに「ミス」や「迷い」を入れる(1ピースにつき1回だけ判定)
+    if(!aiPlan.checked){
+      aiPlan.checked = true;
+      const r = Math.random(), d = Math.random() < 0.5 ? -1 : 1;
+      const free = !aiCollides(aiPiece.matrix, aiPiece.row, aiPiece.col + d);
+      if(r < diff.slip * 0.4){
+        if(free){ aiPiece.col += d; renderAiBoard(); }          // 本当にずれたまま落とす
+      } else if(r < diff.slip){
+        if(free){                                               // 行き過ぎて、気づいて戻る
+          aiPiece.col += d; renderAiBoard();
+          scheduleAiTick(aiActionDelay() + aiRand(150, 350));
+          return;
+        }
+      } else if(Math.random() < 0.1){
+        scheduleAiTick(aiRand(150, 400));                       // 少し迷う
+        return;
+      }
     }
 
-    // 3. 狙い通りの向き・列に着いたら、プレイヤーのハードドロップと同じ即落下+加点(距離×2)を行う
+    // ④ 落とす: ハードドロップか、ソフトドロップでスッと下ろす
+    if(aiPlan.soft){
+      if(!aiCollides(aiPiece.matrix, aiPiece.row + 1, aiPiece.col)){
+        aiPiece.row++;
+        aiScore += 1;
+        renderAiBoard();
+        scheduleAiTick(aiActionDelay() * 0.3);
+        return;
+      }
+      aiFinishPiece();
+      return;
+    }
     let dist = 0;
     while(!aiCollides(aiPiece.matrix, aiPiece.row + 1, aiPiece.col)){
       aiPiece.row++;
@@ -5365,19 +5715,18 @@ function tetrisTriggerGameOver(){
     aiGrid = Array.from({length:TETRIS_ROWS}, ()=>new Array(TETRIS_COLS).fill(-1));
     aiScore = 0; aiLevel = 1; aiLines = 0; aiCombo = 0; aiBackToBack = false;
     aiGameOver = false; aiActive = true; aiBag = [];
+    aiHoldType = null; aiHoldUsed = false; aiPlan = null;
     aiPiece = null; aiNextType = tetrisRandomType();
     initAiTetrisBoard();
     tetrisAiScoreEl.textContent = '0';
     aiSpawnPiece();
-    // ★難易度ごとの速度は「思考(操作判断)の速さ」だけを表し、落下自体は重力タイマーが別途プレイヤーと同じ規則で担当する
-    if(aiTimer) clearInterval(aiTimer);
-    const diff = getAiDiff();
-    aiTimer = setInterval(aiTick, diff.speed);
+    // ★難易度ごとの速度は「操作の速さ」だけを表し、落下自体は重力タイマーが別途プレイヤーと同じ規則で担当する
+    scheduleAiTick(aiThinkDelay());
     startAiGravity();
   }
 
   function stopAi(){
-    if(aiTimer){ clearInterval(aiTimer); aiTimer = null; }
+    if(aiTimer){ clearTimeout(aiTimer); clearInterval(aiTimer); aiTimer = null; }
     stopAiGravity();
     aiActive = false;
   }
@@ -5398,8 +5747,10 @@ function tetrisTriggerGameOver(){
 
 function enterTetrisMode(){
     currentMode = 'tetris';
-    // ソロ/VS AIをフラグに反映
-    tetrisVsMode = (tetrisSubMode === 'vs');
+    // ソロ/VS/スプリント/ウルトラをフラグに反映(フレンド対決は常にウルトラ)
+    tetrisRunMode = tetrisDuelPending ? 'ultra' : tetrisSubMode;
+    tetrisDuelPending = false;
+    tetrisVsMode = (tetrisRunMode === 'vs');
     // 難易度が不正ならnormalに戻す
     if(!AI_DIFFICULTIES[aiDifficulty]) aiDifficulty = 'normal';
 
@@ -5425,6 +5776,8 @@ function enterTetrisMode(){
 
   function exitTetrisMode(){
     tetrisStopLoop();
+    stopTetrisClock();
+    timeAttackCardEl.style.display = 'none';
     tetrisActive = false;
     stopAi();
     tetrisWrapEl.style.display = 'none';
@@ -5739,9 +6092,10 @@ document.getElementById('titleOtherGamesBtn').addEventListener('click', ()=>{
 // ===================== 🎮 別のゲーム =====================
 
 const OTHER_GAMES = [
-    { emoji:'⚫', name:'オセロ', desc:'白と黒の石をひっくり返して陣取り！', url:'https://black-white-jycg.onrender.com' },
-    { emoji:'⚪', name:'五目並べ', desc:'縦・横・斜めに5つ並べたら勝ち！', url:'https://five-eye-line-up.onrender.com' },
-    { emoji:'❌', name:'まるばつゲーム', desc:'3×3のマスで○×を並べる定番ゲーム', url:'https://tic-tac-toe-1ixl.onrender.com' },
+    // 修正中のゲームは url を持たせない(= タップしても開かない)。直ったら url を戻して maintenance を消す
+    { emoji:'⚫', name:'オセロ', desc:'白と黒の石をひっくり返して陣取り！', maintenance:true },
+    { emoji:'⚪', name:'五目並べ', desc:'縦・横・斜めに5つ並べたら勝ち！', maintenance:true },
+    { emoji:'❌', name:'まるばつゲーム', desc:'3×3のマスで○×を並べる定番ゲーム', maintenance:true },
     { emoji:'🐢', name:'ウミガメのスープ', desc:'質問を重ねて、不思議な出来事の真相を推理しよう！', url:'https://chelonia.onrender.com' },
   ];
 
@@ -5759,8 +6113,8 @@ function renderOtherGamesModal(){
         html += `
           <div class="quest-item other-game-item" data-gameidx="${i}"
                style="cursor:${ready?'pointer':'default'}; ${ready?'':'opacity:0.55;'}">
-            <div class="qtitle">${g.emoji} ${g.name}${ready?'':' <span class="coin-tag">準備中</span>'}</div>
-            <div class="sub" style="margin-top:4px;">${g.desc}</div>
+            <div class="qtitle">${g.emoji} ${g.name}${ready?'':(g.maintenance?' <span class="coin-tag maint-tag">🛠 修正中</span>':' <span class="coin-tag">準備中</span>')}</div>
+            <div class="sub" style="margin-top:4px;">${g.maintenance?'現在修正中です。直り次第また遊べるようになります。':g.desc}</div>
           </div>`;
       });
     }
@@ -5783,6 +6137,18 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.0.0', date:'2026-10-18', items:[
+      '🎃 ハロウィン・ナイトフェス開催！ 期間限定ガチャ(1回5000コイン)・ロード・ミッション・交換所・ランキング',
+      '👕 ハロウィンスキンを10種追加(ガチャ6種 / ロード2種 / 交換所2種)',
+      '🎨 UIを一新(ガラス×金の高級感のあるデザイン、ハロウィン背景)',
+      '🏁 テトリスに新モード「スプリント(40ライン)」と「ウルトラ(2分)」',
+      '⚔️ フレンド対決でテトリスも遊べるように(ウルトラ2分のスコア勝負)',
+      '🤖 テトリスAIをより人間らしい動きに(考える時間・迷い・ミス・ホールド)',
+      '🛠 テトリスVS AIで自分の盤面が小さくなる問題を修正 / 先に詰まった方が負けに',
+      '🎰 ガチャの排出率を下げ(1スキン1%)、排出率を画面に表示',
+      '⚙ 設定に「動きを減らす」「振動」を追加 / 大きな数の表示を拡張',
+      '🛠 オセロ・五目並べ・まるばつは修正中のため一時的に非表示'
+    ]},
     { version:'2.2.0', date:'2026-10-13', items:[
       '🌀 テトリスに「Tスピン」を追加(ミニTスピン・B2B対応、回転はSRS準拠のウォールキックに)',
       '✨ テトリスに「パーフェクトクリア」を追加',
@@ -5924,6 +6290,449 @@ function renderOtherGamesModal(){
     renderEventsModal();
     modalOverlay.classList.add('show');
   });
+
+  // ===================== 🎃 ハロウィンイベント(期間はサーバーが管理。終了したら自動で消える) =====================
+  const EVENT_CACHE_KEY = 'candyblast-event-v1';
+  const EVENT_PREF_KEY = 'candyblast-uiprefs-v1';
+  let eventInfo = null;        // { phase, startsAt, endsAt, graceEndsAt, skew }
+  let hwState = null;          // /api/event/halloween/state の結果
+  let hwTab = 'home';
+  let uiPrefs = { hwTheme:true, reduceMotion:false, vibrate:true };
+
+  function loadUiPrefs(){
+    try{ Object.assign(uiPrefs, JSON.parse(localStorage.getItem(EVENT_PREF_KEY) || '{}')); }catch(e){}
+    try{ const raw = localStorage.getItem(EVENT_CACHE_KEY); if(raw) eventInfo = JSON.parse(raw); }catch(e){}
+  }
+  function saveUiPrefs(){ try{ localStorage.setItem(EVENT_PREF_KEY, JSON.stringify(uiPrefs)); }catch(e){} }
+
+  // 端末の時計がずれていても、サーバーの時刻との差(skew)で補正して判定する
+  function eventPhaseNow(){
+    if(!eventInfo) return 'ended';
+    const now = Date.now() + (eventInfo.skew || 0);
+    if(now < Date.parse(eventInfo.startsAt)) return 'upcoming';
+    if(now < Date.parse(eventInfo.endsAt)) return 'active';
+    if(now < Date.parse(eventInfo.graceEndsAt)) return 'grace';
+    return 'ended';
+  }
+  function eventMsLeft(which){
+    const target = Date.parse(which==='grace' ? eventInfo.graceEndsAt : eventInfo.endsAt);
+    return target - (Date.now() + (eventInfo.skew || 0));
+  }
+  function fmtRemain(ms){
+    if(ms <= 0) return '終了';
+    const s = Math.floor(ms/1000), d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60), sec = s%60;
+    const pad = n=>String(n).padStart(2,'0');
+    return d>0 ? `${d}日 ${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(h)}:${pad(m)}:${pad(sec)}`;
+  }
+  function fmtDateJst(iso){
+    const d = new Date(Date.parse(iso));
+    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
+
+  // ハロウィンUI(背景・装飾・配色)を出すかどうか。開催中だけ。終了時刻を過ぎれば、アップデート無しで元のUIに戻る
+  function hwThemeOn(){ return uiPrefs.hwTheme && eventPhaseNow()==='active'; }
+  function refreshEventTheme(){
+    const on = hwThemeOn();
+    const was = document.body.classList.contains('hw');
+    document.body.classList.toggle('hw', on);
+    document.body.classList.toggle('reduce-motion', !!uiPrefs.reduceMotion);
+    if(on !== was && typeof applySkin === 'function' && equippedSkin){ try{ applySkin(equippedSkin); }catch(e){} }
+  }
+  function updateEventButtons(){
+    const btn = document.getElementById('titleEventBtn');
+    if(!btn) return;
+    const ph = eventPhaseNow();
+    const show = (ph==='active' || ph==='grace');
+    btn.style.display = show ? '' : 'none';
+    if(show){
+      const label = document.getElementById('titleEventTimer');
+      if(label) label.textContent = ph==='active' ? `開催中 あと${fmtRemain(eventMsLeft('end'))}` : `受取期限 あと${fmtRemain(eventMsLeft('grace'))}`;
+    }
+  }
+
+  async function fetchEventStatus(){
+    try{
+      const res = await fetch(`${API_BASE_URL}/api/event/status`, { cache:'no-store' });
+      const data = await res.json();
+      const h = data && data.halloween;
+      if(h){
+        eventInfo = { ...h, skew: Date.parse(h.serverNow) - Date.now() };
+        try{ localStorage.setItem(EVENT_CACHE_KEY, JSON.stringify(eventInfo)); }catch(e){}
+      }
+    }catch(err){ /* 通信できなければ前回の情報(キャッシュ)のまま判定する */ }
+    refreshEventTheme();
+    updateEventButtons();
+  }
+
+  async function hwApi(path, method, body){
+    const res = await fetch(`${API_BASE_URL}/api/event/halloween/${path}`, {
+      method: method || 'GET',
+      headers: { 'Content-Type':'application/json', ...(authToken ? { 'Authorization':`Bearer ${authToken}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    let data = null;
+    try{ data = await res.json(); }catch(e){}
+    if(!res.ok) throw new Error((data && data.error) || '通信に失敗しました');
+    return data;
+  }
+
+  // 画面下に出る小さな通知
+  function showEventToast(text){
+    let box = document.getElementById('eventToastBox');
+    if(!box){ box = document.createElement('div'); box.id = 'eventToastBox'; document.body.appendChild(box); }
+    const el = document.createElement('div');
+    el.className = 'event-toast';
+    el.textContent = text;
+    box.appendChild(el);
+    setTimeout(()=>{ el.classList.add('out'); setTimeout(()=>el.remove(), 400); }, 2600);
+  }
+
+  // ゲーム終了時に呼ぶ: キャンディ獲得・ミッション進行(開催中でログイン中のときだけ)
+  async function reportEventGame(info){
+    if(!authToken || eventPhaseNow()!=='active') return;
+    try{
+      const data = await hwApi('report', 'POST', info);
+      if(data && data.active && data.gained > 0) showEventToast(`🍬 キャンディ +${data.gained}`);
+      ((data && data.newlyCompleted) || []).forEach((t,i)=> setTimeout(()=>showEventToast(`✅ ミッション達成: ${t}`), 900*(i+1)));
+    }catch(err){ /* 報告に失敗してもゲームには影響させない */ }
+  }
+
+  // ---------- 表示用ヘルパー ----------
+  function hwSkinName(id){ const s = SKINS.find(x=>x.id===id); return s ? s.name : id; }
+  function hwRewardText(r){
+    if(r.type==='coins') return `🪙 ${formatNumber(r.amount)}`;
+    if(r.type==='ticket') return `🎟 ハロウィンチケット×${r.amount}`;
+    if(r.type==='bpxp') return `🎫 バトルパスXP +${formatNumber(r.amount)}`;
+    if(r.type==='skin') return `${hwSkinName(r.skinId)}${r.extraCoins ? ` ＋🪙${formatNumber(r.extraCoins)}` : ''}`;
+    return '';
+  }
+  function hwSwatches(id, n){
+    const s = SKINS.find(x=>x.id===id);
+    if(!s) return '';
+    return `<div class="skin-swatches" style="justify-content:center;">${buildPatternedColors(s.colors, s.pattern).slice(0, n||5).map(c=>`<span class="swatch" style="background:${c.bg}"></span>`).join('')}</div>`;
+  }
+  function hwApplyWallet(d){
+    if(d.coins != null){ coins = d.coins; updateCoinUI(); if(hwState) hwState.coins = d.coins; }
+    if(d.ownedSkins){ ownedSkins = d.ownedSkins; saveSkinsData(); if(hwState) hwState.ownedSkins = d.ownedSkins; }
+    if(hwState){
+      if(d.candies != null) hwState.candies = d.candies;
+      if(d.tickets != null) hwState.tickets = d.tickets;
+    }
+  }
+
+  // ---------- モーダル ----------
+  async function openHalloweenModal(tab){
+    modalContent.dataset.mode = 'halloween';
+    hwTab = tab || 'home';
+    modalOverlay.classList.add('show');
+    const ph = eventPhaseNow();
+    if(ph!=='active' && ph!=='grace'){
+      modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">現在開催していません。</div>`;
+      return;
+    }
+    if(!authToken){
+      modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">イベントに参加するにはログインが必要です。<br>右上の 👤 からログインしてください。</div>`;
+      return;
+    }
+    modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">読み込み中...</div>`;
+    try{
+      hwState = await hwApi('state');
+      if(modalContent.dataset.mode !== 'halloween') return;
+      renderHalloween();
+    }catch(err){
+      modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">${err.message}</div>`;
+    }
+  }
+
+  const HW_TABS = [['home','🏠 ホーム'],['road','🛤 ロード'],['missions','📋 ミッション'],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['ranking','🏆 ランキング']];
+  let hwTimerHandle = null;
+
+  function renderHalloween(extraHtml){
+    const s = hwState;
+    if(!s) return;
+    const active = eventPhaseNow()==='active';
+    let html = `
+      <h2 class="hw-h2">🎃 ハロウィン・ナイトフェス</h2>
+      <div class="hw-head">
+        <div class="hw-timer" id="hwTimer"></div>
+        <div class="hw-wallet">
+          <span title="キャンディ">🍬 <b>${formatNumber(s.candies)}</b></span>
+          <span title="ハロウィンチケット">🎟 <b>${formatNumber(s.tickets)}</b></span>
+          <span title="コイン">🪙 <b>${formatNumber(s.coins)}</b></span>
+        </div>
+      </div>
+      <div class="tab-row hw-tabs">${HW_TABS.map(([k,l])=>`<button class="tab-btn ${hwTab===k?'active':''}" data-hwtab="${k}">${l}</button>`).join('')}</div>
+      ${active ? '' : `<div class="hw-banner warn">⏳ イベントは終了しました。報酬の受け取りと交換所だけ、あと少し使えます。</div>`}
+      ${extraHtml || ''}
+      <div id="hwBody"></div>`;
+    modalContent.innerHTML = html;
+    modalContent.querySelectorAll('[data-hwtab]').forEach(b=>b.addEventListener('click', ()=>{
+      hwTab = b.dataset.hwtab; renderHalloween();
+    }));
+    const body = document.getElementById('hwBody');
+    if(hwTab==='home') body.innerHTML = hwHomeHtml();
+    else if(hwTab==='road') body.innerHTML = hwRoadHtml();
+    else if(hwTab==='missions') body.innerHTML = hwMissionsHtml();
+    else if(hwTab==='gacha') body.innerHTML = hwGachaHtml();
+    else if(hwTab==='shop') body.innerHTML = hwShopHtml();
+    else if(hwTab==='ranking'){ body.innerHTML = `<div class="empty-hint">読み込み中...</div>`; hwLoadRanking(); }
+    hwBindBody();
+
+    const tick = ()=>{
+      const el = document.getElementById('hwTimer');
+      if(!el || modalContent.dataset.mode!=='halloween'){ clearInterval(hwTimerHandle); hwTimerHandle = null; return; }
+      const ph = eventPhaseNow();
+      if(ph==='active') el.textContent = `⏰ 開催終了まで ${fmtRemain(eventMsLeft('end'))}`;
+      else if(ph==='grace') el.textContent = `⏳ 受取期限まで ${fmtRemain(eventMsLeft('grace'))}`;
+      else { el.textContent = '終了しました'; }
+    };
+    tick();
+    if(hwTimerHandle) clearInterval(hwTimerHandle);
+    hwTimerHandle = setInterval(tick, 1000);
+  }
+
+  // ----- ホーム -----
+  function hwHomeHtml(){
+    const s = hwState, lg = s.login;
+    const next = s.road.find(t=>!t.reached);
+    const prevNeed = next ? (s.road[next.tier-2] ? s.road[next.tier-2].need : 0) : 0;
+    const pct = next ? Math.max(0, Math.min(100, Math.round((s.totalCandies - prevNeed) / (next.need - prevNeed) * 100))) : 100;
+    const days = lg.rewards.map((r,i)=>{
+      const d = i+1;
+      const done = lg.claimedToday ? d <= lg.day : d < lg.day;
+      const cur = !lg.claimedToday && d === lg.day;
+      return `<div class="hw-day ${done?'done':''} ${cur?'cur':''}">
+        <div class="hw-day-n">${d}日目</div>
+        <div class="hw-day-r">🍬${r.candies}<br>🪙${formatNumber(r.coins)}${r.tickets?`<br>🎟×${r.tickets}`:''}</div>
+        ${done?'<div class="hw-day-check">✓</div>':''}
+      </div>`;
+    }).join('');
+    const claimable = !lg.claimedToday && eventPhaseNow()==='active';
+    return `
+      <div class="hw-card">
+        <div class="qtitle">🎁 トリック・オア・トリート(毎日ログインボーナス)</div>
+        <div class="hw-days">${days}</div>
+        <button class="primary-btn" id="hwLoginBtn" style="margin-top:10px;" ${claimable?'':'disabled'}>${lg.claimedToday ? '✓ 今日は受け取り済み' : (eventPhaseNow()==='active' ? '🎁 今日のボーナスを受け取る' : '受付終了')}</button>
+        <div class="sub" style="margin-top:6px;">連続ログイン ${lg.streak}日。7日目はハロウィンチケットがもらえます。</div>
+      </div>
+      <div class="hw-card">
+        <div class="qtitle">🛤 ハロウィンロード</div>
+        <div class="sub">累計 🍬${formatNumber(s.totalCandies)} ${next ? `／ 次の報酬(${next.tier}段目)まで あと🍬${formatNumber(next.need - s.totalCandies)}` : '／ 🎉 全段クリア！'}</div>
+        <div class="quest-bar-bg" style="margin-top:6px;"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
+        <button class="claim-btn" data-hwgo="road" style="margin-top:8px;">ロードを見る</button>
+      </div>
+      <div class="hw-card">
+        <div class="qtitle">🍬 キャンディの集め方</div>
+        <div class="sub hw-list">
+          ・どのゲームも、遊ぶたびにキャンディがもらえる(高得点・ライン消し・Tスピン・パーフェクトクリアでボーナス)<br>
+          ・毎日のミッション(3つ)と、毎週のミッション(3つ)をクリア<br>
+          ・毎日のログインボーナス<br>
+          ・フレンド対決をプレイすると +10 ボーナス<br>
+          ・ハロウィンガチャは、ハズレでもキャンディがもらえる<br>
+          ・集めたキャンディは、ロードの報酬・交換所・ランキングに使われます
+        </div>
+      </div>
+      <div class="hw-card">
+        <div class="qtitle">📅 開催期間</div>
+        <div class="sub">${fmtDateJst(eventInfo.startsAt)} 〜 ${fmtDateJst(eventInfo.endsAt)}(日本時間)<br>
+        ⚠️ ハロウィンガチャと新規のキャンディ獲得は、終了時刻で自動的に終了します。終了後 約2日間は、報酬の受け取りと交換所が使えます。<br>
+        入手したスキンは、イベント終了後もずっと使えます。</div>
+      </div>`;
+  }
+
+  // ----- ロード -----
+  function hwRoadHtml(){
+    const s = hwState;
+    const claimable = s.road.filter(t=>t.reached && !t.claimed);
+    let html = `
+      <div class="sub" style="margin-bottom:8px;">累計 🍬${formatNumber(s.totalCandies)}(使ってもロードの進行は減りません)</div>
+      <button class="primary-btn" id="hwRoadAll" ${claimable.length?'':'disabled'}>🎁 まとめて受け取る${claimable.length?`(${claimable.length}件)`:''}</button>
+      <div class="hw-road">`;
+    s.road.forEach(t=>{
+      const big = t.reward.type==='skin';
+      html += `
+        <div class="hw-road-row ${t.claimed?'claimed':''} ${t.reached&&!t.claimed?'ready':''} ${big?'big':''}">
+          <div class="hw-road-tier">${t.tier}</div>
+          <div class="hw-road-info">
+            <div class="hw-road-reward">${hwRewardText(t.reward)}</div>
+            <div class="hw-road-need">🍬 ${formatNumber(t.need)}</div>
+            ${big ? hwSwatches(t.reward.skinId, 5) : ''}
+          </div>
+          <div class="hw-road-act">
+            ${t.claimed ? '<span class="hw-done">済</span>' : (t.reached ? `<button class="claim-btn" data-hwroad="${t.tier}">受け取る</button>` : '<span class="hw-lock">🔒</span>')}
+          </div>
+        </div>`;
+    });
+    return html + `</div>`;
+  }
+
+  // ----- ミッション -----
+  function hwMissionCard(m, scope){
+    const pct = Math.round(m.progress / m.target * 100);
+    return `
+      <div class="hw-mission ${m.claimed?'claimed':''}">
+        <div class="hw-mission-top"><span>${m.text}</span><span class="hw-mission-reward">🍬${m.candies}</span></div>
+        <div class="quest-bar-bg"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
+        <div class="hw-mission-foot"><span>${formatNumber(m.progress)} / ${formatNumber(m.target)}</span>
+          ${m.claimed ? '<span class="hw-done">受取済</span>' : `<button class="claim-btn" data-hwmission="${m.id}" ${m.done?'':'disabled'}>受け取る</button>`}
+        </div>
+      </div>`;
+  }
+  function hwMissionsHtml(){
+    const s = hwState;
+    const ready = [...s.daily, ...s.weekly].filter(m=>m.done && !m.claimed).length;
+    return `
+      <button class="primary-btn" id="hwMissionAll" ${ready?'':'disabled'}>🎁 まとめて受け取る${ready?`(${ready}件)`:''}</button>
+      <div class="qtitle" style="margin:12px 0 6px;">☀️ 今日のミッション <span class="sub">(毎日0時に入れ替わり)</span></div>
+      ${s.daily.map(m=>hwMissionCard(m,'daily')).join('')}
+      <div class="qtitle" style="margin:12px 0 6px;">🌙 今週のミッション <span class="sub">(毎週月曜0時に入れ替わり)</span></div>
+      ${s.weekly.map(m=>hwMissionCard(m,'weekly')).join('')}`;
+  }
+
+  // ----- ハロウィンガチャ -----
+  function hwGachaHtml(){
+    const s = hwState, g = s.gacha, active = eventPhaseNow()==='active';
+    const tk = s.tickets;
+    const canOne = active && (tk > 0 || s.coins >= g.cost);
+    const usedTk10 = Math.min(tk, 10), coins10 = (10 - usedTk10) * g.cost;
+    const canTen = active && s.coins >= coins10;
+    const pct = Math.min(100, Math.round(g.pity / g.pityThreshold * 100));
+    const pct2 = n => (n*100).toFixed(2).replace(/\.?0+$/,'');
+    const cards = g.pool.map(id=>`
+      <div class="hw-gcard ${s.ownedSkins.includes(id)?'owned':''}">
+        ${hwSwatches(id, 4)}
+        <div class="hw-gname">${hwSkinName(id)}</div>
+        <div class="hw-gown">${s.ownedSkins.includes(id)?'✓ 入手済み':'未入手'}</div>
+      </div>`).join('');
+    return `
+      <div class="hw-banner">⏰ ハロウィンガチャは <b>${fmtDateJst(eventInfo.endsAt)}</b> で終了します(終了後は引けなくなります)</div>
+      <div class="hw-gpool">${cards}</div>
+      <div class="hw-card">
+        <div class="sub hw-list">
+          📊 排出率: 1スキン ${pct2(g.ratePerSkin)}% ／ 合計 ${pct2(g.rateTotal)}%<br>
+          🎯 天井: ${g.pityThreshold}回(未所持のスキンから優先して確定)<br>
+          🔁 被り: 🪙${formatNumber(g.dupCoins)} ＋ 🍬${g.dupCandies} ／ ハズレ: 🪙${formatNumber(g.missCoins)} ＋ 🍬${g.missCandies}
+        </div>
+        <div class="quest-bar-bg" style="margin-top:8px;"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
+        <div class="sub" style="margin-top:4px;">天井まで: ${g.pity} / ${g.pityThreshold}回(累計 ${g.pulls}回)</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="primary-btn" data-hwpull="1" style="flex:1;" ${canOne?'':'disabled'}>${tk>0 ? '🎟 チケットで1回' : `🎃 1回 (🪙${formatNumber(g.cost)})`}</button>
+        <button class="primary-btn" data-hwpull="10" style="flex:1;" ${canTen?'':'disabled'}>🎃 10連 (🪙${formatNumber(coins10)}${usedTk10?` ＋🎟×${usedTk10}`:''})</button>
+      </div>
+      <div id="hwGachaResult" style="margin-top:10px;"></div>`;
+  }
+  function hwResultHtml(d){
+    const rows = d.results.map((r,i)=>{
+      let label, cls = '';
+      if(r.resultType==='win'){ label = `${r.pityTriggered?'🎯':'🎉'} ${hwSkinName(r.skinId)} 獲得！`; cls = 'win'; }
+      else if(r.resultType==='duplicate'){ label = `🔁 ${hwSkinName(r.skinId)} 被り (+🪙${formatNumber(r.coinsGained)} +🍬${r.candiesGained})`; }
+      else { label = `ハズレ (+🪙${formatNumber(r.coinsGained)} +🍬${r.candiesGained})`; cls = 'miss'; }
+      return `<div class="hw-res-row ${cls}">${d.results.length>1 ? (i+1)+'. ' : ''}${label}</div>`;
+    }).join('');
+    const wins = d.results.filter(r=>r.resultType==='win');
+    const swatches = wins.map(w=>hwSwatches(w.skinId,5)).join('');
+    return `<div class="hw-card ${wins.length?'gold':''}"><div class="qtitle" style="text-align:center;">${wins.length?'🎉 ':''}${d.results.length>1?'10連結果':'結果'}</div>${swatches}${rows}</div>`;
+  }
+  async function hwPull(count){
+    const btns = modalContent.querySelectorAll('[data-hwpull]');
+    btns.forEach(b=>b.disabled = true);
+    const area = document.getElementById('hwGachaResult');
+    if(area) area.innerHTML = `<div class="empty-hint">🎃 抽選中...</div>`;
+    try{
+      const d = await hwApi('gacha/pull', 'POST', { count });
+      hwApplyWallet(d);
+      hwState.gacha.pity = d.pity; hwState.gacha.pulls = d.pulls;
+      if(d.results.some(r=>r.resultType==='win'||r.resultType==='duplicate')) playSound('coin');
+      renderHalloween();
+      document.getElementById('hwGachaResult').innerHTML = hwResultHtml(d);
+    }catch(err){
+      if(area) area.innerHTML = `<div class="empty-hint">${err.message}</div>`;
+      btns.forEach(b=>b.disabled = false);
+      fetchEventStatus();   // 終了していた場合は、画面もすぐ閉じる/切り替える
+    }
+  }
+
+  // ----- 交換所 -----
+  function hwShopHtml(){
+    const s = hwState;
+    return `<div class="sub" style="margin-bottom:8px;">キャンディ 🍬${formatNumber(s.candies)} 所持中(交換で減っても、ロードの進行には影響しません)</div>` +
+      s.shop.map(it=>{
+        const left = it.limit - it.bought;
+        const can = left > 0 && s.candies >= it.cost;
+        const skin = it.give.type==='skin';
+        return `
+          <div class="hw-card">
+            <div class="qtitle">${it.name}</div>
+            ${skin ? hwSwatches(it.give.skinId, 5) : ''}
+            <div class="sub" style="margin:2px 0 8px;">${it.desc}</div>
+            <div class="quest-foot"><span>🍬 ${formatNumber(it.cost)} ／ 残り ${left}/${it.limit}</span>
+              <button class="claim-btn" data-hwbuy="${it.id}" ${can?'':'disabled'}>${left<=0?'交換済み':'交換する'}</button></div>
+          </div>`;
+      }).join('');
+  }
+
+  // ----- ランキング -----
+  async function hwLoadRanking(){
+    const body = document.getElementById('hwBody');
+    try{
+      const d = await hwApi('ranking');
+      if(hwTab!=='ranking' || !body) return;
+      const me = d.me;
+      let html = `<div class="sub" style="margin-bottom:8px;">累計キャンディのランキング(上位20人)。あなた: ${me.rank ? `${me.rank}位 / 🍬${formatNumber(me.total)}` : '圏外(まだ0)'}</div>`;
+      html += d.ranking.length ? d.ranking.map((r,i)=>`
+        <div class="friend-item ${r.id===me.id?'pending':''}"><span class="fname">${['🥇','🥈','🥉'][i] || (i+1)+'位'} ${r.id}</span><span class="fsub">🍬 ${formatNumber(r.total)}</span></div>`).join('')
+        : `<div class="empty-hint">まだ誰もキャンディを集めていません。一番乗りを目指そう！</div>`;
+      body.innerHTML = html;
+    }catch(err){ if(body) body.innerHTML = `<div class="empty-hint">${err.message}</div>`; }
+  }
+
+  // ----- ボタンの結びつけ -----
+  function hwBindBody(){
+    const on = (sel, fn)=> modalContent.querySelectorAll(sel).forEach(el=>el.addEventListener('click', ()=>fn(el)));
+    const run = async (fn, okMsg)=>{
+      try{ const d = await fn(); hwApplyWallet(d); hwState = await hwApi('state'); renderHalloween(okMsg ? `<div class="hw-banner ok">${okMsg(d)}</div>` : ''); playSound('coin'); }
+      catch(err){ alert(err.message); }
+    };
+    on('[data-hwgo]', el=>{ hwTab = el.dataset.hwgo; renderHalloween(); });
+    on('#hwLoginBtn', ()=>run(()=>hwApi('login-bonus','POST'), d=>`🎁 ${d.day}日目のボーナス: 🍬${d.reward.candies} 🪙${formatNumber(d.reward.coins)}${d.reward.tickets?` 🎟×${d.reward.tickets}`:''}`));
+    on('#hwRoadAll', ()=>run(()=>hwApi('road/claim','POST',{all:true}), d=>`🎁 ${d.claimedCount}件受け取りました: ${d.gained.join(' / ')}`));
+    on('[data-hwroad]', el=>run(()=>hwApi('road/claim','POST',{tier:parseInt(el.dataset.hwroad)}), d=>`🎁 受け取りました: ${d.gained.join(' / ')}`));
+    on('#hwMissionAll', ()=>run(()=>hwApi('missions/claim','POST',{all:true}), d=>`🍬 ミッション報酬 ${d.claimedCount}件(+${d.candies})`));
+    on('[data-hwmission]', el=>run(()=>hwApi('missions/claim','POST',{id:el.dataset.hwmission}), d=>`🍬 +${d.candies}`));
+    on('[data-hwbuy]', el=>run(()=>hwApi('shop/buy','POST',{id:el.dataset.hwbuy}), d=>`🛒 交換しました: ${d.gained}`));
+    on('[data-hwpull]', el=>hwPull(parseInt(el.dataset.hwpull)));
+  }
+
+  // ハロウィン背景(コウモリ・おばけ・カボチャ)。表示/非表示は CSS の body.hw で切り替わる
+  function buildHwBg(){
+    const box = document.getElementById('hwBg');
+    if(!box || box.childElementCount) return;
+    const items = ['🦇','🦇','🦇','🦇','🦇','👻','👻','🎃','🕸️','🦇'];
+    items.forEach((emoji, i)=>{
+      const el = document.createElement('span');
+      const ghost = (emoji==='👻' || emoji==='🎃' || emoji==='🕸️');
+      el.className = 'hw-fly' + (ghost ? ' ghost' : '');
+      el.textContent = emoji;
+      el.style.left = (ghost ? (8 + (i*13)%80) : 0) + 'vw';
+      el.style.top = (ghost ? 45 + (i*7)%40 : 6 + (i*11)%46) + 'vh';
+      el.style.fontSize = (ghost ? 26 + (i%3)*6 : 16 + (i%4)*5) + 'px';
+      el.style.setProperty('--dur', (ghost ? 14 + (i%4)*3 : 20 + (i*3)%16) + 's');
+      el.style.setProperty('--delay', (-(i*4.3)) + 's');
+      box.appendChild(el);
+    });
+  }
+  buildHwBg();
+
+  loadUiPrefs();
+  refreshEventTheme();
+  document.getElementById('titleEventBtn').addEventListener('click', ()=>{ hideTitleScreen(); openHalloweenModal('home'); });
+  updateEventButtons();
+  setInterval(()=>{ updateEventButtons(); const on = hwThemeOn(); if(on !== document.body.classList.contains('hw')) refreshEventTheme(); }, 1000);
+  fetchEventStatus();
+  setInterval(fetchEventStatus, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchEventStatus(); });
+
 
   // ===================== 💤 スリープ対策 =====================
   // ① サーバー(Render無料枠)が寝ていても、ページを開いた瞬間に起こしておく。開いている間も定期的に叩く。
