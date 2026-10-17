@@ -3,18 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>meccccccccccha</title>
-<meta name="app-version" content="2026.10.13-1">
+<title>とんかつぱーてぃー</title>
+<meta name="app-version" content="2026.10.18-1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&family=Shippori+Mincho+B1:wght@600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#0a0613">
+<meta name="description" content="キャンディブラスト — パズル・テトリス・ハロウィンイベント">
+<meta property="og:title" content="キャンディブラスト">
+<meta property="og:description" content="パズル・テトリス・ハロウィンイベント開催中！">
+<meta property="og:image" content="icons/og-image.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="theme.css">
 </head>
 <body>
+<div id="hwBg" aria-hidden="true"></div>
 <div id="titleScreen" class="title-screen">
-  <div class="title-card">
+  <div class="title-card" id="titleCard">
+    <!-- icons/logo.png を置くとテキストロゴの代わりに表示される(無ければ自動でテキストロゴ) -->
+    <img class="title-logo-img" src="icons/logo.png" alt="キャンディブラスト" onload="document.getElementById('titleCard').classList.add('has-logo')" onerror="this.remove()">
     <div class="title-logo">🍬 キャンディブラスト</div>
     <div class="title-sub">CANDY BLAST</div>
     <button class="title-menu-btn primary" id="titleStartBtn">▶ ゲーム開始</button>
+    <button class="title-menu-btn event" id="titleEventBtn" style="display:none;"><span><img class="btn-icon" src="icons/halloween.png" alt="" onerror="this.remove()" style="height:1.3em;vertical-align:-0.25em;margin-right:4px;">🎃 ハロウィン・ナイトフェス</span><small id="titleEventTimer"></small></button>
     <button class="title-menu-btn" id="titleTimeAttackBtn">⏱ タイムアタック</button>
     <button class="title-menu-btn" id="titleWeeklyBtn">🎲 週替わりチャレンジ</button>
     <button class="title-menu-btn" id="titleGachaBtn">🎰 ガチャ</button>
@@ -23,13 +37,13 @@
 <button class="title-menu-btn" id="titleOtherGamesBtn">🎮 別のゲーム</button>
     <button class="title-menu-btn" id="titleSettingsBtn">⚙ 設定</button>
     <div class="title-version-row">
-      <span>Ver. 2.2.0</span>
+      <span>Ver. 3.0.0</span>
       <button id="titleChangelogBtn">📢 更新履歴</button>
     </div>
   </div>
 </div>
 
-<div id="versionBadge">Ver. 2.2.0</div>
+<div id="versionBadge">Ver. 3.0.0</div>
 <div id="changelogPanel"></div>
 <div id="eventCountdownBadge" style="display:none;"><span id="eventCountdownText">⏰ --:--:--</span></div>
 
