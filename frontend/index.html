@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>とんかつぱーてぃー</title>
-<meta name="app-version" content="2026.10.18-1">
+<title>びっくかつどんかれー</title>
+<meta name="app-version" content="2026.10.18-2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&family=Shippori+Mincho+B1:wght@600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
 <meta name="theme-color" content="#0a0613">
@@ -18,61 +18,94 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="layout.css">
 </head>
 <body>
 <div id="hwBg" aria-hidden="true"></div>
 <div id="titleScreen" class="title-screen">
-  <div class="title-card" id="titleCard">
-    <!-- icons/logo.png を置くとテキストロゴの代わりに表示される(無ければ自動でテキストロゴ) -->
-    <img class="title-logo-img" src="icons/logo.png" alt="キャンディブラスト" onload="document.getElementById('titleCard').classList.add('has-logo')" onerror="this.remove()">
-    <div class="title-logo">🍬 キャンディブラスト</div>
-    <div class="title-sub">CANDY BLAST</div>
-    <button class="title-menu-btn primary" id="titleStartBtn">▶ ゲーム開始</button>
-    <button class="title-menu-btn event" id="titleEventBtn" style="display:none;"><span><img class="btn-icon" src="icons/halloween.png" alt="" onerror="this.remove()" style="height:1.3em;vertical-align:-0.25em;margin-right:4px;">🎃 ハロウィン・ナイトフェス</span><small id="titleEventTimer"></small></button>
-    <button class="title-menu-btn" id="titleTimeAttackBtn">⏱ タイムアタック</button>
-    <button class="title-menu-btn" id="titleWeeklyBtn">🎲 週替わりチャレンジ</button>
-    <button class="title-menu-btn" id="titleGachaBtn">🎰 ガチャ</button>
-    <button class="title-menu-btn" id="titleBattlePassBtn">🎫 バトルパス</button>
-    <button class="title-menu-btn" id="titleRecordsBtn">🏆 記録・実績</button>
-<button class="title-menu-btn" id="titleOtherGamesBtn">🎮 別のゲーム</button>
-    <button class="title-menu-btn" id="titleSettingsBtn">⚙ 設定</button>
+  <div class="lobby">
+    <div class="lobby-top">
+      <button class="lobby-chip" id="lobbyAccount" type="button"><span class="lc-ic">👤</span><span id="lobbyAccountName">ゲスト</span></button>
+      <div class="lobby-chip coin"><span class="lc-ic">🪙</span><b id="lobbyCoins">0</b></div>
+      <button class="lobby-icon" id="titleSettingsBtn" type="button" aria-label="設定">⚙</button>
+    </div>
+
+    <button class="lobby-event" id="titleEventBtn" type="button" style="display:none;">
+      <img class="btn-icon" src="icons/halloween.png" alt="" onerror="this.remove()">
+      <span class="le-main">🎃 ハロウィン・ナイトフェス</span>
+      <small id="titleEventTimer"></small>
+      <span class="le-go">›</span>
+    </button>
+
+    <div class="lobby-hero" id="titleCard">
+      <!-- icons/logo.png を置くとテキストロゴの代わりに表示される(無ければ自動でテキストロゴ) -->
+      <img class="title-logo-img" src="icons/logo.png" alt="キャンディブラスト" onload="document.getElementById('titleCard').classList.add('has-logo')" onerror="this.remove()">
+      <div class="title-logo">🍬 キャンディブラスト</div>
+      <div class="title-sub">CANDY BLAST</div>
+    </div>
+
+    <button class="lobby-play" id="titleStartBtn" type="button"><span class="lp-main">▶ PLAY</span><span class="lp-sub">モードを選んで開始</span></button>
+
+    <div class="lobby-quick">
+      <button class="lobby-wide" id="titleTimeAttackBtn" type="button"><span class="lw-ic">⏱</span><span>タイムアタック</span></button>
+      <button class="lobby-wide" id="titleWeeklyBtn" type="button"><span class="lw-ic">🎲</span><span>週替わり</span></button>
+    </div>
+
+    <div class="lobby-grid">
+      <button class="lobby-tile" id="titleGachaBtn" type="button"><span class="lt-ic">🎰</span><span class="lt-name">ガチャ</span><span class="lt-sub">GACHA</span></button>
+      <button class="lobby-tile" id="titleBattlePassBtn" type="button"><span class="lt-ic">🎫</span><span class="lt-name">バトルパス</span><span class="lt-sub">PASS</span></button>
+      <button class="lobby-tile" id="titleRecordsBtn" type="button"><span class="lt-ic">🏆</span><span class="lt-name">記録・実績</span><span class="lt-sub">RECORDS</span></button>
+      <button class="lobby-tile" id="titleOtherGamesBtn" type="button"><span class="lt-ic">🎮</span><span class="lt-name">別のゲーム</span><span class="lt-sub">MORE GAMES</span></button>
+    </div>
+
     <div class="title-version-row">
-      <span>Ver. 3.0.0</span>
+      <span>Ver. 3.1.0</span>
       <button id="titleChangelogBtn">📢 更新履歴</button>
     </div>
   </div>
 </div>
 
-<div id="versionBadge">Ver. 3.0.0</div>
+<div id="versionBadge">Ver. 3.1.0</div>
 <div id="changelogPanel"></div>
 <div id="eventCountdownBadge" style="display:none;"><span id="eventCountdownText">⏰ --:--:--</span></div>
 
 <div id="app">
   <header>
     <div class="title-wrap">
-      <div class="title" id="backButton">🏠 メニューに戻る</div>
+      <div class="title" id="backButton">‹ メニュー</div>
       <div class="mode-badge" id="modeBadge"></div>
     </div>
-    <div class="header-right">
+    <div class="hd-actions">
       <div class="pill-btn" id="questBtn">📋</div>
-      <div class="icon-btn" id="settingsBtn" title="設定">⚙️</div>
-<div class="icon-btn" id="soundBtn">🔊</div>
-      <div class="icon-btn" id="musicBtn" title="BGM">🎵</div> 
-      <div class="icon-btn" id="accountBtn">👤</div>
-      <div class="icon-btn" id="rankingBtn" title="ランキング">🏆</div>
-      <div class="icon-btn" id="adminPanelBtn" title="管理者パネル" style="display:none;">🔧</div>
-      <div class="icon-btn" id="friendsBtn" title="フレンド・DM">
-        👥
-        <span class="unread-dot" id="friendsDot"></span>
-        <span class="mention-badge" id="friendsMentionBadge">0</span>
-      </div>
-      <div class="icon-btn" id="chatBtn" title="チャット">
-        💬
-        <span class="unread-dot" id="chatDot"></span>
-        <span class="mention-badge" id="chatMentionBadge">0</span>
-      </div>
+      <div class="icon-btn" id="menuSheetBtn" aria-label="メニュー">☰<span class="unread-dot" id="menuDot"></span></div>
     </div>
   </header>
+
+  <!-- ☰ を押すと下から出るメニュー(以前はヘッダーに並んでいたアイコン群) -->
+  <div id="quickSheetWrap">
+    <div id="quickSheet">
+      <div class="qs-handle"></div>
+      <div class="qs-title">MENU</div>
+      <div class="qs-grid">
+        <div class="icon-btn" id="settingsBtn" data-label="設定">⚙️</div>
+        <div class="icon-btn" id="soundBtn" data-label="サウンド">🔊</div>
+        <div class="icon-btn" id="musicBtn" data-label="BGM">🎵</div>
+        <div class="icon-btn" id="accountBtn" data-label="アカウント">👤</div>
+        <div class="icon-btn" id="rankingBtn" data-label="ランキング">🏆</div>
+        <div class="icon-btn" id="friendsBtn" data-label="フレンド">
+          👥
+          <span class="unread-dot" id="friendsDot"></span>
+          <span class="mention-badge" id="friendsMentionBadge">0</span>
+        </div>
+        <div class="icon-btn" id="chatBtn" data-label="チャット">
+          💬
+          <span class="unread-dot" id="chatDot"></span>
+          <span class="mention-badge" id="chatMentionBadge">0</span>
+        </div>
+        <div class="icon-btn" id="adminPanelBtn" data-label="管理" style="display:none;">🔧</div>
+      </div>
+    </div>
+  </div>
 
   <div class="scoreboard">
     <div class="score-card"><div class="label">score</div><div class="value" id="scoreVal">0</div></div>
@@ -122,12 +155,12 @@
       <div class="tetris-help-panel" id="tetrisHelpPanel"></div>
     </div>
     <div class="tetris-controls">
-      <div class="tetris-btn hold" id="tBtnHold">⇄ HOLD</div>
-      <div class="tetris-btn" id="tBtnRotate">⟳</div>
-      <div class="tetris-btn" id="tBtnLeft">◀</div>
-      <div class="tetris-btn" id="tBtnRight">▶</div>
-      <div class="tetris-btn wide" id="tBtnSoft">▼ ソフトドロップ</div>
-      <div class="tetris-btn wide hard" id="tBtnHard">⤓ ハードドロップ（一気に落とす）</div>
+      <div class="tetris-btn" id="tBtnLeft"><span class="tb-ic">◀</span></div>
+      <div class="tetris-btn" id="tBtnRight"><span class="tb-ic">▶</span></div>
+      <div class="tetris-btn rot" id="tBtnRotate"><span class="tb-ic">⟳</span><small>回転</small></div>
+      <div class="tetris-btn soft" id="tBtnSoft"><span class="tb-ic">▼</span><small>ソフト</small></div>
+      <div class="tetris-btn hard" id="tBtnHard"><span class="tb-ic">⤓</span><small>ハード</small></div>
+      <div class="tetris-btn hold" id="tBtnHold"><span class="tb-ic">⇄</span><small>HOLD</small></div>
     </div>
   </div>
 </div>
