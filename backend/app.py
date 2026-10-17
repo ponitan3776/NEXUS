@@ -332,6 +332,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     """)
     print('✅ 週替わりチャレンジテーブル作成完了')
 
+    # 🎃 イベント進行状況 / フレンド対決のゲーム種別
+    db_execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS event_state JSONB DEFAULT '{}'::jsonb;")
+    db_execute("ALTER TABLE duels ADD COLUMN IF NOT EXISTS game TEXT DEFAULT 'candy';")
+
     # Supabase では public スキーマのテーブルが Data API(anonキー)から見えうるため、
     # 全テーブルでRLSを有効化(ポリシーなし = anon/authenticated は一切アクセス不可)。
     # このサーバーは postgres ロールで直接接続するのでRLSの影響を受けない。
@@ -362,10 +366,11 @@ GACHA_SKIN_IDS = [
     'gacha_eternalclockwork', 'gacha_prismaticqueen',
 ]
 
-GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS)
+import halloween  # 🎃 期間限定イベント(別ファイル)
+GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
-GACHA_RATE_PER_SKIN = 0.02
-GACHA_PITY_THRESHOLD = 50
+GACHA_RATE_PER_SKIN = 0.01   # 1スキンあたり1%(8種で合計8%)
+GACHA_PITY_THRESHOLD = 60
 GACHA_DUPLICATE_COINS = 500
 GACHA_MISS_COINS = 30
 
@@ -677,6 +682,7 @@ def gacha_state():
             'coins': int(u.get('coins') or 0), 'totalPulls': gs.get('totalPulls', 0),
             'pityCounter': gs.get('pityCounter', 0), 'pityThreshold': GACHA_PITY_THRESHOLD,
             'cost': GACHA_COST, 'freeTickets': gs.get('freeTickets', 0),
+            'ratePerSkin': GACHA_RATE_PER_SKIN, 'rateTotal': round(GACHA_RATE_PER_SKIN * len(GACHA_SKIN_IDS), 4),
             'ownedSkins': json.loads(u.get('skins') or '["default"]')
         })
     except ApiError as e:
@@ -1311,8 +1317,9 @@ def duels_challenge():
             raise ApiError('対戦相手を指定してください', 400)
         if not are_friends(user_id, opponent_id):
             raise ApiError('フレンドのみ対決できます', 403)
-        rows = db_query('INSERT INTO duels (challenger_id, opponent_id) VALUES (%s, %s) RETURNING *',
-                        [user_id, opponent_id])
+        game = body.get('game') if body.get('game') in ('candy', 'tetris') else 'candy'
+        rows = db_query('INSERT INTO duels (challenger_id, opponent_id, game) VALUES (%s, %s, %s) RETURNING *',
+                        [user_id, opponent_id, game])
         return jsonify({'duel': rows[0]})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
@@ -1354,7 +1361,10 @@ def duels_submit_score(duel_id):
     try:
         user_id = require_auth()
         body = request.get_json(silent=True) or {}
-        score = body.get('score')
+        try:
+            score = max(0, min(int(body.get('score') or 0), 2_000_000_000))
+        except (TypeError, ValueError):
+            raise ApiError('スコアが不正です', 400)
         rows = db_query('SELECT * FROM duels WHERE id=%s', [duel_id])
         if not rows:
             raise ApiError('対決が見つかりません', 404)
@@ -1837,6 +1847,10 @@ def user_profile(user_id_param):
     except Exception as err:
         print(err)
         return jsonify({'error': 'プロフィール取得エラー'}), 500
+
+
+# ===================== 🎃 ハロウィンイベントのAPIを登録 =====================
+halloween.register(app, db_query, db_transaction, require_auth, ApiError)
 
 
 # ===================== ヘルスチェック / スリープ対策 =====================
