@@ -6137,6 +6137,13 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.1.0', date:'2026-10-18', items:[
+      '🏠 ホーム画面をロビー型に刷新(大きなPLAYボタン + 機能タイル + コイン・アカウント表示)',
+      '🎮 ゲーム中のヘッダーを細いバーにして盤面を最大化。アイコン類は ☰ メニューにまとめました',
+      '📋 ウィンドウを画面下から出るボトムシートに変更',
+      '🧱 テトリスの操作ボタンを、両手の親指で押しやすい2ブロック配置に変更',
+      '◇ 角丸を小さく、四隅に金の角飾りを付けたシャープなデザインに'
+    ]},
     { version:'3.0.0', date:'2026-10-18', items:[
       '🎃 ハロウィン・ナイトフェス開催！ 期間限定ガチャ(1回5000コイン)・ロード・ミッション・交換所・ランキング',
       '👕 ハロウィンスキンを10種追加(ガチャ6種 / ロード2種 / 交換所2種)',
@@ -6733,6 +6740,32 @@ function renderOtherGamesModal(){
   setInterval(fetchEventStatus, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchEventStatus(); });
 
+
+  // ===================== 🧭 新レイアウト: メニューシート・ロビー表示 =====================
+  (function setupNewLayout(){
+    const sheet = document.getElementById('quickSheetWrap');
+    const openBtn = document.getElementById('menuSheetBtn');
+    const lobbyName = document.getElementById('lobbyAccountName');
+    const lobbyCoins = document.getElementById('lobbyCoins');
+    const menuDot = document.getElementById('menuDot');
+    const toggle = (on)=> sheet.classList.toggle('show', !!on);
+    openBtn.addEventListener('click', ()=>toggle(true));
+    // 背景タップ・項目タップで閉じる(サウンドのON/OFFだけは開いたまま)
+    sheet.addEventListener('click', (e)=>{
+      if(e.target === sheet) return toggle(false);
+      const item = e.target.closest && e.target.closest('.icon-btn');
+      if(item && item.id !== 'soundBtn') toggle(false);
+    });
+    document.getElementById('lobbyAccount').addEventListener('click', ()=>{ hideTitleScreen(); accountBtn.click(); });
+    const update = ()=>{
+      lobbyName.textContent = currentUserId || 'ゲスト';
+      lobbyCoins.textContent = formatNumber(coins);
+      // 未読(フレンド・チャット)があれば ☰ にも赤い点を出す
+      menuDot.classList.toggle('show', friendsDot.classList.contains('show') || chatDot.classList.contains('show'));
+    };
+    update();
+    setInterval(update, 1000);
+  })();
 
   // ===================== 💤 スリープ対策 =====================
   // ① サーバー(Render無料枠)が寝ていても、ページを開いた瞬間に起こしておく。開いている間も定期的に叩く。
