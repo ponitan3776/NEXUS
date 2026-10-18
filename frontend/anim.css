@@ -77,9 +77,9 @@
 #tray{ animation-delay:.06s; }
 
 /* ---------- ウィンドウ ---------- */
-#modalOverlay.show, #overlay.show, #quickSheetWrap.show{ animation:fadeIn .22s ease-out both; }
-#modalOverlay.closing, #quickSheetWrap.closing{ animation:fadeOut .2s ease-in forwards; pointer-events:none; }
-#modalOverlay.closing .panel-box, #quickSheetWrap.closing #quickSheet{ animation:sheetDown .2s ease-in forwards; }
+#modalOverlay.show, #overlay.show, #quickSheetWrap.show, #changelogPanel.show{ animation:fadeIn .22s ease-out both; }
+#modalOverlay.closing, #quickSheetWrap.closing, #changelogPanel.closing{ animation:fadeOut .2s ease-in forwards; pointer-events:none; }
+#modalOverlay.closing .panel-box, #quickSheetWrap.closing #quickSheet, #changelogPanel.closing .cl-sheet{ animation:sheetDown .2s ease-in forwards; }
 #overlay.show .panel-box{ animation:popBounce .55s var(--out) both; }
 #overlay.show .final-score{ animation:scorePop .7s .2s var(--spring) both; }
 #overlay.show .panel-box > *:not(.final-score):not(h2){ animation:riseIn .45s var(--out) both; }
