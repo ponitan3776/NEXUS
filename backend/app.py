@@ -129,6 +129,15 @@ def db_transaction():
 
 
 # ===================== Discord通知 =====================
+def to_copy_block(text, limit=3700):
+    """ご要望・不具合の本文を、コピーしやすい「コードブロック」(```)に包む。
+    ・PCのDiscord: ブロックの右上にマウスを乗せると「コピー」ボタンが出る(クリックで全文コピー)
+    ・スマホのDiscord: ブロックを長押し/タップして選択 → コピー
+    本文に ``` が含まれているとブロックが壊れるので、間にゼロ幅スペースを入れて無害化する。"""
+    safe = (text or '').strip()[:limit].replace('```', '`\u200b`\u200b`')
+    return '📋 **内容**(PC=右上のコピーボタン / スマホ=長押しでコピー)\n```\n' + safe + '\n```'
+
+
 def send_discord_notification(webhook_url, title, description, color=0x5865F2,
                                fields=None, image_bytes=None, image_filename='image.png',
                                image_mime_type='image/png'):
@@ -370,7 +379,7 @@ import halloween  # 🎃 期間限定イベント(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.01   # 1スキンあたり1%(8種で合計8%)
-GACHA_PITY_THRESHOLD = 60
+GACHA_PITY_THRESHOLD = 1000
 GACHA_DUPLICATE_COINS = 500
 GACHA_MISS_COINS = 30
 
@@ -1103,7 +1112,7 @@ def feedback_request():
     user_id = get_user_id_optional()
     try:
         sent = send_discord_notification(
-            DISCORD_WEBHOOK_FEATURE_REQUEST, '💡 新しいご要望', message[:3800], 0xFFD93D,
+            DISCORD_WEBHOOK_FEATURE_REQUEST, '💡 新しいご要望', to_copy_block(message), 0xFFD93D,
             [{'name': '送信者', 'value': user_id, 'inline': True}]
         )
         if not sent:
@@ -1138,7 +1147,7 @@ def feedback_report():
             if len(image_bytes) > 8 * 1024 * 1024:
                 return jsonify({'error': '画像サイズが大きすぎます（8MBまで）'}), 400
         sent = send_discord_notification(
-            DISCORD_WEBHOOK_BUG_REPORT, '🐞 不具合の報告', message[:3800], 0xFF5555,
+            DISCORD_WEBHOOK_BUG_REPORT, '🐞 不具合の報告', to_copy_block(message), 0xFF5555,
             [{'name': '報告者', 'value': user_id, 'inline': True}],
             image_bytes, f'report.{image_ext}', image_mime_type
         )
