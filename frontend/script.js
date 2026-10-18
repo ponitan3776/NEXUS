@@ -6187,6 +6187,13 @@ function renderOtherGamesModal(){
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
     { version:'3.2.0', date:'2026-10-18', items:[
+      '🕹 新しい「ミニゲーム」を6本追加(2048 / パンプキン・スネーク / おばけ神経衰弱 / おばけたたき / マイン・ハンター / ゴースト・フライト)。遊ぶとコイン・バトルパスXP・ハロウィンキャンディがもらえます',
+      '🍬 ハロウィンガチャを、コインではなく専用通貨「ハロウィンキャンディ」で引くように変更(1回80個)。キャンディは集めやすく調整しました',
+      '🎯 ガチャの天井を、通常・ハロウィンともに1000回に変更',
+      '📢 更新履歴が他のUIと重なったり、一番奥に隠れたりする不具合を修正(専用のシートで表示)',
+      '📋 ご要望・不具合のDiscord通知を、タップ/クリックでコピーしやすい形式に変更'
+    ]},
+    { version:'3.1.2', date:'2026-10-18', items:[
       '✨ 全体にアニメーションを追加(画面の切り替え・ボタン・ウィンドウ・リスト・ゲージ・数字・ゲーム中)',
       '👆 タップした場所に波紋が広がり、ボタンはぽよんと弾みます',
       '🪙 コインがふわっとカウントアップ / スコアが変わるとぽんっと弾む',
@@ -6251,41 +6258,39 @@ function renderOtherGamesModal(){
       '🐞 テトリスのハードドロップがiPad横画面で見えない不具合を修正'
     ]}
   ];
+  // 更新履歴: 画面いっぱいの専用シート(ロビー・ゲーム中のどちらからでも、必ず一番手前に出る)
   function renderChangelogHTML(){
-    const latest = CHANGELOG[0];
-    return `<h4>📢 更新履歴（最新）</h4>
-      <div class="cl-entry"><b>Ver ${latest.version}（${latest.date}）</b>${latest.items.map(i=>`・${i}`).join('<br>')}</div>
-      <button id="viewFullHistoryBtn" style="width:100%; margin-top:8px; background:var(--panel-light); border:none; color:var(--mint); font-weight:800; font-size:11.5px; padding:8px 0; border-radius:10px; cursor:pointer;">📜 過去の更新履歴を見る</button>
-    `;
-  }
-  function renderFullHistoryModal(){
-    modalContent.dataset.mode = 'history';
-    let html = `<h2 style="color:var(--gold);">📜 過去の更新履歴</h2>`;
-    CHANGELOG.forEach(v=>{
-      html += `<div class="quest-item"><div class="qtitle">Ver ${v.version}（${v.date}）</div>
-        <div class="sub" style="margin-top:4px;">${v.items.map(i=>`・${i}`).join('<br>')}</div></div>`;
-    });
-    modalContent.innerHTML = html;
+    const entries = CHANGELOG.map((v,i)=>`
+      <details class="cl-item" ${i===0?'open':''}>
+        <summary><span class="cl-ver">Ver ${v.version}</span><span class="cl-date">${v.date}</span>${i===0?'<span class="cl-new">NEW</span>':''}</summary>
+        <div class="cl-items">${v.items.map(t=>`<div class="cl-line">${t}</div>`).join('')}</div>
+      </details>`).join('');
+    return `<div class="cl-sheet">
+      <div class="qs-handle"></div>
+      <div class="cl-head"><div class="cl-title">📢 更新履歴</div><button class="cl-close" id="clCloseBtn" type="button" aria-label="閉じる">✕</button></div>
+      <div class="cl-body">${entries}</div>
+    </div>`;
   }
   const changelogPanelEl = document.getElementById('changelogPanel');
+  let changelogTimer = null;
   function openChangelogPanel(){
+    clearTimeout(changelogTimer);
     changelogPanelEl.innerHTML = renderChangelogHTML();
-    const btn = document.getElementById('viewFullHistoryBtn');
-    if(btn) btn.addEventListener('click', ()=>{
-      changelogPanelEl.classList.remove('show');
-      renderFullHistoryModal();
-      modalOverlay.classList.add('show');
-    });
+    changelogPanelEl.classList.remove('closing');
+    changelogPanelEl.classList.add('show');
+    document.getElementById('clCloseBtn').addEventListener('click', closeChangelogPanel);
   }
+  function closeChangelogPanel(){
+    if(!changelogPanelEl.classList.contains('show')) return;
+    if(motionOff()){ changelogPanelEl.classList.remove('show'); return; }
+    changelogPanelEl.classList.add('closing');
+    changelogTimer = setTimeout(()=>changelogPanelEl.classList.remove('show', 'closing'), 200);
+  }
+  changelogPanelEl.addEventListener('click', (e)=>{ if(e.target === changelogPanelEl) closeChangelogPanel(); });
   document.getElementById('versionBadge').addEventListener('click', ()=>{
-    if(changelogPanelEl.classList.contains('show')){ changelogPanelEl.classList.remove('show'); return; }
-    openChangelogPanel();
-    changelogPanelEl.classList.add('show');
+    if(changelogPanelEl.classList.contains('show')) closeChangelogPanel(); else openChangelogPanel();
   });
-  document.getElementById('titleChangelogBtn').addEventListener('click', ()=>{
-    openChangelogPanel();
-    changelogPanelEl.classList.add('show');
-  });
+  document.getElementById('titleChangelogBtn').addEventListener('click', openChangelogPanel);
 
   // ===================== 🆕 スケジュールイベント(管理者が設定した自動報酬)のカウントダウン表示 =====================
   let eventsData = [];
@@ -6587,18 +6592,19 @@ function renderOtherGamesModal(){
       <div class="hw-card">
         <div class="qtitle">🍬 キャンディの集め方</div>
         <div class="sub hw-list">
-          ・どのゲームも、遊ぶたびにキャンディがもらえる(高得点・ライン消し・Tスピン・パーフェクトクリアでボーナス)<br>
+          ・どのゲーム(ミニゲームも)も、遊ぶたびにキャンディがもらえる(高得点・ライン消し・Tスピン・パーフェクトクリアでボーナス)<br>
           ・毎日のミッション(3つ)と、毎週のミッション(3つ)をクリア<br>
           ・毎日のログインボーナス<br>
           ・フレンド対決をプレイすると +10 ボーナス<br>
-          ・ハロウィンガチャは、ハズレでもキャンディがもらえる<br>
-          ・集めたキャンディは、ロードの報酬・交換所・ランキングに使われます
+          ・ハロウィンガチャは、ハズレでもキャンディが少し戻ってくる<br>
+          ・集めたキャンディは、ガチャ(1回🍬80)・交換所・ロード・ランキングに使われます<br>
+          ・ガチャや交換所で使っても、ロードの進行(累計)は減りません
         </div>
       </div>
       <div class="hw-card">
         <div class="qtitle">📅 開催期間</div>
         <div class="sub">${fmtDateJst(eventInfo.startsAt)} 〜 ${fmtDateJst(eventInfo.endsAt)}(日本時間)<br>
-        ⚠️ ハロウィンガチャと新規のキャンディ獲得は、終了時刻で自動的に終了します。終了後 約2日間は、報酬の受け取りと交換所が使えます。<br>
+        ⚠️ ハロウィンガチャと新規のキャンディ獲得は、終了時刻で自動的に終了します(余ったキャンディは交換所で使えます)。終了後 約2日間は、報酬の受け取りと交換所が使えます。<br>
         入手したスキンは、イベント終了後もずっと使えます。</div>
       </div>`;
   }
@@ -6656,9 +6662,9 @@ function renderOtherGamesModal(){
   function hwGachaHtml(){
     const s = hwState, g = s.gacha, active = eventPhaseNow()==='active';
     const tk = s.tickets;
-    const canOne = active && (tk > 0 || s.coins >= g.cost);
-    const usedTk10 = Math.min(tk, 10), coins10 = (10 - usedTk10) * g.cost;
-    const canTen = active && s.coins >= coins10;
+    const canOne = active && (tk > 0 || s.candies >= g.cost);
+    const usedTk10 = Math.min(tk, 10), candies10 = (10 - usedTk10) * g.cost;
+    const canTen = active && s.candies >= candies10;
     const pct = Math.min(100, Math.round(g.pity / g.pityThreshold * 100));
     const pct2 = n => (n*100).toFixed(2).replace(/\.?0+$/,'');
     const cards = g.pool.map(id=>`
@@ -6674,23 +6680,25 @@ function renderOtherGamesModal(){
         <div class="sub hw-list">
           📊 排出率: 1スキン ${pct2(g.ratePerSkin)}% ／ 合計 ${pct2(g.rateTotal)}%<br>
           🎯 天井: ${g.pityThreshold}回(未所持のスキンから優先して確定)<br>
-          🔁 被り: 🪙${formatNumber(g.dupCoins)} ＋ 🍬${g.dupCandies} ／ ハズレ: 🪙${formatNumber(g.missCoins)} ＋ 🍬${g.missCandies}
+          🍬 ハロウィンキャンディ専用ガチャ(コインは使いません)。1回 🍬${g.cost}<br>
+          🔁 被り: 🍬${g.dupCandies}が戻る ／ ハズレ: 🍬${g.missCandies}が戻る
         </div>
         <div class="quest-bar-bg" style="margin-top:8px;"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
         <div class="sub" style="margin-top:4px;">天井まで: ${g.pity} / ${g.pityThreshold}回(累計 ${g.pulls}回)</div>
       </div>
       <div style="display:flex; gap:8px;">
-        <button class="primary-btn" data-hwpull="1" style="flex:1;" ${canOne?'':'disabled'}>${tk>0 ? '🎟 チケットで1回' : `🎃 1回 (🪙${formatNumber(g.cost)})`}</button>
-        <button class="primary-btn" data-hwpull="10" style="flex:1;" ${canTen?'':'disabled'}>🎃 10連 (🪙${formatNumber(coins10)}${usedTk10?` ＋🎟×${usedTk10}`:''})</button>
+        <button class="primary-btn" data-hwpull="1" style="flex:1;" ${canOne?'':'disabled'}>${tk>0 ? '🎟 チケットで1回' : `🎃 1回 (🍬${formatNumber(g.cost)})`}</button>
+        <button class="primary-btn" data-hwpull="10" style="flex:1;" ${canTen?'':'disabled'}>🎃 10連 (🍬${formatNumber(candies10)}${usedTk10?` ＋🎟×${usedTk10}`:''})</button>
       </div>
+      <div class="sub" style="margin-top:8px;">所持: 🍬 ${formatNumber(s.candies)} ／ 🎟 ${formatNumber(tk)}</div>
       <div id="hwGachaResult" style="margin-top:10px;"></div>`;
   }
   function hwResultHtml(d){
     const rows = d.results.map((r,i)=>{
       let label, cls = '';
       if(r.resultType==='win'){ label = `${r.pityTriggered?'🎯':'🎉'} ${hwSkinName(r.skinId)} 獲得！`; cls = 'win'; }
-      else if(r.resultType==='duplicate'){ label = `🔁 ${hwSkinName(r.skinId)} 被り (+🪙${formatNumber(r.coinsGained)} +🍬${r.candiesGained})`; }
-      else { label = `ハズレ (+🪙${formatNumber(r.coinsGained)} +🍬${r.candiesGained})`; cls = 'miss'; }
+      else if(r.resultType==='duplicate'){ label = `🔁 ${hwSkinName(r.skinId)} 被り (+🍬${r.candiesGained})`; }
+      else { label = `ハズレ (+🍬${r.candiesGained})`; cls = 'miss'; }
       return `<div class="hw-res-row ${cls}">${d.results.length>1 ? (i+1)+'. ' : ''}${label}</div>`;
     }).join('');
     const wins = d.results.filter(r=>r.resultType==='win');
@@ -6876,6 +6884,15 @@ function renderOtherGamesModal(){
     // ④ 起動時、ロビーの入場アニメが終わったらクラスを外す(PLAYボタンの常時アニメを動かすため)
     setTimeout(()=>document.getElementById('titleScreen').classList.remove('lobby-in'), 1400);
   })();
+
+  // ===================== 🕹 ミニゲーム(minigames.js)に公開する窓口 =====================
+  window.CB = {
+    addCoins(n){ coins += n; updateCoinUI(); },
+    report: reportEventGame,                       // 🎃 イベントのキャンディ・ミッション
+    xp: grantBattlePassXp,                         // バトルパスXP
+    sync(){ if(authToken) syncToServer(); },       // コイン等をサーバーへ保存
+    fmt: formatNumber, sound: playSound, vibrate, toast: showEventToast, motionOff
+  };
 
   // ===================== 💤 スリープ対策 =====================
   // ① サーバー(Render無料枠)が寝ていても、ページを開いた瞬間に起こしておく。開いている間も定期的に叩く。
