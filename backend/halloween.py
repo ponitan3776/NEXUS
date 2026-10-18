@@ -58,13 +58,13 @@ def phase(now=None):
 
 
 # ===================== ハロウィンガチャ =====================
-GACHA_COST = 5000              # 1回あたりのコイン
+# ★専用通貨「ハロウィンキャンディ 🍬」で引く(コインは使わない)。
+#   アクティブに遊ぶ人で1日およそ500個、のんびりでも約200個たまる想定 → 1回80個なら、期間中に数十〜百数十回引ける
+GACHA_COST = 80                # 1回あたりのキャンディ(10連は800)
 GACHA_RATE_PER_SKIN = 0.012    # 1スキンあたりの排出率(6種で合計7.2%)
-GACHA_PITY = 50                # 天井(未所持のスキンから優先して確定)
-GACHA_DUP_COINS = 2500
-GACHA_DUP_CANDIES = 20
-GACHA_MISS_COINS = 250
-GACHA_MISS_CANDIES = 6
+GACHA_PITY = 1000              # 天井(未所持のスキンから優先して確定)
+GACHA_DUP_CANDIES = 40         # 被り: 半分が戻ってくる
+GACHA_MISS_CANDIES = 8         # ハズレ: 1割が戻ってくる
 
 GACHA_POOL = [
     'hween_pumpkinking', 'hween_vampire', 'hween_ghostparade',
@@ -80,7 +80,7 @@ ROAD_TIERS = 40
 
 
 def road_need(tier):
-    return 30 * tier + 2 * tier * tier          # 10段=500 / 20段=1400 / 40段=4400
+    return 45 * tier + 3 * tier * tier          # 10段=750 / 20段=2100 / 40段=6600
 
 
 def road_reward(tier):
@@ -103,26 +103,26 @@ ROAD = [{'tier': t, 'need': road_need(t), 'reward': road_reward(t)} for t in ran
 
 # ===================== ミッション =====================
 DAILY_POOL = [
-    {'id': 'd_games3',   'stat': 'games',     'target': 3,     'candies': 25, 'text': 'ゲームを3回プレイする'},
-    {'id': 'd_games6',   'stat': 'games',     'target': 6,     'candies': 40, 'text': 'ゲームを6回プレイする'},
-    {'id': 'd_lines20',  'stat': 'lines',     'target': 20,    'candies': 30, 'text': 'テトリスで合計20ライン消す'},
-    {'id': 'd_lines60',  'stat': 'lines',     'target': 60,    'candies': 45, 'text': 'テトリスで合計60ライン消す'},
-    {'id': 'd_score5k',  'stat': 'score_max', 'target': 5000,  'candies': 30, 'text': '1ゲームで5,000点を出す'},
-    {'id': 'd_score20k', 'stat': 'score_max', 'target': 20000, 'candies': 45, 'text': '1ゲームで20,000点を出す'},
-    {'id': 'd_tspin1',   'stat': 'tspin',     'target': 1,     'candies': 35, 'text': 'Tスピンを1回決める'},
-    {'id': 'd_tspin3',   'stat': 'tspin',     'target': 3,     'candies': 50, 'text': 'Tスピンを3回決める'},
-    {'id': 'd_vs1',      'stat': 'vs_games',  'target': 1,     'candies': 30, 'text': 'テトリスでAIと1回対戦する'},
-    {'id': 'd_pulls3',   'stat': 'hw_pulls',  'target': 3,     'candies': 30, 'text': 'ハロウィンガチャを3回引く'},
-    {'id': 'd_duel1',    'stat': 'duels',     'target': 1,     'candies': 40, 'text': 'フレンド対決を1回プレイする'},
+    {'id': 'd_games3',   'stat': 'games',     'target': 3,     'candies': 35, 'text': 'ゲームを3回プレイする'},
+    {'id': 'd_games6',   'stat': 'games',     'target': 6,     'candies': 55, 'text': 'ゲームを6回プレイする'},
+    {'id': 'd_lines20',  'stat': 'lines',     'target': 20,    'candies': 40, 'text': 'テトリスで合計20ライン消す'},
+    {'id': 'd_lines60',  'stat': 'lines',     'target': 60,    'candies': 65, 'text': 'テトリスで合計60ライン消す'},
+    {'id': 'd_score5k',  'stat': 'score_max', 'target': 5000,  'candies': 40, 'text': '1ゲームで5,000点を出す'},
+    {'id': 'd_score20k', 'stat': 'score_max', 'target': 20000, 'candies': 65, 'text': '1ゲームで20,000点を出す'},
+    {'id': 'd_tspin1',   'stat': 'tspin',     'target': 1,     'candies': 50, 'text': 'Tスピンを1回決める'},
+    {'id': 'd_tspin3',   'stat': 'tspin',     'target': 3,     'candies': 70, 'text': 'Tスピンを3回決める'},
+    {'id': 'd_vs1',      'stat': 'vs_games',  'target': 1,     'candies': 40, 'text': 'テトリスでAIと1回対戦する'},
+    {'id': 'd_pulls3',   'stat': 'hw_pulls',  'target': 3,     'candies': 40, 'text': 'ハロウィンガチャを3回引く'},
+    {'id': 'd_duel1',    'stat': 'duels',     'target': 1,     'candies': 55, 'text': 'フレンド対決を1回プレイする'},
 ]
 WEEKLY_POOL = [
-    {'id': 'w_games30',  'stat': 'games',     'target': 30,     'candies': 150, 'text': '今週ゲームを30回プレイする'},
-    {'id': 'w_lines300', 'stat': 'lines',     'target': 300,    'candies': 160, 'text': '今週テトリスで300ライン消す'},
-    {'id': 'w_tspin10',  'stat': 'tspin',     'target': 10,     'candies': 170, 'text': '今週Tスピンを10回決める'},
-    {'id': 'w_pc1',      'stat': 'pc',        'target': 1,      'candies': 200, 'text': '今週パーフェクトクリアを1回決める'},
-    {'id': 'w_pulls20',  'stat': 'hw_pulls',  'target': 20,     'candies': 150, 'text': '今週ハロウィンガチャを20回引く'},
-    {'id': 'w_score60k', 'stat': 'score_max', 'target': 60000,  'candies': 180, 'text': '今週1ゲームで60,000点を出す'},
-    {'id': 'w_vs5',      'stat': 'vs_games',  'target': 5,      'candies': 140, 'text': '今週テトリスでAIと5回対戦する'},
+    {'id': 'w_games30',  'stat': 'games',     'target': 30,     'candies': 210, 'text': '今週ゲームを30回プレイする'},
+    {'id': 'w_lines300', 'stat': 'lines',     'target': 300,    'candies': 225, 'text': '今週テトリスで300ライン消す'},
+    {'id': 'w_tspin10',  'stat': 'tspin',     'target': 10,     'candies': 240, 'text': '今週Tスピンを10回決める'},
+    {'id': 'w_pc1',      'stat': 'pc',        'target': 1,      'candies': 280, 'text': '今週パーフェクトクリアを1回決める'},
+    {'id': 'w_pulls20',  'stat': 'hw_pulls',  'target': 20,     'candies': 210, 'text': '今週ハロウィンガチャを20回引く'},
+    {'id': 'w_score60k', 'stat': 'score_max', 'target': 60000,  'candies': 250, 'text': '今週1ゲームで60,000点を出す'},
+    {'id': 'w_vs5',      'stat': 'vs_games',  'target': 5,      'candies': 195, 'text': '今週テトリスでAIと5回対戦する'},
 ]
 
 
@@ -149,15 +149,13 @@ def weekly_missions(week=None):
 
 # ===================== 交換所 =====================
 SHOP = [
-    {'id': 'ticket', 'name': '🎟 ハロウィンチケット', 'desc': 'ハロウィンガチャを1回引ける', 'cost': 70, 'limit': 30,
-     'give': {'type': 'ticket', 'amount': 1}},
-    {'id': 'coins', 'name': '🪙 5,000コイン', 'desc': 'すぐ使えるコイン', 'cost': 40, 'limit': 20,
+    {'id': 'coins', 'name': '🪙 5,000コイン', 'desc': 'すぐ使えるコイン', 'cost': 60, 'limit': 20,
      'give': {'type': 'coins', 'amount': 5000}},
-    {'id': 'bpxp', 'name': '🎫 バトルパスXP +3,000', 'desc': 'バトルパスが一気に進む', 'cost': 50, 'limit': 10,
+    {'id': 'bpxp', 'name': '🎫 バトルパスXP +3,000', 'desc': 'バトルパスが一気に進む', 'cost': 70, 'limit': 10,
      'give': {'type': 'bpxp', 'amount': 3000}},
-    {'id': 'hween_spiderweb', 'name': '🕸 スパイダーウェブ(スキン)', 'desc': '交換所限定スキン', 'cost': 1500, 'limit': 1,
+    {'id': 'hween_spiderweb', 'name': '🕸 スパイダーウェブ(スキン)', 'desc': '交換所限定スキン', 'cost': 2000, 'limit': 1,
      'give': {'type': 'skin', 'skinId': 'hween_spiderweb'}},
-    {'id': 'hween_batswarm', 'name': '🦇 バットスウォーム(スキン)', 'desc': '交換所限定スキン', 'cost': 2500, 'limit': 1,
+    {'id': 'hween_batswarm', 'name': '🦇 バットスウォーム(スキン)', 'desc': '交換所限定スキン', 'cost': 3500, 'limit': 1,
      'give': {'type': 'skin', 'skinId': 'hween_batswarm'}},
 ]
 SHOP_BY_ID = {s['id']: s for s in SHOP}
@@ -167,7 +165,7 @@ LOGIN_CYCLE = 7
 
 
 def login_reward(day):
-    r = {'candies': 10 + 5 * day, 'coins': 500 * day, 'tickets': 0}
+    r = {'candies': 20 + 10 * day, 'coins': 500 * day, 'tickets': 0}
     if day == LOGIN_CYCLE:
         r['tickets'] = 1
     return r
@@ -227,8 +225,8 @@ def add_candies(st, amount):
 
 
 def candies_for_game(score, lines, tspins, pcs, duel):
-    c = 4 + min(26, score // 1500) + min(10, lines // 4) + 6 * min(tspins, 3) + 15 * min(pcs, 2) + (10 if duel else 0)
-    return min(c, 70)
+    c = 6 + min(30, score // 1200) + min(12, lines // 3) + 8 * min(tspins, 3) + 20 * min(pcs, 2) + (15 if duel else 0)
+    return min(c, 90)
 
 
 def apply_reward(reward, state):
@@ -324,8 +322,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             'gacha': {'cost': GACHA_COST, 'ratePerSkin': GACHA_RATE_PER_SKIN,
                       'rateTotal': round(GACHA_RATE_PER_SKIN * len(GACHA_POOL), 4), 'pool': GACHA_POOL,
                       'pity': st['pity'], 'pityThreshold': GACHA_PITY, 'pulls': st['pulls'],
-                      'dupCoins': GACHA_DUP_COINS, 'dupCandies': GACHA_DUP_CANDIES,
-                      'missCoins': GACHA_MISS_COINS, 'missCandies': GACHA_MISS_CANDIES},
+                      'dupCandies': GACHA_DUP_CANDIES, 'missCandies': GACHA_MISS_CANDIES, 'currency': 'candy'},
         }
 
     # --- 公開: 開催状況(ログイン不要。フロントはこれを見て、イベント画面・ガチャ・UIテーマを出し分ける) ---
@@ -517,10 +514,10 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             s = load_state_from_row(lock_user(cur, user_id) or {})
             st = s['st']
             tickets_used = min(st['tickets'], count)
-            coins_needed = (count - tickets_used) * GACHA_COST
-            if s['coins'] < coins_needed:
-                raise ApiError('コインが足りません', 400)
-            s['coins'] -= coins_needed
+            candies_needed = (count - tickets_used) * GACHA_COST
+            if st['candies'] < candies_needed:
+                raise ApiError('キャンディが足りません', 400)
+            st['candies'] -= candies_needed      # ※消費しても、ロードの進行(累計 totalCandies)は減らない
             st['tickets'] -= tickets_used
             results = []
             for i in range(count):
@@ -537,18 +534,17 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
                     st['pity'] = 0
                     r['skinId'], r['pityTriggered'] = sid, pity_win
                     if sid in s['skins']:
-                        r.update(resultType='duplicate', coinsGained=GACHA_DUP_COINS, candiesGained=GACHA_DUP_CANDIES)
+                        r.update(resultType='duplicate', candiesGained=GACHA_DUP_CANDIES)
                     else:
                         s['skins'].append(sid)
                         r['resultType'] = 'win'
                 else:
-                    r.update(resultType='miss', coinsGained=GACHA_MISS_COINS, candiesGained=GACHA_MISS_CANDIES)
-                s['coins'] += r['coinsGained']
+                    r.update(resultType='miss', candiesGained=GACHA_MISS_CANDIES)
                 add_candies(st, r['candiesGained'])
                 results.append(r)
             add_stat_both(st, 'hw_pulls', count)
             save_user(cur, user_id, s)
-        return jsonify({'ok': True, 'count': count, 'results': results, 'spentCoins': coins_needed,
+        return jsonify({'ok': True, 'count': count, 'results': results, 'spentCandies': candies_needed,
                         'ticketsUsed': tickets_used, 'coins': s['coins'], 'candies': st['candies'],
                         'tickets': st['tickets'], 'ownedSkins': s['skins'],
                         'pity': st['pity'], 'pityThreshold': GACHA_PITY, 'pulls': st['pulls']})
