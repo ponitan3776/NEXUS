@@ -16,13 +16,24 @@
   const saveRec = ()=>{ try{ localStorage.setItem(REC_KEY, JSON.stringify(rec)); }catch(e){} };
 
   /* ---------- テストしやすいよう、純粋なロジックは外に出しておく ---------- */
-  // 2048: 1行を左に寄せて合体する → [新しい行, 得点]
-  function slideLine(line){
-    const a = line.filter(Boolean); let gain = 0;
-    for(let i=0;i<a.length-1;i++){ if(a[i] === a[i+1]){ a[i] *= 2; gain += a[i]; a.splice(i+1,1); } }
-    while(a.length < line.length) a.push(0);
-    return [a, gain];
+  // 2048: 1行(0=空き)を左に寄せる計画を立てる。各タイルの移動先と、どれが合体するかを返す(アニメーション用)
+  //   → { moves:[{from, to, merge}], result:[...], gain }   merge=true のタイルは、to にいる先客と合体して消える
+  function planSlide(values){
+    const moves = []; let dest = 0, last = null, gain = 0;
+    values.forEach((v, from)=>{
+      if(!v) return;
+      if(last && !last.merged && last.v === v){
+        moves.push({ from, to:last.to, merge:true }); last.merged = true; gain += v*2;
+      } else {
+        const m = { from, to:dest++, v, merge:false, merged:false }; moves.push(m); last = m;
+      }
+    });
+    const result = new Array(values.length).fill(0);
+    moves.forEach(m=>{ if(!m.merge) result[m.to] = values[m.from]; });
+    moves.forEach(m=>{ if(m.merge) result[m.to] *= 2; });
+    return { moves: moves.map(m=>({ from:m.from, to:m.to, merge:m.merge })), result, gain };
   }
+  function slideLine(line){ const p = planSlide(line); return [p.result, p.gain]; }
   // マインスイーパー: 8近傍
   function neighbors(i, R, C){
     const r = Math.floor(i/C), c = i%C, out = [];
@@ -45,61 +56,79 @@
   }
 
   /* =====================================================================
-     ① 2048 — スワイプで数字を合体
+     ① 2048 — タイルがスライドして、合体でぽんっと弾む
      ===================================================================== */
   function game2048(stage, api){
-    const N = 4;
-    let grid = Array.from({length:N}, ()=>new Array(N).fill(0));
-    let score = 0, over = false, lastNew = -1;
+    const N = 4, SLIDE_MS = 120;
     const wrap = $('div','g2048'), sc = $('div','g-score'), board = $('div','g2048-board'),
           hint = $('div','g-hint','スワイプ / 矢印キーで動かそう'), quit = $('button','mg-btn ghost','ここで終了して報酬をもらう');
     quit.type = 'button';
-    wrap.append(sc, board, hint, quit); stage.append(wrap);
-    const cells = []; for(let i=0;i<N*N;i++){ const c = $('div','t'); board.append(c); cells.push(c); }
+    const bg = $('div','g2048-bg'), layer = $('div','g2048-tiles');
+    for(let i=0;i<N*N;i++) bg.append($('div','slot'));
+    board.append(bg, layer); wrap.append(sc, board, hint, quit); stage.append(wrap);
+    let tiles = [], score = 0, over = false, busy = false, pending = null, won = false, timers = [];
     const colorOf = (v)=> `hsl(${(Math.log2(v)*37 + 18) % 360} 68% ${clamp(60 - Math.log2(v)*1.6, 38, 60)}%)`;
-    function addTile(){
-      const e = []; grid.forEach((row,r)=>row.forEach((v,c)=>{ if(!v) e.push([r,c]); }));
-      if(!e.length) return;
-      const [r,c] = e[rnd(e.length)]; grid[r][c] = Math.random() < .9 ? 2 : 4; lastNew = r*N+c;
+    const at = (r,c)=> tiles.find(t=>t.r === r && t.c === c);
+    function paint(t){
+      t.inner.textContent = t.v; t.inner.style.background = colorOf(t.v);
+      t.inner.style.fontSize = t.v >= 1024 ? '17px' : t.v >= 128 ? '22px' : '27px';
+      t.el.style.setProperty('--r', t.r); t.el.style.setProperty('--c', t.c);
     }
-    function render(){
-      sc.textContent = `スコア ${score}`;
-      cells.forEach((el,i)=>{
-        const v = grid[Math.floor(i/N)][i%N];
-        el.textContent = v || '';
-        el.className = 't' + (i === lastNew ? ' pop' : '');
-        el.style.background = v ? colorOf(v) : '';
-        el.style.fontSize = v >= 1024 ? '17px' : v >= 128 ? '22px' : '27px';
-        el.style.color = v ? '#fff' : '';
-      });
+    function makeTile(r, c, v, cls){
+      const el = $('div','tile'), inner = $('span','tin'); el.append(inner); layer.append(el);
+      const t = { r, c, v, el, inner }; tiles.push(t); paint(t);
+      if(cls){ inner.classList.add(cls); }
+      return t;
+    }
+    function addTile(){
+      const e = []; for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(!at(r,c)) e.push([r,c]);
+      if(!e.length) return;
+      const [r,c] = e[rnd(e.length)]; makeTile(r, c, Math.random() < .9 ? 2 : 4, 'spawn');
     }
     const pos = (dir,i,j)=> dir===0 ? [i,j] : dir===2 ? [i,N-1-j] : dir===1 ? [j,i] : [N-1-j,i];   // 0左 1上 2右 3下
     function canMove(){
-      for(let d=0; d<4; d++){
-        for(let i=0;i<N;i++){
-          const line = []; for(let j=0;j<N;j++){ const [r,c] = pos(d,i,j); line.push(grid[r][c]); }
-          const [nl] = slideLine(line);
-          if(nl.some((v,j)=>v !== line[j])) return true;
-        }
+      const g = Array.from({length:N}, ()=>new Array(N).fill(0)); tiles.forEach(t=>{ g[t.r][t.c] = t.v; });
+      for(let d=0; d<4; d++) for(let i=0;i<N;i++){
+        const line = []; for(let j=0;j<N;j++){ const [r,c] = pos(d,i,j); line.push(g[r][c]); }
+        if(slideLine(line)[0].some((v,j)=>v !== line[j])) return true;
       }
       return false;
     }
+    function floatPt(text){
+      const f = $('div','float-pt pos', text); f.style.left = '50%'; f.style.top = '8%'; board.append(f); setTimeout(()=>f.remove(), 700);
+    }
     function move(dir){
       if(over) return;
-      let moved = false, gain = 0;
-      const g2 = grid.map(r=>r.slice());
+      if(busy){ pending = dir; return; }                      // アニメ中の入力は1つだけ覚えておく
+      let moved = false, gain = 0; const dying = [], grown = [];
       for(let i=0;i<N;i++){
-        const line = []; for(let j=0;j<N;j++){ const [r,c] = pos(dir,i,j); line.push(grid[r][c]); }
-        const [nl, g] = slideLine(line); gain += g;
-        for(let j=0;j<N;j++){ const [r,c] = pos(dir,i,j); if(grid[r][c] !== nl[j]) moved = true; g2[r][c] = nl[j]; }
+        const lineTiles = [], values = [];
+        for(let j=0;j<N;j++){ const [r,c] = pos(dir,i,j); const t = at(r,c); lineTiles.push(t); values.push(t ? t.v : 0); }
+        const plan = planSlide(values); gain += plan.gain;
+        const destTile = {};
+        plan.moves.forEach(m=>{
+          const t = lineTiles[m.from], [r,c] = pos(dir,i,m.to);
+          if(m.merge){ t.r = r; t.c = c; dying.push(t); grown.push(destTile[m.to]); moved = true; }
+          else { destTile[m.to] = t; if(t.r !== r || t.c !== c) moved = true; t.r = r; t.c = c; }
+        });
       }
       if(!moved) return;
-      grid = g2; score += gain; addTile(); render();
-      if(gain) CB().sound && CB().sound('place');
-      if(!canMove()){ over = true; setTimeout(end, 700); }
+      busy = true; score += gain; sc.textContent = `スコア ${score}`;
+      tiles.forEach(paint);                                    // --r/--c が変わる → CSSのtransitionでスライド
+      CB().sound && CB().sound('place');
+      timers.push(setTimeout(()=>{
+        dying.forEach(t=>{ t.el.remove(); tiles = tiles.filter(x=>x !== t); });
+        grown.forEach(t=>{ t.v *= 2; paint(t); t.inner.classList.remove('spawn','merge'); void t.inner.offsetWidth; t.inner.classList.add('merge'); });
+        if(gain){ floatPt(`+${gain}`); CB().sound && CB().sound('coin'); CB().vibrate && CB().vibrate(8); }
+        if(!won && tiles.some(t=>t.v >= 2048)){ won = true; CB().toast && CB().toast('🎉 2048達成！ まだまだ続けられます'); }
+        addTile();
+        busy = false;
+        if(!canMove()){ over = true; timers.push(setTimeout(end, 700)); return; }
+        if(pending != null){ const d = pending; pending = null; move(d); }
+      }, SLIDE_MS));
     }
     function end(){
-      const max = Math.max(...grid.flat());
+      const max = Math.max(0, ...tiles.map(t=>t.v));
       api.finish({ rating: clamp(Math.round(score/45), 0, 100), score, better:'high', text:`スコア ${score} ／ 最大タイル ${max}`, valid:true });
     }
     let sx = 0, sy = 0, down = false;
@@ -113,63 +142,101 @@
     const onKey = (e)=>{ const m = { ArrowLeft:0, ArrowUp:1, ArrowRight:2, ArrowDown:3, a:0, w:1, d:2, s:3 }[e.key]; if(m != null){ e.preventDefault(); move(m); } };
     window.addEventListener('keydown', onKey);
     quit.addEventListener('click', ()=>{ if(!over){ over = true; end(); } });
-    addTile(); addTile(); render();
-    return ()=> window.removeEventListener('keydown', onKey);
+    sc.textContent = 'スコア 0'; addTile(); addTile();
+    return ()=>{ window.removeEventListener('keydown', onKey); timers.forEach(clearTimeout); };
   }
 
   /* =====================================================================
-     ② パンプキン・スネーク
+     ② パンプキン・スネーク — 1マスずつ飛ばず、なめらかに滑るように動く
+        ・論理は「1マス進む」で動かし、描画は毎フレーム「前の位置→今の位置」を補間する
+        ・体は曲線でつなぎ、曲がり角も丸くなめらかに
      ===================================================================== */
+  const lerp = (a,b,t)=> a + (b-a)*t;
   function gameSnake(stage, api){
-    const N = 15, S = 24;
+    const N = 15, S = 24, DPR = Math.min(2, (window.devicePixelRatio || 1));
     const wrap = $('div','gsnake'), info = $('div','g-score','🎃 0 個'), cv = $('canvas','gs-canvas');
-    cv.width = cv.height = N*S;
-    const ctx = cv.getContext('2d');
+    cv.width = cv.height = N*S*DPR;
+    const ctx = cv.getContext('2d'); ctx.scale(DPR, DPR);
     const pad = $('div','dpad', `<button type="button" data-d="up" class="up">▲</button><button type="button" data-d="left" class="left">◀</button><button type="button" data-d="right" class="right">▶</button><button type="button" data-d="down" class="down">▼</button>`);
     const msg = $('div','g-hint','スワイプ / 矢印キー / 下のボタンでスタート');
     wrap.append(info, cv, msg, pad); stage.append(wrap);
-    let snake = [{x:7,y:7},{x:6,y:7},{x:5,y:7}], dir = {x:1,y:0}, next = {x:1,y:0}, food = null, score = 0, speed = 150, timer = null, started = false, dead = false;
-    function place(){
-      do{ food = { x:rnd(N), y:rnd(N) }; } while(snake.some(s=>s.x===food.x && s.y===food.y));
-    }
-    function draw(){
-      ctx.fillStyle = '#120a22'; ctx.fillRect(0,0,N*S,N*S);
-      ctx.fillStyle = 'rgba(255,255,255,.035)';
-      for(let x=0;x<N;x++) for(let y=0;y<N;y++) if((x+y)%2===0) ctx.fillRect(x*S,y*S,S,S);
-      ctx.font = `${S-4}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('🎃', food.x*S + S/2, food.y*S + S/2 + 1);
-      snake.forEach((s,i)=>{
-        ctx.fillStyle = i === 0 ? '#c8e34a' : `hsl(${95 - i*2} 70% ${52 - Math.min(i,14)}%)`;
-        const pad = i === 0 ? 1 : 2;
-        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(s.x*S+pad, s.y*S+pad, S-pad*2, S-pad*2, 7) : ctx.rect(s.x*S+pad, s.y*S+pad, S-pad*2, S-pad*2); ctx.fill();
-        if(i === 0){ ctx.fillStyle = '#120a22'; ctx.fillRect(s.x*S+7, s.y*S+8, 3, 3); ctx.fillRect(s.x*S+14, s.y*S+8, 3, 3); }
-      });
-    }
-    function startLoop(){ clearInterval(timer); timer = setInterval(tick, speed); }
+    let snake = [{x:7,y:7},{x:6,y:7},{x:5,y:7}], prev = snake.map(s=>({...s})), dir = {x:1,y:0}, queue = [];
+    let food = null, score = 0, speed = 150, acc = 0, started = false, dead = false, raf = 0, last = 0, particles = [], deadAt = 0;
+    function place(){ do{ food = { x:rnd(N), y:rnd(N) }; } while(snake.some(s=>s.x===food.x && s.y===food.y)); }
     function tick(){
-      dir = next;
+      prev = snake.map(s=>({...s}));
+      while(queue.length){                                       // 入力は最大2つまで先読み。真後ろ・同方向は捨てる
+        const d = queue.shift();
+        if((d.x === -dir.x && d.y === -dir.y) || (d.x === dir.x && d.y === dir.y)) continue;
+        dir = d; break;
+      }
       const h = { x:snake[0].x + dir.x, y:snake[0].y + dir.y };
-      if(h.x<0 || h.y<0 || h.x>=N || h.y>=N || snake.some(s=>s.x===h.x && s.y===h.y)) return die();
+      const tail = snake[snake.length-1];
+      const willEat = h.x === food.x && h.y === food.y;
+      const hitSelf = snake.some((s,i)=> s.x===h.x && s.y===h.y && (willEat || s !== tail));
+      if(h.x<0 || h.y<0 || h.x>=N || h.y>=N || hitSelf) return die();
       snake.unshift(h);
-      if(h.x === food.x && h.y === food.y){
-        score++; info.textContent = `🎃 ${score} 個`; place();
+      if(willEat){
+        score++; info.textContent = `🎃 ${score} 個`;
+        for(let i=0;i<10;i++){ const a = Math.random()*6.283, v = .05 + Math.random()*.09; particles.push({ x:food.x+.5, y:food.y+.5, vx:Math.cos(a)*v, vy:Math.sin(a)*v, life:1 }); }
+        place(); speed = Math.max(75, 150 - score*3);
         CB().sound && CB().sound('coin'); CB().vibrate && CB().vibrate(10);
-        const sp = Math.max(70, 150 - score*3);
-        if(sp !== speed){ speed = sp; startLoop(); }
       } else snake.pop();
-      draw();
     }
     function die(){
-      if(dead) return; dead = true; clearInterval(timer);
-      CB().sound && CB().sound('gameover');
+      if(dead) return; dead = true; deadAt = performance.now();
+      CB().sound && CB().sound('gameover'); CB().vibrate && CB().vibrate([30,30,60]);
       cv.classList.add('shake');
-      setTimeout(()=> api.finish({ rating: clamp(score*5, 0, 100), score, better:'high', text:`かぼちゃを ${score} 個 食べた`, valid:true }), 650);
+      setTimeout(()=> api.finish({ rating: clamp(score*5, 0, 100), score, better:'high', text:`かぼちゃを ${score} 個 食べた`, valid:true }), 750);
+    }
+    function bodyPoints(t){
+      return snake.map((s,i)=>{ const f = prev[i] || prev[prev.length-1]; return { x:lerp(f.x, s.x, t) + .5, y:lerp(f.y, s.y, t) + .5 }; });
+    }
+    function draw(ts, t){
+      ctx.fillStyle = '#120a22'; ctx.fillRect(0,0,N*S,N*S);
+      ctx.fillStyle = 'rgba(255,255,255,.035)';
+      for(let x=0;x<N;x++) for(let y=0;y<N;y++) if((x+y)%2===0) ctx.fillRect(x*S, y*S, S, S);
+      // かぼちゃ(ゆらゆら脈打つ)
+      const pulse = 1 + Math.sin(ts/170)*.07;
+      ctx.save(); ctx.translate((food.x+.5)*S, (food.y+.5)*S); ctx.scale(pulse, pulse);
+      ctx.shadowColor = 'rgba(255,140,30,.8)'; ctx.shadowBlur = 14;
+      ctx.font = `${S-3}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🎃', 0, 1); ctx.restore();
+      // 体(曲線でなめらかに)
+      const pts = bodyPoints(t).map(p=>({ x:p.x*S, y:p.y*S }));
+      const path = ()=>{
+        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+        for(let i=1;i<pts.length-1;i++){ const mx = (pts[i].x + pts[i+1].x)/2, my = (pts[i].y + pts[i+1].y)/2; ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my); }
+        if(pts.length > 1){ const l = pts[pts.length-1]; ctx.lineTo(l.x, l.y); }
+      };
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if(pts.length > 1){
+        ctx.strokeStyle = dead ? '#5a1a2a' : '#2f5a14'; ctx.lineWidth = S*.84; path(); ctx.stroke();
+        ctx.strokeStyle = dead ? '#a03a52' : '#7fc22a'; ctx.lineWidth = S*.66; path(); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = S*.2; ctx.translate(-S*.08, -S*.1); path(); ctx.stroke(); ctx.translate(S*.08, S*.1);
+      }
+      // 頭と目(進んでいる向きを見る)
+      const h = pts[0]; ctx.fillStyle = dead ? '#c04a64' : '#a6e83c'; ctx.beginPath(); ctx.arc(h.x, h.y, S*.46, 0, 6.283); ctx.fill();
+      const px = -dir.y, py = dir.x;
+      [-1,1].forEach(sd=>{
+        const ex = h.x + dir.x*S*.16 + px*sd*S*.2, ey = h.y + dir.y*S*.16 + py*sd*S*.2;
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, S*.12, 0, 6.283); ctx.fill();
+        ctx.fillStyle = '#120a22'; ctx.beginPath(); ctx.arc(ex + dir.x*S*.04, ey + dir.y*S*.04, S*.06, 0, 6.283); ctx.fill();
+      });
+      // かぼちゃをとったときの火花
+      particles = particles.filter(p=>p.life > 0);
+      particles.forEach(p=>{ p.x += p.vx; p.y += p.vy; p.life -= .045; ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(p.x*S, p.y*S, 2.6, 0, 6.283); ctx.fill(); });
+      ctx.globalAlpha = 1;
+    }
+    function frame(ts){
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min(50, ts - (last || ts)); last = ts;
+      if(started && !dead){ acc += dt; while(acc >= speed && !dead){ acc -= speed; tick(); } }
+      draw(ts, dead ? 1 : (started ? clamp(acc/speed, 0, 1) : 0));
     }
     function turn(dx, dy){
       if(dead) return;
-      if(dx === -dir.x && dy === -dir.y && started) return;   // 真後ろには曲がれない
-      if(!started){ started = true; msg.style.visibility = 'hidden'; startLoop(); if(dx === -dir.x && dy === -dir.y) return; }
-      next = { x:dx, y:dy };
+      if(!started){ started = true; msg.style.visibility = 'hidden'; if(dx === -dir.x && dy === -dir.y) return; }
+      if(queue.length < 2) queue.push({ x:dx, y:dy });
     }
     const keyMap = { ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0], w:[0,-1], s:[0,1], a:[-1,0], d:[1,0] };
     const onKey = (e)=>{ const m = keyMap[e.key]; if(m){ e.preventDefault(); turn(m[0], m[1]); } };
@@ -182,8 +249,8 @@
       if(Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
       if(Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0); else turn(0, dy > 0 ? 1 : -1);
     });
-    place(); draw();
-    return ()=>{ clearInterval(timer); window.removeEventListener('keydown', onKey); };
+    place(); raf = requestAnimationFrame(frame);
+    return ()=>{ cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey); };
   }
 
   /* =====================================================================
@@ -413,7 +480,7 @@
     { id:'mines',  emoji:'💣', name:'マイン・ハンター',     desc:'9×9の地雷さがし。最速クリアを狙え', unit:'秒', better:'low',  start:gameMines },
     { id:'flight', emoji:'🪦', name:'ゴースト・フライト',   desc:'タップで飛んで墓石をよけよう',     unit:'枚', better:'high', start:gameFlight }
   ];
-  let root = null, body = null, resultEl = null, titleEl = null, bestEl = null, cleanup = null, current = null;
+  let root = null, body = null, resultEl = null, titleEl = null, bestEl = null, cleanup = null, current = null, rankView = false, summary = null;
 
   function ensureRoot(){
     if(root) return;
@@ -422,7 +489,7 @@
     document.body.appendChild(root);
     body = root.querySelector('.mg-body'); resultEl = root.querySelector('.mg-result');
     titleEl = root.querySelector('.mg-title'); bestEl = root.querySelector('.mg-bestline');
-    root.querySelector('.mg-back').addEventListener('click', ()=>{ if(current) openMenu(); else close(); });
+    root.querySelector('.mg-back').addEventListener('click', ()=>{ if(current || rankView) openMenu(); else close(); });
   }
   function stopGame(){ if(cleanup){ try{ cleanup(); }catch(e){} cleanup = null; } }
   function close(){ stopGame(); current = null; if(root){ root.classList.remove('show'); } }
@@ -432,21 +499,56 @@
     return r && r.best != null ? `ベスト ${r.best}${g.unit}` : 'まだ記録なし';
   }
   function openMenu(){
-    ensureRoot(); stopGame(); current = null;
+    ensureRoot(); stopGame(); current = null; rankView = false;
     root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = '🕹 ミニゲーム'; bestEl.textContent = '';
     body.className = 'mg-body menu';
-    body.innerHTML = `<div class="mg-lead">どれも1回1〜2分。遊ぶと 🪙コイン と 🍬ハロウィンキャンディ(開催中)がもらえます！</div><div class="mg-grid"></div>`;
+    body.innerHTML = `<div class="mg-lead">どれも1回1〜2分。遊ぶと 🪙コイン と 🍬ハロウィンキャンディ(開催中)がもらえます！</div>
+      <button class="mg-rankbtn" type="button">🏆 ランキングを見る</button><div class="mg-grid"></div>`;
+    body.querySelector('.mg-rankbtn').addEventListener('click', ()=> openRanking(GAMES[0].id));
     const grid = body.querySelector('.mg-grid');
+    const bestLine = (g)=>{ const sm = summary && summary[g.id]; return sm && sm.rank ? `${bestText(g)}(全体 ${sm.rank}位)` : bestText(g); };
+    const bestEls = {};
     GAMES.forEach((g,i)=>{
-      const card = $('button','mg-card', `<span class="mg-emo">${g.emoji}</span><span class="mg-name">${g.name}</span><span class="mg-desc">${g.desc}</span><span class="mg-best">${bestText(g)}</span>`);
+      const card = $('button','mg-card', `<span class="mg-emo">${g.emoji}</span><span class="mg-name">${g.name}</span><span class="mg-desc">${g.desc}</span><span class="mg-best">${bestLine(g)}</span>`);
       card.type = 'button'; card.style.animationDelay = (i*0.05) + 's';
       card.addEventListener('click', ()=> startGame(g.id));
-      grid.append(card);
+      grid.append(card); bestEls[g.id] = card.querySelector('.mg-best');
     });
+    // ログイン中なら、自分の順位を取ってきて表示する
+    if(CB().isLoggedIn && CB().isLoggedIn() && CB().api){
+      CB().api('/api/mini/summary').then(d=>{
+        summary = d.games; if(rankView || current) return;
+        GAMES.forEach(g=>{ if(bestEls[g.id]) bestEls[g.id].textContent = bestLine(g); });
+      }).catch(()=>{});
+    }
+  }
+
+  // ---------- ランキング画面 ----------
+  const fmtScore = (g, n)=> `${n}${g.unit}`;
+  function openRanking(gameId){
+    ensureRoot(); stopGame(); current = null; rankView = true;
+    const g = GAMES.find(x=>x.id === gameId) || GAMES[0];
+    root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
+    titleEl.textContent = '🏆 ランキング'; bestEl.textContent = '';
+    body.className = 'mg-body rank';
+    body.innerHTML = `<div class="mg-ranktabs">${GAMES.map(x=>`<button type="button" class="mg-rtab ${x.id===g.id?'active':''}" data-g="${x.id}">${x.emoji}<span>${x.name}</span></button>`).join('')}</div>
+      <div class="mg-rankinfo">${g.better === 'low' ? '少ないほど上位' : '高いほど上位'}(1人1記録・自己ベスト)</div><div class="mg-ranklist"><div class="empty-hint">読み込み中...</div></div>`;
+    body.querySelectorAll('.mg-rtab').forEach(b=> b.addEventListener('click', ()=> openRanking(b.dataset.g)));
+    const list = body.querySelector('.mg-ranklist');
+    if(!CB().api){ list.innerHTML = '<div class="empty-hint">ランキングを読み込めません</div>'; return; }
+    CB().api('/api/mini/ranking?game=' + encodeURIComponent(g.id)).then(d=>{
+      if(!rankView) return;
+      const me = d.me, meId = me && me.id;
+      let html = d.ranking.map((r,i)=>`<div class="mg-rankrow ${r.id===meId?'me':''} ${i<3?'top':''}"><span class="rk">${['🥇','🥈','🥉'][i] || (i+1)}</span><span class="nm">${r.id}</span><span class="sc">${fmtScore(g, r.score)}</span></div>`).join('');
+      if(!d.ranking.length) html = '<div class="empty-hint">まだ記録がありません。一番乗りを目指そう！</div>';
+      html += me ? `<div class="mg-rankme">あなた: ${me.rank ? `${me.rank}位 / ${fmtScore(g, me.best)}` : 'まだ記録なし'}</div>`
+                 : `<div class="mg-rankme">ログインすると、あなたの記録がランキングに載ります</div>`;
+      list.innerHTML = html;
+    }).catch(err=>{ list.innerHTML = `<div class="empty-hint">${err.message || '読み込みに失敗しました'}</div>`; });
   }
   function startGame(id){
-    ensureRoot(); stopGame();
+    ensureRoot(); stopGame(); rankView = false;
     current = GAMES.find(g=>g.id === id);
     root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = `${current.emoji} ${current.name}`; bestEl.textContent = bestText(current);
@@ -483,14 +585,25 @@
       <div class="mg-stars">${'★'.repeat(stars)}<span>${'★'.repeat(5 - stars)}</span></div>
       ${newBest ? '<div class="mg-newbest">🎉 ベスト更新！</div>' : ''}
       <div class="mg-reward">🪙 +${coins}</div>
+      <div class="mg-rankline" id="mgRankLine">${res.valid ? (CB().isLoggedIn && CB().isLoggedIn() ? '🏆 ランキングに記録中...' : '🏆 ログインするとランキングに載ります') : ''}</div>
       <div class="mg-btns"><button class="mg-btn" id="mgAgain" type="button">もう一度</button><button class="mg-btn ghost" id="mgMenu" type="button">メニューへ</button></div>
+      <button class="mg-linkbtn" id="mgRank" type="button">🏆 ランキングを見る</button>
     </div>`;
     resultEl.querySelector('#mgAgain').addEventListener('click', ()=> startGame(g.id));
     resultEl.querySelector('#mgMenu').addEventListener('click', openMenu);
+    resultEl.querySelector('#mgRank').addEventListener('click', ()=> openRanking(g.id));
     bestEl.textContent = bestText(g);
+    // ランキングに記録して、順位を表示する
+    if(res.valid && CB().isLoggedIn && CB().isLoggedIn() && CB().api){
+      CB().api('/api/mini/score', 'POST', { game:g.id, score:res.score }).then(d=>{
+        const line = resultEl.querySelector('#mgRankLine');
+        if(d && d.rank){ if(summary) summary[g.id] = { ...(summary[g.id]||{}), best:d.best, rank:d.rank }; if(line) line.textContent = `🏆 全体 ${d.rank}位(自己ベスト ${d.best}${g.unit})`; }
+        else if(line) line.textContent = '';
+      }).catch(()=>{ const line = resultEl.querySelector('#mgRankLine'); if(line) line.textContent = ''; });
+    }
   }
 
-  window.CBMini = { open: openMenu, close, games: GAMES, _t: { slideLine, neighbors, genMines } };
+  window.CBMini = { open: openMenu, close, games: GAMES, _t: { slideLine, planSlide, neighbors, genMines } };
   const btn = document.getElementById('titleMiniBtn');
   if(btn) btn.addEventListener('click', openMenu);
 })();
