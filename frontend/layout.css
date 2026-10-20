@@ -266,3 +266,46 @@ header .title{
 .cl-items{ padding:0 14px 13px; display:flex; flex-direction:column; gap:7px; }
 .cl-line{ font-size:12.5px; line-height:1.65; color:var(--text-dim); padding-left:2px; }
 @media (min-width:700px){ #changelogPanel{ align-items:center; } .cl-sheet{ border-radius:var(--r-lg); border-bottom:1px solid var(--gold-line); max-height:80dvh; } }
+
+/* =====================================================================
+   🗂 機能の整理 (v3.4) — ロビーと☰メニューを同じ区分(あそぶ / あつめる / みんなと / せってい)に
+   ===================================================================== */
+.lobby-hero{ min-height:96px; }
+.lobby-top .lobby-icon{ position:relative; }
+.lobby-icon.gift{ animation:pumpkinGlow 2.2s ease-in-out infinite; border-color:rgba(255,210,140,.7); }
+.lt-badge{ position:absolute; top:6px; right:8px; min-width:18px; height:18px; padding:0 5px; border-radius:9px; display:none; align-items:center; justify-content:center;
+  font:900 10px var(--sans); color:#fff; background:#e0245a; box-shadow:0 0 0 2px var(--panel); z-index:2; }
+.lt-badge.show{ display:flex; animation:badgePop .3s var(--spring) both; }
+.lobby-icon .lt-badge{ top:-5px; right:-5px; }
+.lobby-icon .unread-dot{ top:4px; right:4px; }
+
+.lobby-sec{ display:flex; flex-direction:column; gap:7px; }
+.lobby-sec-h{ display:flex; align-items:center; gap:10px; padding:0 2px; font:800 12px var(--sans); letter-spacing:.12em; color:var(--gold); }
+.lobby-sec-h::after{ content:''; flex:1; height:1px; background:linear-gradient(90deg, var(--gold-line), transparent); }
+.lobby-grid.cols3{ grid-template-columns:repeat(3,1fr); gap:8px; }
+.lobby-grid.cols4{ grid-template-columns:repeat(4,1fr); gap:8px; }
+.lobby-tile.compact{ min-height:78px; padding:10px 6px; align-items:center; justify-content:center; text-align:center; gap:5px; }
+.lobby-tile.compact .lt-ic{ font-size:24px; }
+.lobby-tile.compact .lt-name{ margin-top:0; font:800 11.5px var(--sans); line-height:1.25; }
+.lobby-grid.cols4 .lobby-tile.compact .lt-name{ font-size:10.5px; }
+.lobby-tile.compact::before{ inset:2px; opacity:.55; }
+.lobby-tile .lt-new{ top:5px; right:6px; font-size:8px; padding:1px 5px; }
+.title-version-row{ display:flex; align-items:center; justify-content:center; gap:14px; flex-wrap:wrap; }
+.title-version-row button{ cursor:pointer; background:none; border:none; color:var(--text-dim); font:700 12px var(--sans); text-decoration:underline; text-underline-offset:3px; padding:6px 4px; }
+
+/* ☰ すべてのメニュー: ロビーより手前(640)、ウィンドウ(650)より奥 */
+#quickSheetWrap{ z-index:640; }
+#quickSheet{ max-height:86dvh; display:flex; flex-direction:column; }
+.qs-search{ width:100%; margin:0 0 10px; padding:11px 14px; font:700 14px var(--sans); color:var(--text); background:rgba(0,0,0,.25);
+  border:1px solid var(--gold-line); border-radius:var(--r); outline:none; -webkit-appearance:none; appearance:none; }
+.qs-search::placeholder{ color:var(--text-dim); font-weight:600; }
+.qs-search:focus{ border-color:var(--gold); box-shadow:0 0 0 2px var(--gold-soft); }
+.qs-body{ overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding-bottom:4px; }
+.qs-sec{ margin-bottom:12px; }
+.qs-sec-h{ margin:2px 2px 8px; font:800 11px var(--sans); letter-spacing:.14em; color:var(--gold); }
+.qs-empty{ text-align:center; padding:22px 0; font-size:12.5px; color:var(--text-dim); }
+#quickSheet .qs-grid{ grid-template-columns:repeat(4,1fr); }
+#quickSheet .icon-btn{ height:70px; }
+#quickSheet .icon-btn.hit{ border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 6px 16px var(--gold-soft); }
+#quickSheetWrap[data-ctx="game"] .lobby-only{ display:none !important; }
+#quickSheet .icon-btn.hide-q, .qs-sec.hide-q{ display:none !important; }
