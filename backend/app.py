@@ -129,13 +129,17 @@ def db_transaction():
 
 
 # ===================== Discord通知 =====================
-def to_copy_block(text, limit=3700):
-    """ご要望・不具合の本文を、コピーしやすい「コードブロック」(```)に包む。
-    ・PCのDiscord: ブロックの右上にマウスを乗せると「コピー」ボタンが出る(クリックで全文コピー)
-    ・スマホのDiscord: ブロックを長押し/タップして選択 → コピー
-    本文に ``` が含まれているとブロックが壊れるので、間にゼロ幅スペースを入れて無害化する。"""
-    safe = (text or '').strip()[:limit].replace('```', '`\u200b`\u200b`')
-    return '📋 **内容**(PC=右上のコピーボタン / スマホ=長押しでコピー)\n```\n' + safe + '\n```'
+def to_copy_block(text, limit=1500):
+    """ご要望・不具合の本文を、コピーしやすい形で送る。
+    ・💻 PC用: コードブロック(```)。ブロック右上にマウスを乗せると「コピー」ボタンが出る(```でのコピーはPCのみ)
+    ・📱 スマホ用: 1行ごとに「`」1個で囲む(インラインコード)。タップするとコピーできる
+    本文に ``` や ` が含まれると囲みが壊れるので、無害な文字に置き換える。"""
+    body = (text or '').strip()[:limit]
+    pc = body.replace('```', "'''")
+    lines = [ln.strip().replace('`', '´') for ln in body.splitlines() if ln.strip()]
+    mobile = '\n'.join(f'`{ln}`' for ln in lines[:40])
+    return ('💻 **PC用**(右上のコピーボタンをクリック)\n```\n' + pc + '\n```\n'
+            '📱 **スマホ用**(タップでコピー)\n' + mobile)
 
 
 def send_discord_notification(webhook_url, title, description, color=0x5865F2,
@@ -341,16 +345,28 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     """)
     print('✅ 週替わりチャレンジテーブル作成完了')
 
+    # 🕹 ミニゲームのランキング
+    db_execute('''
+        CREATE TABLE IF NOT EXISTS mini_scores (
+            game TEXT NOT NULL, user_id TEXT NOT NULL, best BIGINT NOT NULL,
+            plays INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (game, user_id)
+        );
+    ''')
+
     # 🎃 イベント進行状況 / フレンド対決のゲーム種別
     db_execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS event_state JSONB DEFAULT '{}'::jsonb;")
     db_execute("ALTER TABLE duels ADD COLUMN IF NOT EXISTS game TEXT DEFAULT 'candy';")
+
+    # 🗳 投票 / 🎁 ギフト / ✏️ チャット・DMの編集・取り消し用の列
+    social.init_tables(db_execute)
 
     # Supabase では public スキーマのテーブルが Data API(anonキー)から見えうるため、
     # 全テーブルでRLSを有効化(ポリシーなし = anon/authenticated は一切アクセス不可)。
     # このサーバーは postgres ロールで直接接続するのでRLSの影響を受けない。
     for t in ('users', 'chat_messages', 'friend_requests', 'friends', 'dm_messages',
               'announcements', 'duels', 'scheduled_events', 'weekly_challenge',
-              'weekly_challenge_scores'):
+              'weekly_challenge_scores', 'mini_scores'):
         db_execute(f'ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;')
     print('✅ RLS有効化完了')
 
@@ -376,6 +392,7 @@ GACHA_SKIN_IDS = [
 ]
 
 import halloween  # 🎃 期間限定イベント(別ファイル)
+import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.01   # 1スキンあたり1%(8種で合計8%)
@@ -1409,7 +1426,8 @@ def dm_messages(friend_id):
         if not are_friends(user_id, friend_id):
             raise ApiError('フレンドのみDMできます', 403)
         rows = db_query("""
-            SELECT id, from_id, to_id, message, timestamp FROM dm_messages
+            SELECT id, from_id, to_id, CASE WHEN COALESCE(deleted, FALSE) THEN '' ELSE message END AS message, timestamp,
+                   (edited_at IS NOT NULL) AS edited, COALESCE(deleted, FALSE) AS deleted FROM dm_messages
             WHERE (from_id=%s AND to_id=%s) OR (from_id=%s AND to_id=%s)
             ORDER BY timestamp DESC LIMIT 100
         """, [user_id, friend_id, friend_id, user_id])
@@ -1446,7 +1464,7 @@ def dm_send():
 def dm_unread_summary():
     try:
         user_id = require_auth()
-        rows = db_query('SELECT from_id, message FROM dm_messages WHERE to_id=%s AND is_read=FALSE', [user_id])
+        rows = db_query('SELECT from_id, message FROM dm_messages WHERE to_id=%s AND is_read=FALSE AND COALESCE(deleted, FALSE)=FALSE', [user_id])
         total = len(rows)
         mention_re = re.compile(r'@' + re.escape(user_id) + r'\b', re.IGNORECASE)
         mentions = sum(1 for r in rows if mention_re.search(r['message'] or ''))
@@ -1613,6 +1631,16 @@ def admin_command():
                      f"🪙 コイン: {u['coins']}\n⏱️ プレイ時間: {u.get('play_time') or 0}秒\n"
                      f"🚫 BAN: {'BAN中' if u.get('banned') else 'なし'}\n📅 作成日: {created_str}\n"
                      f"📅 最終ログイン: {last_login_str}")
+
+        elif cmd == '/gift':
+            if len(args) < 6:
+                raise ValueError('使用法: /gift <ユーザーID|all> <コイン> <イベント通貨> <XP> <イベントXP> <メッセージ>\n'
+                                 '例) /gift all 1000 0 0 0 お詫びのギフトです')
+            amounts = [to_int(x) for x in args[1:5]]
+            if None in amounts:
+                raise ValueError('コイン・イベント通貨・XP・イベントXPは数字で指定してください')
+            n, _batch = social.create_gift(db_query, user_id, args[0], ' '.join(args[5:]), *amounts)
+            result = f'🎁 ギフトを {n}人 に送りました。受け取り側がログイン/ゲームオーバー後に開封します。'
 
         elif cmd == '/announce':
             message = ' '.join(args)
@@ -1805,7 +1833,8 @@ def admin_grant_all_skins():
 @app.get('/api/chat/messages')
 def chat_messages():
     try:
-        rows = db_query('SELECT id, user_id, message, timestamp FROM chat_messages ORDER BY timestamp DESC LIMIT 50')
+        rows = db_query("SELECT id, user_id, CASE WHEN COALESCE(deleted, FALSE) THEN '' ELSE message END AS message, timestamp, "
+                        "(edited_at IS NOT NULL) AS edited, COALESCE(deleted, FALSE) AS deleted FROM chat_messages ORDER BY timestamp DESC LIMIT 50")
         return jsonify(list(reversed(rows)))
     except Exception as err:
         print(err)
@@ -1860,6 +1889,9 @@ def user_profile(user_id_param):
 
 # ===================== 🎃 ハロウィンイベントのAPIを登録 =====================
 halloween.register(app, db_query, db_transaction, require_auth, ApiError)
+import minigames  # 🕹 ミニゲームのランキング(別ファイル)
+minigames.register(app, db_query, require_auth, ApiError)
+social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID)
 
 
 # ===================== ヘルスチェック / スリープ対策 =====================
