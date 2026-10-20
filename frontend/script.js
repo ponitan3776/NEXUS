@@ -1470,12 +1470,21 @@ const PATTERN_LABELS = {
     </div>`;
   }
 
+  // ガチャ演出(gachafx.js)に渡す表示用データ
+  const fxSwatches = (skin, n)=> skin ? buildPatternedColors(skin.colors, skin.pattern).slice(0, n || 7).map(c=>c.bg) : [];
+  function gachaFxItem(r){
+    const skin = r.skinId ? SKINS.find(x=>x.id === r.skinId) : null;
+    return { type:r.resultType, name: skin ? skin.name : 'ハズレ', sw: fxSwatches(skin), pity: !!r.pityTriggered,
+      extra: r.resultType === 'duplicate' ? `代わりに 🪙${formatNumber(r.coinsGained)} を獲得` : (r.resultType === 'miss' ? `🪙${formatNumber(r.coinsGained)} を獲得` : '') };
+  }
   async function performGachaPull(count){
     count = (count === 10) ? 10 : 1;
     const resultArea = document.getElementById('gachaResultArea');
     const btns = modalContent.querySelectorAll('[data-gachacount]');
     btns.forEach(b=>b.disabled = true);
     resultArea.innerHTML = `<div class="empty-hint">🎰 抽選中...</div>`;
+    // 🎁 購入した瞬間に宝箱が降りてくる(結果は通信が終わってから開ける)
+    const fx = window.GachaFx ? window.GachaFx.begin({ kind:'normal', count, pool: GACHA_SKINS.map(x=>({ name:x.name, sw:fxSwatches(x, 4) })) }) : null;
     try{
       const res = await fetch(`${API_BASE_URL}/api/gacha/pull`, {
         method:'POST',
@@ -1488,18 +1497,22 @@ const PATTERN_LABELS = {
       const results = (Array.isArray(data.results) && data.results.length) ? data.results : [data];
       ownedSkins = data.ownedSkins;
       saveSkinsData();
-      if(results.some(r=>r.resultType==='win' || r.resultType==='duplicate')) playSound('coin');
       const resultHtml = (count === 1) ? gachaSingleResultHtml(results[0]) : gachaMultiResultHtml(results);
 
       coins = data.coins;
       updateCoinUI();
+      let again = false;
+      if(fx){ again = (await fx.reveal(results.map(gachaFxItem))) === 'again'; }       // 宝箱 → ルーレット → 結果
+      else if(results.some(r=>r.resultType==='win' || r.resultType==='duplicate')) playSound('coin');
       renderGachaModal({
         coins: data.coins, totalPulls: data.totalPulls, pityCounter: data.pityCounter,
         pityThreshold: data.pityThreshold, cost: GACHA_COST_CLIENT, freeTickets: data.freeTickets, ownedSkins: data.ownedSkins
       });
       // 結果表示だけは再描画後も残したいので差し込み直す
       document.getElementById('gachaResultArea').innerHTML = resultHtml;
+      if(again) performGachaPull(count);
     }catch(err){
+      if(fx) fx.abort();
       resultArea.innerHTML = `<div class="empty-hint">${err.message}</div>`;
       btns.forEach(b=>b.disabled = false);
     }
@@ -3624,31 +3637,8 @@ restartBtn.addEventListener('click', ()=>{
   async function renderAdminPanel() {
     modalContent.dataset.mode = 'admin';
     let html = `
-      <h2 style="color:var(--gold);">🔧 管理者パネル</h2>
-      <div class="sub">admin専用コマンド実行欄です。</div>
-      <div class="admin-setting-item">
-        <div class="label-row"><span>⌨️ 管理者コマンド</span></div>
-        <input type="text" id="adminCmdInput" placeholder="コマンドを入力..." style="width:100%;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:var(--bg-deep2);color:var(--text);font-size:14px;font-family:'Nunito',sans-serif;margin-bottom:6px;">
-        <button class="primary-btn" id="adminCmdBtn">実行</button>
-        <div class="cmd-output" id="adminCmdOutput">📋 コマンド一覧:
-  /setcoins &lt;ユーザーID&gt; &lt;amount&gt; - 指定ユーザーのコインを設定
-  /addcoins &lt;ユーザーID&gt; &lt;amount&gt; - 指定ユーザーのコインに加算（元のコイン+amount）
-  /setscore &lt;ユーザーID&gt; &lt;mode&gt; &lt;score&gt; - 指定ユーザーのモード別スコア設定 (soft, baked, hard, extreme, tetris, timeattack)
-  /safety [on|off] - 強制セーフティモード（引数なしで状態表示）
-  /announce &lt;メッセージ&gt; - 全ユーザーにお知らせを配信
-  /eventadd &lt;once|daily|weekly|monthly&gt; &lt;mode&gt; &lt;順位&gt; &lt;コイン&gt; &lt;年&gt; &lt;月&gt; &lt;日&gt; &lt;時&gt; &lt;分&gt; - ランキング順位者へコインを自動配布するイベントを追加(JST基準)
-  /eventlist - 登録済みイベント一覧を表示
-  /eventremove &lt;ID&gt; - イベントを削除
-  /resetquests - 全ユーザーのクエスト進捗リセット
-  /setplaytime &lt;seconds&gt; - プレイ時間を設定
-  /ban &lt;ID&gt; - ユーザーをBAN
-  /unban &lt;ID&gt; - BAN解除
-  /resetuser &lt;ID&gt; - ユーザーデータリセット
-  /listusers - ユーザー一覧表示
-  /search &lt;ID&gt; - ユーザー情報検索
-  /stats - サーバー統計情報
-  /help - このヘルプ</div>
-      </div>
+      <button class="ghost-btn" id="adminBackBtn" type="button" style="margin-bottom:8px;">‹ コマンド一覧に戻る</button>
+      <h2 style="color:var(--gold);">🧩 ブロック出現設定</h2>
       <div class="admin-setting-item">
         <div class="label-row"><span>🧩 ブロック出現設定（オフにすると出現しなくなります）</span></div>
         <div style="max-height:200px; overflow-y:auto;">
@@ -3679,16 +3669,7 @@ restartBtn.addEventListener('click', ()=>{
     html += `</div></div>`;
     modalContent.innerHTML = html;
 
-    document.getElementById('adminCmdBtn').addEventListener('click', async () => {
-      const input = document.getElementById('adminCmdInput');
-      const output = document.getElementById('adminCmdOutput');
-      const cmd = input.value.trim();
-      if (!cmd) return;
-      output.textContent = '⏳ 実行中...';
-      const result = await executeAdminCommand(cmd);
-      output.innerHTML = result;
-      input.value = '';
-    });
+    document.getElementById('adminBackBtn').addEventListener('click', () => { if (window.AdminUI) window.AdminUI.open(); });
 
     document.querySelectorAll('.toggle-switch[data-block-index]').forEach(el => {
       el.addEventListener('click', async function() {
@@ -3719,10 +3700,9 @@ restartBtn.addEventListener('click', ()=>{
   }
 
   adminPanelBtn.addEventListener('click', () => {
-    if (currentUserId === ADMIN_USER_ID) {
-      renderAdminPanel();
-      modalOverlay.classList.add('show');
-    }
+    if (currentUserId !== ADMIN_USER_ID) return;
+    if (window.AdminUI) window.AdminUI.open();                 // 🔧 新しいコマンド選択UI(admin.js)
+    else { renderAdminPanel(); modalOverlay.classList.add('show'); }
   });
 
   // ===================== ランキング（リアルタイム自動更新） =====================
@@ -4001,6 +3981,27 @@ restartBtn.addEventListener('click', ()=>{
     }
   }
 
+  // ---------- ✏️ メッセージの編集・送信取り消し(サーバーチャット / DM 共通の部品) ----------
+  async function authPost(path, body){
+    const res = await fetch(`${API_BASE_URL}${path}`, { method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` }, body: JSON.stringify(body) });
+    const d = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(d.error || '失敗しました');
+    return d;
+  }
+  // 再描画(3秒ごとのポーリング)でも、スクロール位置を勝手に動かさない。いちばん下を見ているときだけ追従する
+  function keepScroll(container, render){
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+    const prev = container.scrollTop;
+    render();
+    container.scrollTop = nearBottom ? container.scrollHeight : prev;
+  }
+  const msgText = (m)=> m.deleted
+    ? `<span class="msg-retracted">🚫 メッセージが取り消されました</span>`
+    : `${highlightMentions(m.message)}${m.edited ? '<span class="msg-edited">(編集済み)</span>' : ''}`;
+  const msgActions = (kind, id)=> `<div class="msg-actions"><button type="button" data-${kind}act="edit" data-mid="${id}">✏️ 編集</button><button type="button" data-${kind}act="retract" data-mid="${id}">↩ 送信取り消し</button></div>`;
+
+  let chatSelectedId = null, chatEditId = null;
   function renderChatMessages() {
     const container = document.getElementById('chatMessages');
     if (!container) return;
@@ -4008,18 +4009,54 @@ restartBtn.addEventListener('click', ()=>{
       container.innerHTML = `<div style="text-align:center; color:var(--text-dim);">まだメッセージがありません。</div>`;
       return;
     }
-    container.innerHTML = chatMessages.map(msg => `
-      <div style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
-        <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="showProfile('${msg.user_id}')">
-          [${msg.user_id}]
-        </span>
-        <span style="color:var(--text); word-break:break-word;">${highlightMentions(msg.message)}</span>
-        <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
-          ${new Date(msg.timestamp).toLocaleTimeString('ja-JP')}
-        </span>
-      </div>
-    `).join('');
-    container.scrollTop = container.scrollHeight;
+    keepScroll(container, ()=>{
+      container.innerHTML = chatMessages.map(msg => {
+        const canAct = msg.user_id === currentUserId && !msg.deleted;
+        const sel = canAct && chatSelectedId === msg.id;
+        return `
+        <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
+          <div class="chat-line" data-mid="${msg.id}" style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
+            <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); showProfile('${msg.user_id}')">
+              [${msg.user_id}]
+            </span>
+            <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}</span>
+            <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
+              ${new Date(msg.timestamp).toLocaleTimeString('ja-JP')}
+            </span>
+          </div>
+          ${sel ? msgActions('chat', msg.id) : ''}
+        </div>`;
+      }).join('');
+    });
+    container.querySelectorAll('.chat-item.mine .chat-line').forEach(el=>{
+      el.addEventListener('click', ()=>{ const id = parseInt(el.dataset.mid); chatSelectedId = (chatSelectedId === id) ? null : id; renderChatMessages(); });
+    });
+    container.querySelectorAll('[data-chatact]').forEach(btn=>{
+      btn.addEventListener('click', async (e)=>{
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.mid), m = chatMessages.find(x=>x.id === id);
+        if(btn.dataset.chatact === 'edit'){ startChatEdit(m); return; }
+        if(!confirm('このメッセージの送信を取り消しますか？(全員の画面から消えます)')) return;
+        try{ await authPost('/api/chat/retract', { id }); chatSelectedId = null; if(chatEditId === id) cancelChatEdit(); await fetchChatMessages(); }
+        catch(err){ alert(err.message); }
+      });
+    });
+  }
+  function startChatEdit(m){
+    if(!m) return;
+    chatEditId = m.id; chatSelectedId = null;
+    const input = document.getElementById('chatInput'), bar = document.getElementById('chatEditBar'), btn = document.getElementById('chatSendBtn');
+    if(input){ input.value = m.message; input.focus(); }
+    if(bar) bar.style.display = 'flex';
+    if(btn) btn.textContent = '保存';
+    renderChatMessages();
+  }
+  function cancelChatEdit(){
+    chatEditId = null;
+    const input = document.getElementById('chatInput'), bar = document.getElementById('chatEditBar'), btn = document.getElementById('chatSendBtn');
+    if(input) input.value = '';
+    if(bar) bar.style.display = 'none';
+    if(btn) btn.textContent = '送信';
   }
 
   function renderChatModal() {
@@ -4030,6 +4067,7 @@ restartBtn.addEventListener('click', ()=>{
       <div id="chatMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; text-align:left; border:1px solid rgba(255,255,255,0.05);">
         <div style="text-align:center; color:var(--text-dim);">読み込み中...</div>
       </div>
+      <div id="chatEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="chatEditCancel">キャンセル</button></div>
       <div style="display:flex; gap:6px;">
         <input type="text" id="chatInput" placeholder="メッセージを入力...(@IDでメンション)" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:var(--bg-deep2); color:var(--text); font-size:14px; font-family:'Nunito',sans-serif;">
         <button class="primary-btn" id="chatSendBtn" style="flex-shrink:0; width:auto; padding:10px 20px; margin:0;">送信</button>
@@ -4043,10 +4081,17 @@ restartBtn.addEventListener('click', ()=>{
 
     fetchChatMessages();
 
+    chatEditId = null; chatSelectedId = null;
+    document.getElementById('chatEditCancel').addEventListener('click', cancelChatEdit);
     document.getElementById('chatSendBtn').addEventListener('click', async () => {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
       if (!msg) return;
+      if (chatEditId) {                                     // ✏️ 編集の保存
+        try { await authPost('/api/chat/edit', { id: chatEditId, message: msg }); cancelChatEdit(); await fetchChatMessages(); }
+        catch (err) { alert(err.message); }
+        return;
+      }
       await sendChatMessage(msg);
       input.value = '';
     });
@@ -4493,12 +4538,19 @@ restartBtn.addEventListener('click', ()=>{
       <div id="dmMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; border:1px solid rgba(255,255,255,0.05);">
         <div class="empty-hint">読み込み中...</div>
       </div>
+      <div id="dmEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="dmEditCancel">キャンセル</button></div>
       <div style="display:flex; gap:6px;">
         <input type="text" id="dmInput" placeholder="メッセージを入力...(@IDでメンション)" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:var(--bg-deep2); color:var(--text); font-size:14px; font-family:'Nunito',sans-serif;">
         <button class="primary-btn" id="dmSendBtn" style="flex-shrink:0; width:auto; padding:10px 20px; margin:0;">送信</button>
       </div>
     `;
 
+    let dmMsgs = [], dmSelectedId = null, dmEditId = null;
+    function cancelDmEdit(){
+      dmEditId = null; const input = document.getElementById('dmInput'); if(input) input.value = '';
+      const bar = document.getElementById('dmEditBar'); if(bar) bar.style.display = 'none';
+      const btn = document.getElementById('dmSendBtn'); if(btn) btn.textContent = '送信';
+    }
     async function loadThread(){
       const msgs = await fetchDMMessages(friendId);
       const container = document.getElementById('dmMessages');
@@ -4506,18 +4558,39 @@ restartBtn.addEventListener('click', ()=>{
       if (msgs.length === 0) {
         container.innerHTML = `<div class="empty-hint">まだメッセージがありません。話しかけてみましょう！</div>`;
       } else {
-        container.innerHTML = msgs.map(m => {
-          const mine = m.from_id === currentUserId;
-          return `
+        dmMsgs = msgs;
+        keepScroll(container, ()=>{
+          container.innerHTML = msgs.map(m => {
+            const mine = m.from_id === currentUserId, canAct = mine && !m.deleted, sel = canAct && dmSelectedId === m.id;
+            return `
             <div class="dm-bubble-row ${mine ? 'mine' : ''}">
               <div class="dm-bubble-col">
-                <div class="dm-bubble">${highlightMentions(m.message)}</div>
+                <div class="dm-bubble ${canAct ? 'actable' : ''} ${m.deleted ? 'retracted' : ''} ${sel ? 'sel' : ''}" data-mid="${m.id}">${msgText(m)}</div>
+                ${sel ? msgActions('dm', m.id) : ''}
                 <div class="dm-time" style="text-align:${mine ? 'right' : 'left'};">${new Date(m.timestamp).toLocaleTimeString('ja-JP')}</div>
               </div>
             </div>`;
-        }).join('');
+          }).join('');
+        });
+        container.querySelectorAll('.dm-bubble.actable').forEach(el=>{
+          el.addEventListener('click', ()=>{ const id = parseInt(el.dataset.mid); dmSelectedId = (dmSelectedId === id) ? null : id; loadThread(); });
+        });
+        container.querySelectorAll('[data-dmact]').forEach(btn=>{
+          btn.addEventListener('click', async (e)=>{
+            e.stopPropagation();
+            const id = parseInt(btn.dataset.mid), m = dmMsgs.find(x=>x.id === id);
+            if(btn.dataset.dmact === 'edit'){
+              dmEditId = id; dmSelectedId = null;
+              const input = document.getElementById('dmInput'); input.value = m.message; input.focus();
+              document.getElementById('dmEditBar').style.display = 'flex'; document.getElementById('dmSendBtn').textContent = '保存';
+              loadThread(); return;
+            }
+            if(!confirm('このメッセージの送信を取り消しますか？(相手の画面からも消えます)')) return;
+            try{ await authPost('/api/dm/retract', { id }); dmSelectedId = null; if(dmEditId === id) cancelDmEdit(); await loadThread(); }
+            catch(err){ alert(err.message); }
+          });
+        });
       }
-      container.scrollTop = container.scrollHeight;
       fetchDMUnreadSummary(); // 既読になったのでバッジを更新
     }
     await loadThread();
@@ -4526,9 +4599,15 @@ restartBtn.addEventListener('click', ()=>{
       const input = document.getElementById('dmInput');
       const msg = input.value.trim();
       if (!msg) return;
+      if (dmEditId) {                                       // ✏️ 編集の保存
+        try { await authPost('/api/dm/edit', { id: dmEditId, message: msg }); cancelDmEdit(); await loadThread(); }
+        catch (err) { alert(err.message); }
+        return;
+      }
       const ok = await sendDM(friendId, msg);
       if (ok) { input.value = ''; await loadThread(); }
     });
+    document.getElementById('dmEditCancel').addEventListener('click', cancelDmEdit);
     document.getElementById('dmInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') document.getElementById('dmSendBtn').click();
     });
@@ -5969,6 +6048,7 @@ function enterTetrisMode(){
     clearTimeout(titleHideTimer);
     titleScreenEl.classList.remove('hidden', 'leaving');
     replayLobbyIn();
+    setTimeout(()=>{ try{ if(window.GiftFx) window.GiftFx.check('lobby'); }catch(e){} }, 700);
   }
   let titleHideTimer = null;
   function motionOff(){ return document.body.classList.contains('reduce-motion') || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -6186,12 +6266,23 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.4.0', date:'2026-10-18', items:[
+      '🗂 機能の置き場所を整理: ロビーも☰メニューも「あそぶ / あつめる / みんなと / せってい」の同じ区分に。☰メニューには検索欄も付きました',
+      '🗳 「投票」を追加。ゲスト以外のみんなが、出された質問に投票できます(結果もリアルタイムで見られます)',
+      '✏️ サーバーチャットとDMで、送ったメッセージの「編集」と「送信取り消し」ができるように(自分のメッセージをタップ)',
+      '🎁 ギフト機能を追加。運営からのプレゼント(コイン・イベント通貨・XP・イベントXP)が届くと、ログイン時やゲームオーバー後にプレゼントボックスを開封できます'
+    ]},
+    { version:'3.3.0', date:'2026-10-18', items:[
+      '🎁 ガチャ演出を追加！ 購入すると宝箱が降りてきて、揺れて、フタが開き、上でルーレットが回って結果が決まります(通常・ハロウィン共通、スキップも可)',
+      '🏆 ミニゲームにランキングを追加(全6ゲーム・上位20人・自分の順位。メニューや結果画面から見られます)',
+      '🔢 2048のタイルがスライドして、合体するとぽんっと弾むように',
+      '🐍 パンプキン・スネークをヌルヌル動くように改善(1マスずつのカクカクをやめて、滑らかに補間)'
+    ]},
     { version:'3.2.0', date:'2026-10-18', items:[
       '🕹 新しい「ミニゲーム」を6本追加(2048 / パンプキン・スネーク / おばけ神経衰弱 / おばけたたき / マイン・ハンター / ゴースト・フライト)。遊ぶとコイン・バトルパスXP・ハロウィンキャンディがもらえます',
       '🍬 ハロウィンガチャを、コインではなく専用通貨「ハロウィンキャンディ」で引くように変更(1回80個)。キャンディは集めやすく調整しました',
       '🎯 ガチャの天井を、通常・ハロウィンともに1000回に変更',
-      '📢 更新履歴が他のUIと重なったり、一番奥に隠れたりする不具合を修正(専用のシートで表示)',
-      '📋 ご要望・不具合のDiscord通知を、タップ/クリックでコピーしやすい形式に変更'
+      '📢 更新履歴が他のUIと重なったり、一番奥に隠れたりする不具合を修正(専用のシートで表示)'
     ]},
     { version:'3.1.2', date:'2026-10-18', items:[
       '✨ 全体にアニメーションを追加(画面の切り替え・ボタン・ウィンドウ・リスト・ゲージ・数字・ゲーム中)',
@@ -6457,6 +6548,8 @@ function renderOtherGamesModal(){
 
   // ゲーム終了時に呼ぶ: キャンディ獲得・ミッション進行(開催中でログイン中のときだけ)
   async function reportEventGame(info){
+    // 🎁 ゲームが終わったら、届いているギフトを確認する(プレイ中には出さず、ゲームオーバー後に出す)
+    setTimeout(()=>{ try{ if(window.GiftFx) window.GiftFx.check('gameover'); }catch(e){} }, 1600);
     if(!authToken || eventPhaseNow()!=='active') return;
     try{
       const data = await hwApi('report', 'POST', info);
@@ -6705,19 +6798,33 @@ function renderOtherGamesModal(){
     const swatches = wins.map(w=>hwSwatches(w.skinId,5)).join('');
     return `<div class="hw-card ${wins.length?'gold':''}"><div class="qtitle" style="text-align:center;">${wins.length?'🎉 ':''}${d.results.length>1?'10連結果':'結果'}</div>${swatches}${rows}</div>`;
   }
+  function hwFxItem(r){
+    const skin = r.skinId ? SKINS.find(x=>x.id === r.skinId) : null;
+    return { type:r.resultType, name: skin ? skin.name : 'ハズレ', sw: fxSwatches(skin), pity: !!r.pityTriggered,
+      extra: r.resultType === 'duplicate' ? `代わりに 🍬${r.candiesGained} を獲得` : (r.resultType === 'miss' ? `🍬${r.candiesGained} を獲得` : '') };
+  }
   async function hwPull(count){
     const btns = modalContent.querySelectorAll('[data-hwpull]');
     btns.forEach(b=>b.disabled = true);
     const area = document.getElementById('hwGachaResult');
     if(area) area.innerHTML = `<div class="empty-hint">🎃 抽選中...</div>`;
+    // 🎁 購入した瞬間に宝箱が降りてくる
+    const poolIds = (hwState && hwState.gacha && hwState.gacha.pool) || [];
+    const fx = window.GachaFx ? window.GachaFx.begin({ kind:'halloween', count, pool: poolIds.map(id=>{ const k = SKINS.find(x=>x.id === id); return { name: k ? k.name : id, sw: fxSwatches(k, 4) }; }) }) : null;
     try{
       const d = await hwApi('gacha/pull', 'POST', { count });
       hwApplyWallet(d);
       hwState.gacha.pity = d.pity; hwState.gacha.pulls = d.pulls;
-      if(d.results.some(r=>r.resultType==='win'||r.resultType==='duplicate')) playSound('coin');
-      renderHalloween();
-      document.getElementById('hwGachaResult').innerHTML = hwResultHtml(d);
+      let again = false;
+      if(fx){ again = (await fx.reveal(d.results.map(hwFxItem))) === 'again'; }       // 宝箱 → ルーレット → 結果
+      else if(d.results.some(r=>r.resultType==='win'||r.resultType==='duplicate')) playSound('coin');
+      if(modalContent.dataset.mode === 'halloween'){
+        renderHalloween();
+        const ra = document.getElementById('hwGachaResult'); if(ra) ra.innerHTML = hwResultHtml(d);
+      }
+      if(again) hwPull(count);
     }catch(err){
+      if(fx) fx.abort();
       if(area) area.innerHTML = `<div class="empty-hint">${err.message}</div>`;
       btns.forEach(b=>b.disabled = false);
       fetchEventStatus();   // 終了していた場合は、画面もすぐ閉じる/切り替える
@@ -6805,36 +6912,86 @@ function renderOtherGamesModal(){
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchEventStatus(); });
 
 
-  // ===================== 🧭 新レイアウト: メニューシート・ロビー表示 =====================
+  // ===================== 🧭 メニュー: ロビーと ☰ が同じ区分・同じ中身(あそぶ / あつめる / みんなと / せってい) =====================
   (function setupNewLayout(){
     const sheet = document.getElementById('quickSheetWrap');
-    const openBtn = document.getElementById('menuSheetBtn');
-    const lobbyName = document.getElementById('lobbyAccountName');
-    const lobbyCoins = document.getElementById('lobbyCoins');
-    const menuDot = document.getElementById('menuDot');
+    const lobbyName = document.getElementById('lobbyAccountName'), lobbyCoins = document.getElementById('lobbyCoins');
+    const menuDot = document.getElementById('menuDot'), lobbyMenuDot = document.getElementById('lobbyMenuDot');
+    const search = document.getElementById('qsSearch'), emptyEl = sheet.querySelector('.qs-empty');
+    const evItem = sheet.querySelector('.ev-only');
     let sheetTimer = null;
-    const toggle = (on)=>{
+    const items = Array.from(sheet.querySelectorAll('.qs-sec .icon-btn'));
+    function applySearch(){
+      const q = (search.value || '').trim().toLowerCase();
+      let visible = 0;
+      sheet.querySelectorAll('.qs-sec').forEach(sec=>{
+        let n = 0;
+        sec.querySelectorAll('.icon-btn').forEach(it=>{
+          const hay = ((it.dataset.label || '') + ' ' + (it.textContent || '')).toLowerCase();
+          const hit = !q || hay.includes(q);
+          it.classList.toggle('hide-q', !hit); it.classList.toggle('hit', !!q && hit);
+          const hiddenBy = (sheet.dataset.ctx === 'game' && it.classList.contains('lobby-only')) || (it.style.display === 'none');
+          if(hit && !hiddenBy) n++;
+        });
+        sec.classList.toggle('hide-q', n === 0); visible += n;
+      });
+      emptyEl.style.display = visible ? 'none' : 'block';
+    }
+    const toggle = (on, ctx)=>{
       clearTimeout(sheetTimer);
-      if(on){ sheet.classList.remove('closing'); sheet.classList.add('show'); return; }
+      if(on){
+        sheet.dataset.ctx = ctx || (document.getElementById('titleScreen').classList.contains('hidden') ? 'game' : 'lobby');
+        search.value = ''; applySearch();
+        sheet.classList.remove('closing'); sheet.classList.add('show'); return;
+      }
       if(!sheet.classList.contains('show')) return;
       if(motionOff()){ sheet.classList.remove('show'); return; }
       sheet.classList.add('closing');
       sheetTimer = setTimeout(()=>{ sheet.classList.remove('show', 'closing'); }, 200);
     };
-    openBtn.addEventListener('click', ()=>toggle(true));
+    document.getElementById('menuSheetBtn').addEventListener('click', ()=>toggle(true, 'game'));
+    document.getElementById('lobbyMenuBtn').addEventListener('click', ()=>toggle(true, 'lobby'));
+    search.addEventListener('input', applySearch);
     // 背景タップ・項目タップで閉じる(サウンドのON/OFFだけは開いたまま)
     sheet.addEventListener('click', (e)=>{
       if(e.target === sheet) return toggle(false);
       const item = e.target.closest && e.target.closest('.icon-btn');
-      if(item && item.id !== 'soundBtn') toggle(false);
+      if(!item || item.id === 'soundBtn') return;
+      if(item.dataset.act === 'gift'){ if(window.GiftFx) window.GiftFx.check('manual'); }
+      toggle(false);
+    });
+    // data-proxy="○○" のボタンは、既存の ○○ ボタンを押したのと同じ動き(ロビーのタイル・☰メニューの両方で使う)
+    document.addEventListener('click', (e)=>{
+      const it = e.target.closest && e.target.closest('[data-proxy]');
+      if(!it) return;
+      const target = document.getElementById(it.dataset.proxy);
+      if(target && target !== it) setTimeout(()=>target.click(), 70);
     });
     document.getElementById('lobbyAccount').addEventListener('click', ()=>{ hideTitleScreen(); accountBtn.click(); });
+    document.getElementById('lobbyGiftBtn').addEventListener('click', ()=>{ if(window.GiftFx) window.GiftFx.check('manual'); });
+
+    const setBadge = (el, n)=>{ if(!el) return; el.classList.toggle('show', n > 0); const t = n > 99 ? '99+' : (n > 0 ? String(n) : ''); if(el.textContent !== t) el.textContent = t; };
+    let wasAuth = false;
     const update = ()=>{
       const nm = currentUserId || 'ゲスト', cn = formatNumber(coins);
       if(lobbyName.textContent !== nm) lobbyName.textContent = nm;
       if(lobbyCoins.textContent !== cn) lobbyCoins.textContent = cn;   // 変わったときだけ書き換える(アニメが毎秒走らないように)
-      // 未読(フレンド・チャット)があれば ☰ にも赤い点を出す
-      menuDot.classList.toggle('show', friendsDot.classList.contains('show') || chatDot.classList.contains('show'));
+      const frOn = friendsDot.classList.contains('show'), chOn = chatDot.classList.contains('show');
+      const frM = friendsMentionBadge.classList.contains('show') ? (parseInt(friendsMentionBadge.textContent) || 0) : 0;
+      const chM = chatMentionBadge.classList.contains('show') ? (parseInt(chatMentionBadge.textContent) || 0) : 0;
+      setBadge(document.getElementById('lobbyFriendsBadge'), frM || (frOn ? 1 : 0));
+      setBadge(document.getElementById('lobbyChatBadge'), chM || (chOn ? 1 : 0));
+      const polls = (window.CBSocial && window.CBSocial.unvotedCount) ? window.CBSocial.unvotedCount() : 0;
+      const gifts = (window.GiftFx && window.GiftFx.pendingCount) ? window.GiftFx.pendingCount() : 0;
+      setBadge(document.getElementById('lobbyPollBadge'), polls);
+      const giftBtn = document.getElementById('lobbyGiftBtn');
+      giftBtn.style.display = gifts > 0 ? 'flex' : 'none'; setBadge(document.getElementById('lobbyGiftBadge'), gifts);
+      const any = frOn || chOn || frM || chM || polls > 0 || gifts > 0;
+      menuDot.classList.toggle('show', !!any); lobbyMenuDot.classList.toggle('show', !!any);
+      if(evItem){ const vis = document.getElementById('titleEventBtn').style.display !== 'none'; const d = vis ? '' : 'none'; if(evItem.style.display !== d){ evItem.style.display = d; } }
+      // ログイン(または保存されたログインの復元)を検知したら、届いているギフトを確認する
+      if(authToken && !wasAuth){ wasAuth = true; if(window.GiftFx) window.GiftFx.check('login'); if(window.CBSocial) window.CBSocial.refresh(); }
+      if(!authToken) wasAuth = false;
     };
     update();
     setInterval(update, 1000);
@@ -6891,7 +7048,25 @@ function renderOtherGamesModal(){
     report: reportEventGame,                       // 🎃 イベントのキャンディ・ミッション
     xp: grantBattlePassXp,                         // バトルパスXP
     sync(){ if(authToken) syncToServer(); },       // コイン等をサーバーへ保存
-    fmt: formatNumber, sound: playSound, vibrate, toast: showEventToast, motionOff
+    fmt: formatNumber, sound: playSound, vibrate, toast: showEventToast, motionOff,
+    isLoggedIn(){ return !!authToken; },
+    userId(){ return currentUserId; },
+    isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
+    setCoins(n){ coins = Math.max(0, Number(n) || 0); updateCoinUI(); },
+    adminCommand: executeAdminCommand,                       // 文字のコマンドを実行(結果の文字を返す)
+    openAdminBlocks(){ renderAdminPanel(); modalOverlay.classList.add('show'); },
+    closeModal, hideTitle: hideTitleScreen,
+    // サーバーAPI呼び出し(ログイン中ならトークン付き)。失敗時は Error を投げる
+    async api(path, method, body){
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: method || 'GET',
+        headers: { 'Content-Type':'application/json', ...(authToken ? { 'Authorization':`Bearer ${authToken}` } : {}) },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      let data = null; try{ data = await res.json(); }catch(e){}
+      if(!res.ok) throw new Error((data && data.error) || '通信に失敗しました');
+      return data;
+    }
   };
 
   // ===================== 💤 スリープ対策 =====================
