@@ -21,7 +21,7 @@ import jwt
 import bcrypt
 import requests
 import psycopg2
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g, has_request_context
 from flask_cors import CORS
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import RealDictCursor
@@ -88,6 +88,7 @@ def _getconn():
 
 
 def _run_query(sql, params, fetch):
+    _t0 = time.perf_counter()
     conn = _getconn()
     broken = False
     try:
@@ -107,6 +108,9 @@ def _run_query(sql, params, fetch):
         raise
     finally:
         _release(conn, broken)
+        if has_request_context():       # このリクエストで DB に使った時間を足す(下の Server-Timing 用)
+            g.db_ms = getattr(g, 'db_ms', 0.0) + (time.perf_counter() - _t0) * 1000
+            g.db_n = getattr(g, 'db_n', 0) + 1
 
 
 def db_query(sql, params=None, fetch=True):
@@ -477,6 +481,30 @@ def battle_pass_reward_for_level(level):
     r = dict(rewards[cycle_pos])
     r['level'] = level
     return r
+
+
+# ===================== 🔎 速度の計測(Server-Timing) =====================
+# 各レスポンスに「このリクエストでDBに何ms・何回使ったか / サーバー全体で何msか」を付ける。
+# ブラウザの開発者ツール → Network → 遅いAPIを選ぶ → Timing で見られる。
+#   db が大きい → DB(Supabase)側が遅い / app-db が大きい → サーバー(Render)側が遅い /
+#   どちらも小さいのに遅い → ブラウザ↔サーバー間の通信距離(リージョン違い)や、サーバーの起動待ち
+@app.before_request
+def _timing_start():
+    g.t0 = time.perf_counter()
+
+
+@app.after_request
+def _timing_end(resp):
+    try:
+        total = (time.perf_counter() - g.t0) * 1000
+        db = getattr(g, 'db_ms', 0.0)
+        resp.headers['Server-Timing'] = f'db;dur={db:.0f};desc="DB {getattr(g, "db_n", 0)}回", app;dur={max(0, total - db):.0f}, total;dur={total:.0f}'
+        resp.headers['Access-Control-Expose-Headers'] = 'Server-Timing'
+        if total > 800:
+            print(f'🐢 遅いリクエスト {request.method} {request.path}: 合計{total:.0f}ms(DB {db:.0f}ms / {getattr(g, "db_n", 0)}回)')
+    except Exception:
+        pass
+    return resp
 
 
 # ===================== 共通エラーハンドラ =====================
