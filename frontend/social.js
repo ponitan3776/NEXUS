@@ -12,10 +12,11 @@
   const mo = ()=> document.getElementById('modalOverlay');
 
   let polls = [];
+  let loaded = false;   // 一度でも取得できたか
   let timer = null;
 
   async function refresh(){
-    try{ const d = await CB().api('/api/polls'); polls = (d && d.polls) || []; return true; }catch(e){ return false; }
+    try{ const d = await CB().api('/api/polls'); polls = (d && d.polls) || []; loaded = true; return true; }catch(e){ return false; }
   }
   // ロビーのバッジ用: まだ投票していない「受付中」の質問の数(ゲストは0)
   function unvotedCount(){
@@ -47,6 +48,8 @@
     if(!logged) html += `<div class="hw-banner warn">ゲストは結果を見るだけです。投票するには、ログインしてください。</div>`;
     html += polls.length ? polls.map(p=>pollHtml(p, logged)).join('') : `<div class="empty-hint">いま出ている質問はありません。</div>`;
     html += `<div class="sub" style="margin-top:8px;">結果は自動で更新されます。</div>`;
+    if(body.dataset.sig === html) return;           // 変わっていなければ描き直さない
+    body.dataset.sig = html;
     const keep = body.scrollTop;
     body.innerHTML = html;
     body.scrollTop = keep;
@@ -61,6 +64,7 @@
     const cur = polls.find(p=>p.id === pid);
     if(cur && cur.myVote === opt) return;
     btn.classList.add('busy');
+    if(cur){ cur.options.forEach((o,i)=>{ if(i === opt) o.votes++; if(i === cur.myVote) o.votes--; }); if(cur.myVote == null) cur.total++; cur.myVote = opt; render(); }   // 先に画面へ反映(返事を待たない)
     try{
       const d = await CB().api(`/api/polls/${pid}/vote`, 'POST', { option: opt });
       const i = polls.findIndex(p=>p.id === pid);
@@ -77,14 +81,18 @@
   async function open(){
     const body = mc(); if(!body) return;
     body.dataset.mode = 'polls';
-    body.innerHTML = `<h2 style="color:var(--gold);">🗳 みんなの投票</h2><div class="empty-hint">読み込み中...</div>`;
     mo().classList.add('show');
-    await refresh(); render();
+    body.dataset.sig = '';
+    // 前回の結果があればすぐ表示(通信を待たない)。なければ「読み込み中」
+    if(loaded) render();
+    else body.innerHTML = `<h2 style="color:var(--gold);">🗳 みんなの投票</h2><div class="empty-hint">読み込み中...</div>`;
+    refresh().then(ok=>{ if(ok && mo().classList.contains('show') && mc().dataset.mode === 'polls') render(); });
     clearInterval(timer);
-    timer = setInterval(async ()=>{                                  // 開いている間は、結果を自動で更新
+    timer = setInterval(async ()=>{                                  // 開いている間は、結果を自動で更新(画面を見ていないときは止める)
       if(!mo().classList.contains('show') || mc().dataset.mode !== 'polls'){ clearInterval(timer); timer = null; return; }
+      if(document.hidden) return;
       if(await refresh()) render();
-    }, 6000);
+    }, 8000);
   }
 
   // ロビーの「投票」ボタン
@@ -92,7 +100,7 @@
   if(btn) btn.addEventListener('click', ()=>{ if(CB().hideTitle) CB().hideTitle(); open(); });
   // バッジ用の定期更新
   refresh();
-  setInterval(()=>{ if(CB().isLoggedIn && CB().isLoggedIn()) refresh(); }, 120000);
+  setInterval(()=>{ if(!document.hidden && CB().isLoggedIn && CB().isLoggedIn()) refresh(); }, 120000);
 
   window.CBSocial = { open, refresh, unvotedCount };
 })();
