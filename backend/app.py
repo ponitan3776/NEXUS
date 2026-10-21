@@ -11,6 +11,8 @@ import base64
 import random
 import string
 import secrets
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -57,10 +59,12 @@ if JWT_SECRET == 'your-secret-key':
 # Supabase は SSL 必須。プーラーが長時間アイドルの接続を切ることがあるため、
 # TCP keepalive を有効にし、切れた接続は捨てて1回だけ自動リトライする。
 DB_POOL_MAX = int(os.environ.get('DB_POOL_MAX', '10'))
+DB_POOL_MIN = int(os.environ.get('DB_POOL_MIN', '4'))   # 先に繋いでおく本数(接続のたびにSSLを張る待ち時間をなくす)
 _pool = None
+_pool_sem = threading.BoundedSemaphore(DB_POOL_MAX)     # 満杯のときはエラーにせず、空くまで待つ
 if DATABASE_URL:
     _pool = pg_pool.ThreadedConnectionPool(
-        1, DB_POOL_MAX, dsn=DATABASE_URL, sslmode='require', connect_timeout=10,
+        min(DB_POOL_MIN, DB_POOL_MAX), DB_POOL_MAX, dsn=DATABASE_URL, sslmode='require', connect_timeout=10,
         keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5
     )
 
@@ -68,11 +72,23 @@ _CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 
 def _release(conn, broken):
-    _pool.putconn(conn, close=bool(broken or conn.closed))
+    try:
+        _pool.putconn(conn, close=bool(broken or conn.closed))
+    finally:
+        _pool_sem.release()
+
+
+def _getconn():
+    _pool_sem.acquire()
+    try:
+        return _pool.getconn()
+    except Exception:
+        _pool_sem.release()
+        raise
 
 
 def _run_query(sql, params, fetch):
-    conn = _pool.getconn()
+    conn = _getconn()
     broken = False
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -109,7 +125,7 @@ def db_execute(sql, params=None):
 def db_transaction():
     """複数クエリを1トランザクションで実行する(SELECT ... FOR UPDATE で二重消費を防ぐ用)。
     with ブロックを正常に抜けるとcommit、例外ならrollbackする。"""
-    conn = _pool.getconn()
+    conn = _getconn()
     broken = False
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -126,6 +142,33 @@ def db_transaction():
         raise
     finally:
         _release(conn, broken)
+
+
+# ===================== 短時間キャッシュ(同じ内容を全員が何度も聞くAPI用) =====================
+# 例: ランキング・チャット・イベント一覧は、全員が数秒おきに同じ内容を取りに来る。
+# 数秒だけ結果を覚えておけば、DBへの問い合わせが「人数ぶん」から「数秒に1回」に減る。
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def ttl_cache(key, ttl, fn):
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    with _cache_lock:
+        if len(_cache) > 300:          # 溜まりすぎ防止
+            _cache.clear()
+        _cache[key] = (time.monotonic(), val)
+    return val
+
+
+def cache_drop(*prefixes):
+    with _cache_lock:
+        for k in list(_cache):
+            if any(str(k).startswith(p) for p in prefixes):
+                _cache.pop(k, None)
 
 
 # ===================== Discord通知 =====================
@@ -272,6 +315,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_claimed JSONB DEFAULT '[]';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_forced_scores JSONB DEFAULT '{}';
     """)
+    db_execute("""
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS titles JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS equipped_title TEXT;
+    """)
     print('✅ users テーブル準備完了')
 
     db_execute("""
@@ -362,6 +409,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     # 🗳 投票 / 🎁 ギフト / ✏️ チャット・DMの編集・取り消し用の列
     social.init_tables(db_execute)
 
+    # ⚡ 読み込みを速くするための索引(無くても動くが、データが増えるほど遅くなる)
+    db_execute('''
+        CREATE INDEX IF NOT EXISTS idx_friend_req_to ON friend_requests (to_id, status);
+        CREATE INDEX IF NOT EXISTS idx_friend_req_from ON friend_requests (from_id, status);
+        CREATE INDEX IF NOT EXISTS idx_dm_to_unread ON dm_messages (to_id, is_read);
+        CREATE INDEX IF NOT EXISTS idx_dm_pair_ts ON dm_messages (from_id, to_id, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_users_coins ON users (coins DESC);
+        CREATE INDEX IF NOT EXISTS idx_users_playtime ON users (play_time DESC);
+        CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes (user_id);
+    ''')
+
     # Supabase では public スキーマのテーブルが Data API(anonキー)から見えうるため、
     # 全テーブルでRLSを有効化(ポリシーなし = anon/authenticated は一切アクセス不可)。
     # このサーバーは postgres ロールで直接接続するのでRLSの影響を受けない。
@@ -394,6 +452,7 @@ GACHA_SKIN_IDS = [
 
 import halloween  # 🎃 期間限定イベント(別ファイル)
 import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
+import titles  # 🏷 称号(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.004  # 1スキンあたり0.4%(8種で合計3.2%) ← 一般的なソシャゲの最高レア帯
@@ -642,11 +701,14 @@ def sync_get():
         return jsonify({'error': '認証が必要です'}), 401
     try:
         user_id = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])['id']
-        try:
-            db_execute('UPDATE users SET last_active = NOW() WHERE id = %s', [user_id])
-        except Exception:
-            pass
-        rows = db_query('SELECT * FROM users WHERE id = %s', [user_id])
+        # 1回の問い合わせで「オンライン時刻の更新(8秒以上空いたときだけ)」と「データ取得」を済ませる
+        rows = db_query("""
+            WITH touch AS (
+                UPDATE users SET last_active = NOW()
+                WHERE id = %s AND (last_active IS NULL OR last_active < NOW() - INTERVAL '8 seconds') RETURNING 1
+            )
+            SELECT best_score, best_scores, coins, play_time, skins, equipped_skin, quests FROM users WHERE id = %s
+        """, [user_id, user_id])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
         user = rows[0]
@@ -662,34 +724,48 @@ def sync_get():
 
 
 # ===================== ランキング =====================
+RANK_CACHE_SEC = 5
+
+
+def _rank_build(mode, rtype):
+    if rtype == 'playtime':
+        val, where, order = 'play_time', 'play_time IS NOT NULL AND play_time > 0', 'play_time'
+    elif rtype == 'coins':
+        val, where, order = 'coins', 'coins IS NOT NULL AND coins > 0', 'coins'
+    else:
+        val = f"(best_scores->>'{mode}')::bigint"
+        where = f"best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'"
+        order = val
+    rows = db_query(f"SELECT id, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
+                    f"WHERE {where} ORDER BY {order} DESC LIMIT 50")
+    total = int(rows[0]['total']) if rows else 0
+    top = [{'id': r['id'], 'value': int(r['value']), 'title': titles.view_of(r.get('equipped_title'), r['id'], ADMIN_USER_ID)}
+           for r in rows]
+    return {'top': top, 'totalUsers': total}
+
+
 @app.get('/api/ranking')
 def ranking():
     mode = request.args.get('mode', 'soft')
     rtype = request.args.get('type', 'score')
     try:
-
-        if rtype == 'playtime':
-            top_query = 'SELECT id, play_time AS value FROM users WHERE play_time IS NOT NULL AND play_time > 0 ORDER BY play_time DESC LIMIT 50'
-            count_query = 'SELECT COUNT(*) AS count FROM users WHERE play_time IS NOT NULL AND play_time > 0'
-        elif rtype == 'coins':
-            # ★コインランキング（今まで抜けていた）
-            top_query = 'SELECT id, coins AS value FROM users WHERE coins IS NOT NULL AND coins > 0 ORDER BY coins DESC LIMIT 50'
-            count_query = 'SELECT COUNT(*) AS count FROM users WHERE coins IS NOT NULL AND coins > 0'
-        else:
-            valid_modes = ['soft', 'baked', 'hard', 'extreme', 'tetris', 'timeattack']
-
-            if mode not in valid_modes:
+        if rtype not in ('playtime', 'coins'):
+            rtype = 'score'
+            if mode not in ['soft', 'baked', 'hard', 'extreme', 'tetris', 'timeattack']:
                 mode = 'soft'
-            top_query = f"""
-                SELECT id, best_scores->>'{mode}' AS value FROM users
-                WHERE best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'
-                ORDER BY (best_scores->>'{mode}')::bigint DESC LIMIT 50
-            """
-            count_query = f"SELECT COUNT(*) AS count FROM users WHERE best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'"
-        top_rows = db_query(top_query)
-        count_rows = db_query(count_query)
-        top = [{'id': r['id'], 'value': int(r['value'])} for r in top_rows]
-        return jsonify({'top': top, 'totalUsers': int(count_rows[0]['count'])})
+        data = ttl_cache(f'rank:{rtype}:{mode}', RANK_CACHE_SEC, lambda: _rank_build(mode, rtype))
+        out = dict(data)
+        # 自分の値も一緒に返す(以前はアプリが /api/sync をもう1回呼んでいて、表示が遅かった)
+        me = get_user_id_optional()
+        if me != 'ゲスト':
+            col = {'playtime': 'play_time', 'coins': 'coins'}.get(rtype)
+            if col:
+                r = db_query(f'SELECT {col} AS v FROM users WHERE id = %s', [me])
+                out['me'] = int((r[0]['v'] if r else 0) or 0)
+            else:
+                r = db_query("SELECT best_scores->>%s AS v FROM users WHERE id = %s", [mode, me])
+                out['me'] = int((r[0]['v'] if r else 0) or 0)
+        return jsonify(out)
     except Exception as err:
         print(err)
         return jsonify({'error': 'ランキング取得エラー'}), 500
@@ -1025,7 +1101,7 @@ def compute_next_trigger(e, now):
 @app.get('/api/events/list')
 def events_list():
     try:
-        rows = db_query('SELECT * FROM scheduled_events ORDER BY id')
+        rows = ttl_cache('events:rows', 5, lambda: db_query('SELECT * FROM scheduled_events ORDER BY id'))
         now = jst_now()
         events = []
         for e in rows:
@@ -1078,6 +1154,7 @@ def run_event_scheduler():
                 print(f"🎁 イベント報酬配布: {target_id} に {ev['reward_coins']}コイン（{mode}ランキング{ev['rank_position']}位）")
             if recurrence == 'once':
                 db_execute('DELETE FROM scheduled_events WHERE id = %s', [ev['id']])
+                cache_drop('events:')
             else:
                 db_execute('UPDATE scheduled_events SET last_triggered_date = %s WHERE id = %s', [date_key, ev['id']])
     except Exception as err:
@@ -1186,7 +1263,7 @@ def weekly_challenge_submit():
 @app.get('/api/announcements/latest')
 def announcements_latest():
     try:
-        rows = db_query('SELECT id, message, created_at FROM announcements ORDER BY id DESC LIMIT 1')
+        rows = ttl_cache('ann:latest', 10, lambda: db_query('SELECT id, message, created_at FROM announcements ORDER BY id DESC LIMIT 1'))
         if not rows:
             return jsonify({'announcement': None})
         return jsonify({'announcement': rows[0]})
@@ -1391,18 +1468,55 @@ def friends_remove():
         return jsonify({'error': e.message}), e.status
 
 
+FRIENDS_SQL = """
+SELECT
+ (SELECT COALESCE(json_agg(t ORDER BY t.id), '[]'::json) FROM (
+    SELECT u.id, u.best_score, u.coins, u.equipped_title,
+           (u.last_active IS NOT NULL AND u.last_active > NOW() - INTERVAL '20 seconds') AS online
+    FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = %s) t) AS friends,
+ (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+    SELECT from_id AS id, created_at FROM friend_requests WHERE to_id = %s AND status = 'pending' ORDER BY created_at DESC) t) AS incoming,
+ (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+    SELECT to_id AS id, created_at FROM friend_requests WHERE from_id = %s AND status = 'pending' ORDER BY created_at DESC) t) AS outgoing
+"""
+
+
+def _friends_payload(user_id):
+    r = db_query(FRIENDS_SQL, [user_id, user_id, user_id])[0]
+    friends = r['friends'] or []
+    for f in friends:
+        f['title'] = titles.view_of(f.pop('equipped_title', None), f['id'], ADMIN_USER_ID)
+    return {'friends': friends, 'incoming': r['incoming'] or [], 'outgoing': r['outgoing'] or []}
+
+
+def _dm_unread_payload(user_id):
+    rows = db_query('SELECT from_id, message FROM dm_messages WHERE to_id=%s AND is_read=FALSE '
+                    'AND COALESCE(deleted, FALSE)=FALSE LIMIT 500', [user_id])
+    mention_re = re.compile(r'@' + re.escape(user_id) + r'\b', re.IGNORECASE)
+    per_friend = {}
+    for r in rows:
+        per_friend[r['from_id']] = per_friend.get(r['from_id'], 0) + 1
+    return {'total': len(rows), 'mentions': sum(1 for r in rows if mention_re.search(r['message'] or '')),
+            'perFriend': per_friend}
+
+
 @app.get('/api/friends/list')
 def friends_list():
     try:
         user_id = require_auth()
-        friends_rows = db_query("""
-            SELECT u.id, u.best_score, u.coins,
-              (u.last_active IS NOT NULL AND u.last_active > NOW() - INTERVAL '20 seconds') AS online
-            FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = %s ORDER BY u.id
-        """, [user_id])
-        incoming = db_query("SELECT from_id AS id, created_at FROM friend_requests WHERE to_id=%s AND status='pending' ORDER BY created_at DESC", [user_id])
-        outgoing = db_query("SELECT to_id AS id, created_at FROM friend_requests WHERE from_id=%s AND status='pending' ORDER BY created_at DESC", [user_id])
-        return jsonify({'friends': friends_rows, 'incoming': incoming, 'outgoing': outgoing})
+        return jsonify(_friends_payload(user_id))
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.get('/api/social/summary')
+def social_summary():
+    """フレンド一覧 + リクエスト + DM未読を1回でまとめて返す(裏の定期チェック用。以前は2回に分けていた)"""
+    try:
+        user_id = require_auth()
+        out = _friends_payload(user_id)
+        out['dm'] = _dm_unread_payload(user_id)
+        return jsonify(out)
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
 
@@ -1539,14 +1653,7 @@ def dm_send():
 def dm_unread_summary():
     try:
         user_id = require_auth()
-        rows = db_query('SELECT from_id, message FROM dm_messages WHERE to_id=%s AND is_read=FALSE AND COALESCE(deleted, FALSE)=FALSE', [user_id])
-        total = len(rows)
-        mention_re = re.compile(r'@' + re.escape(user_id) + r'\b', re.IGNORECASE)
-        mentions = sum(1 for r in rows if mention_re.search(r['message'] or ''))
-        per_friend = {}
-        for r in rows:
-            per_friend[r['from_id']] = per_friend.get(r['from_id'], 0) + 1
-        return jsonify({'total': total, 'mentions': mentions, 'perFriend': per_friend})
+        return jsonify(_dm_unread_payload(user_id))
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
 
@@ -1722,6 +1829,7 @@ def admin_command():
             if not message:
                 raise ValueError('使用法: /announce <メッセージ>')
             db_execute('INSERT INTO announcements (message) VALUES (%s)', [message])
+            cache_drop('ann:')
             result = f'📢 全ユーザーにお知らせを配信しました:\n「{message}」'
 
         elif cmd == '/stats':
@@ -1771,6 +1879,7 @@ def admin_command():
                 INSERT INTO scheduled_events (recurrence, ranking_mode, rank_position, reward_coins, event_year, event_month, event_day, hour_jst, minute_jst)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
             """, [recurrence, ev_mode, rank_pos, reward_coins, ev_year or None, ev_month or None, ev_day if ev_day is not None else None, hour_jst, minute_jst])
+            cache_drop('events:')
             result = f'✅ イベントを追加しました（ID: {rows[0]["id"]}）: [{recurrence}] 「{ev_mode}」ランキング{rank_pos}位へ{reward_coins}コインを自動配布します。'
 
         elif cmd == '/eventlist':
@@ -1799,6 +1908,7 @@ def admin_command():
             if not args:
                 raise ValueError('使用法: /eventremove <ID>')
             rows = db_query('DELETE FROM scheduled_events WHERE id=%s RETURNING *', [args[0]])
+            cache_drop('events:')
             if not rows:
                 raise ValueError(f'イベントID {args[0]} は見つかりません')
             result = f'✅ イベントID {args[0]} を削除しました。'
@@ -1905,24 +2015,42 @@ def admin_grant_all_skins():
 
 
 # ===================== 🆕 チャットAPI =====================
+CHAT_CACHE_SEC = 1.5
+
+
+def _chat_load():
+    rows = db_query("SELECT c.id, c.user_id, CASE WHEN COALESCE(c.deleted, FALSE) THEN '' ELSE c.message END AS message, c.timestamp, "
+                    "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title "
+                    "FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT 50) c LEFT JOIN users u ON u.id = c.user_id ORDER BY c.id")
+    for r in rows:
+        r['title'] = titles.view_of(r.pop('equipped_title', None), r['user_id'], ADMIN_USER_ID)
+    return rows
+
+
 @app.get('/api/chat/messages')
 def chat_messages():
     try:
-        rows = db_query("SELECT id, user_id, CASE WHEN COALESCE(deleted, FALSE) THEN '' ELSE message END AS message, timestamp, "
-                        "(edited_at IS NOT NULL) AS edited, COALESCE(deleted, FALSE) AS deleted FROM chat_messages ORDER BY timestamp DESC LIMIT 50")
-        return jsonify(list(reversed(rows)))
+        # 全員が数秒おきに同じ50件を取りに来るので、1.5秒だけ使い回す(送信・編集・取り消しですぐ作り直す)
+        return jsonify(ttl_cache('chat:msgs', CHAT_CACHE_SEC, _chat_load))
     except Exception as err:
         print(err)
         return jsonify({'error': 'メッセージ取得エラー'}), 500
 
 
+_chat_sends = 0
+
+
 @app.post('/api/chat/send')
 def chat_send():
+    global _chat_sends
     token = get_token_from_request()
     if not token:
         return jsonify({'error': '認証が必要です'}), 401
     try:
         user_id = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])['id']
+    except Exception:
+        return jsonify({'error': '認証エラー'}), 401
+    try:
         body = request.get_json(silent=True) or {}
         message = body.get('message')
         if not message or len(message.strip()) == 0:
@@ -1933,28 +2061,32 @@ def chat_send():
             'INSERT INTO chat_messages (user_id, message) VALUES (%s, %s) RETURNING id, user_id, message, timestamp',
             [user_id, message.strip()]
         )
-        db_execute("""
-            DELETE FROM chat_messages WHERE id NOT IN (
-                SELECT id FROM chat_messages ORDER BY timestamp DESC LIMIT 50
-            )
-        """)
+        cache_drop('chat:')
+        # 古いメッセージの掃除は、毎回ではなく20回に1回だけ(以前は送信のたびに全件を並べ替えていて遅かった)
+        _chat_sends += 1
+        if _chat_sends % 20 == 0:
+            try:
+                db_execute("DELETE FROM chat_messages WHERE id < (SELECT id FROM chat_messages ORDER BY id DESC OFFSET 49 LIMIT 1)")
+            except Exception as err:
+                print(f'chat prune error: {err}')
         return jsonify(rows[0])
     except Exception as err:
         print(err)
-        return jsonify({'error': '認証エラー'}), 401
+        return jsonify({'error': '送信に失敗しました'}), 500
 
 
 # ===================== 🆕 プロフィールAPI =====================
 @app.get('/api/user/profile/<user_id_param>')
 def user_profile(user_id_param):
     try:
-        rows = db_query('SELECT id, best_score, coins, play_time, created_at FROM users WHERE id = %s', [user_id_param])
+        rows = db_query('SELECT id, best_score, coins, play_time, created_at, equipped_title FROM users WHERE id = %s', [user_id_param])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
         user = rows[0]
         return jsonify({
             'userId': user['id'], 'bestScore': user['best_score'], 'coins': int(user['coins'] or 0),
             'playTime': user.get('play_time') or 0,
+            'title': titles.view_of(user.get('equipped_title'), user['id'], ADMIN_USER_ID),
             'joinedAt': user['created_at'].isoformat() if user.get('created_at') else None
         })
     except Exception as err:
@@ -1966,7 +2098,9 @@ def user_profile(user_id_param):
 halloween.register(app, db_query, db_transaction, require_auth, ApiError)
 import minigames  # 🕹 ミニゲームのランキング(別ファイル)
 minigames.register(app, db_query, require_auth, ApiError)
-social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID)
+social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID,
+                on_chat_change=lambda: cache_drop('chat:'))
+titles.register(app, db_query, require_auth, ApiError, ADMIN_USER_ID)
 
 
 # ===================== ヘルスチェック / スリープ対策 =====================
