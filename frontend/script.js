@@ -1377,7 +1377,7 @@ const PATTERN_LABELS = {
     renderGachaModal(state);
   }
 
-  let gachaRateInfo = { ratePerSkin:0.01, rateTotal:0.08 };   // サーバーの排出率(表示用)。再描画でも保持する
+  let gachaRateInfo = { ratePerSkin:0.004, rateTotal:0.032 };   // サーバーの排出率(表示用)。再描画でも保持する
   function renderGachaModal(state){
     if(state && state.rateTotal != null) gachaRateInfo = { ratePerSkin: state.ratePerSkin, rateTotal: state.rateTotal };
     if(!state){
@@ -1555,30 +1555,36 @@ const PATTERN_LABELS = {
       return;
     }
     const pct = Math.round((state.xpIntoLevel / state.xpPerLevel) * 100);
-    const unclaimed = state.rewards.filter(r=>!r.claimed);
-    const totCoins = unclaimed.filter(r=>r.type==='coins').reduce((sum,r)=>sum+r.amount, 0);
-    const totTickets = unclaimed.filter(r=>r.type==='gacha_ticket').reduce((sum,r)=>sum+r.amount, 0);
+    // 未受取の件数・合計はサーバーの集計値を使う(レベルが巨大でも重くならない)。古いサーバー応答なら一覧から計算
+    const hasSummary = typeof state.pendingCount === 'number';
+    const unclaimedList = hasSummary ? null : state.rewards.filter(r=>!r.claimed);
+    const pendingCount = hasSummary ? state.pendingCount : unclaimedList.length;
+    const totCoins = hasSummary ? state.pendingCoins : unclaimedList.filter(r=>r.type==='coins').reduce((sum,r)=>sum+r.amount, 0);
+    const totTickets = hasSummary ? state.pendingTickets : unclaimedList.filter(r=>r.type==='gacha_ticket').reduce((sum,r)=>sum+r.amount, 0);
+    const shownFrom = state.rewards.length ? state.rewards[0].level : 1;
     let html = `
       <h2 style="color:var(--gold);">🎫 バトルパス</h2>
       <div class="sub" style="margin-bottom:8px;">ゲームをプレイして経験値を貯めよう。レベル上限はなく、報酬は10レベルごとにループします。</div>
       <div class="quest-item" style="text-align:center;">
-        <div class="qtitle" style="font-size:20px;">Lv. ${state.level}</div>
+        <div class="qtitle" style="font-size:20px;">Lv. ${formatNumber(state.level)}</div>
         <div class="quest-bar-bg" style="margin-top:8px;"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
-        <div class="sub" style="margin-top:4px;">${state.xpIntoLevel} / ${state.xpPerLevel} XP</div>
+        <div class="sub" style="margin-top:4px;">${formatNumber(state.xpIntoLevel)} / ${formatNumber(state.xpPerLevel)} XP</div>
       </div>
       ${noticeHtml || ''}
-      <button class="primary-btn" id="bpClaimAllBtn" style="margin-top:10px;" ${unclaimed.length?'':'disabled'}>
-        ${unclaimed.length
-          ? `🎁 まとめて受け取る (${unclaimed.length}件: 🪙${formatNumber(totCoins)}${totTickets?` ＋🎫×${totTickets}`:''})`
+      <button class="primary-btn" id="bpClaimAllBtn" style="margin-top:10px;" ${pendingCount?'':'disabled'}>
+        ${pendingCount
+          ? `🎁 まとめて受け取る (${formatNumber(pendingCount)}件: 🪙${formatNumber(totCoins)}${totTickets?` ＋🎫×${formatNumber(totTickets)}`:''})`
           : '🎁 受け取れる報酬はありません'}
       </button>
       <h3 style="color:var(--mint); margin:14px 0 8px;">🎁 報酬一覧</h3>
+      ${shownFrom > 1 ? `<div class="sub" style="margin-bottom:8px;">最新の${state.rewards.length}レベルぶんを表示しています。それより前の未受取も「まとめて受け取る」でまとめて受け取れます。</div>` : ''}
     `;
+    // 一覧は最新レベルから順に(サーバーは最大30件しか返さない)
     state.rewards.slice().reverse().forEach(r=>{
       html += `
         <div class="quest-item">
           <div class="quest-foot">
-            <span>Lv.${r.level} — ${battlePassRewardLabel(r)}</span>
+            <span>Lv.${formatNumber(r.level)} — ${battlePassRewardLabel(r)}</span>
             <button class="claim-btn" data-bplevel="${r.level}" ${r.claimed?'disabled':''}>${r.claimed?'受取済み':'受け取る'}</button>
           </div>
         </div>`;
@@ -1606,8 +1612,8 @@ const PATTERN_LABELS = {
       playSound('coin');
       const state = await fetchBattlePassState();
       const notice = `<div class="quest-item" style="text-align:center; border:2px solid var(--gold); margin-top:10px;">
-        <div class="qtitle">🎁 ${data.claimedCount}件まとめて受け取りました！</div>
-        <div class="sub">🪙${formatNumber(data.totalCoins)}${data.totalTickets?` ／ 🎫 ガチャ無料チケット×${data.totalTickets}`:''}</div>
+        <div class="qtitle">🎁 ${formatNumber(data.claimedCount)}件まとめて受け取りました！</div>
+        <div class="sub">🪙${formatNumber(data.totalCoins)}${data.totalTickets?` ／ 🎫 ガチャ無料チケット×${formatNumber(data.totalTickets)}`:''}</div>
       </div>`;
       renderBattlePassModal(state, notice);
     }catch(err){
@@ -3705,7 +3711,7 @@ restartBtn.addEventListener('click', ()=>{
     else { renderAdminPanel(); modalOverlay.classList.add('show'); }
   });
 
-  // ===================== ランキング（リアルタイム自動更新） =====================
+  // ===================== ランキング =====================
   async function renderRankingModal() {
     modalContent.dataset.mode = 'ranking';
     let html = `
@@ -3724,7 +3730,6 @@ restartBtn.addEventListener('click', ()=>{
       <div id="rankingContent">
         <div class="sub">🔄 読み込み中...</div>
       </div>
-      <div style="margin-top:8px; font-size:12px; color:var(--text-dim);">自動更新（5秒ごと）</div>
     `;
     modalContent.innerHTML = html;
 
@@ -6266,6 +6271,12 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.4.1', date:'2026-10-21', items:[
+      '🎫 バトルパスのレベルが大きくなっても、開くときに固まらないように修正(まとめて受け取りも一瞬で完了)',
+      '🎰 ガチャの排出率をさらに引き下げ(通常: 1スキン0.4%・合計3.2% / ハロウィン: 1スキン0.5%・合計3%)',
+      '🕹 ミニゲームの動作を軽く(iPadなどでのカクつきを軽減)',
+      '🏆 ランキング画面の余計な表記を整理'
+    ]},
     { version:'3.4.0', date:'2026-10-18', items:[
       '🗂 機能の置き場所を整理: ロビーも☰メニューも「あそぶ / あつめる / みんなと / せってい」の同じ区分に。☰メニューには検索欄も付きました',
       '🗳 「投票」を追加。ゲスト以外のみんなが、出された質問に投票できます(結果もリアルタイムで見られます)',
@@ -6906,7 +6917,7 @@ function renderOtherGamesModal(){
   refreshEventTheme();
   document.getElementById('titleEventBtn').addEventListener('click', ()=>{ hideTitleScreen(); openHalloweenModal('home'); });
   updateEventButtons();
-  setInterval(()=>{ updateEventButtons(); const on = hwThemeOn(); if(on !== document.body.classList.contains('hw')) refreshEventTheme(); }, 1000);
+  setInterval(()=>{ if(document.body.classList.contains('mg-open')) return; updateEventButtons(); const on = hwThemeOn(); if(on !== document.body.classList.contains('hw')) refreshEventTheme(); }, 1000);
   fetchEventStatus();
   setInterval(fetchEventStatus, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchEventStatus(); });
@@ -6994,7 +7005,7 @@ function renderOtherGamesModal(){
       if(!authToken) wasAuth = false;
     };
     update();
-    setInterval(update, 1000);
+    setInterval(()=>{ if(!document.body.classList.contains('mg-open')) update(); }, 1000);   // ミニゲーム中はロビーの更新を止める
   })();
 
   // ===================== ✨ アニメーション(波紋・タブ切替・数字のぽんっ) =====================
@@ -7120,8 +7131,8 @@ function renderOtherGamesModal(){
     setInterval(checkForUpdate, 60000);
     // イベントカウントダウン(1秒ごとに更新、1分ごとにサーバーと再同期)
     await fetchEventsList();
-    setInterval(tickEventCountdown, 1000);
-    setInterval(fetchEventsList, 5000); // 短めの間隔にして、管理者がイベントを削除した際も全員の画面にすぐ反映されるようにする
+    setInterval(()=>{ if(!document.body.classList.contains('mg-open')) tickEventCountdown(); }, 1000);
+    setInterval(()=>{ if(!document.body.classList.contains('mg-open')) fetchEventsList(); }, 5000); // 短めの間隔にして、管理者がイベントを削除した際も全員の画面にすぐ反映されるようにする
   })();
 
 })();
