@@ -498,7 +498,8 @@ def _timing_end(resp):
     try:
         total = (time.perf_counter() - g.t0) * 1000
         db = getattr(g, 'db_ms', 0.0)
-        resp.headers['Server-Timing'] = f'db;dur={db:.0f};desc="DB {getattr(g, "db_n", 0)}回", app;dur={max(0, total - db):.0f}, total;dur={total:.0f}'
+        # ※ HTTPヘッダーは英数字だけ(日本語を入れると、本番のgunicornで全APIがエラーになる)
+        resp.headers['Server-Timing'] = f'db;dur={db:.0f};desc="queries {getattr(g, "db_n", 0)}", app;dur={max(0, total - db):.0f}, total;dur={total:.0f}'
         resp.headers['Access-Control-Expose-Headers'] = 'Server-Timing'
         if total > 800:
             print(f'🐢 遅いリクエスト {request.method} {request.path}: 合計{total:.0f}ms(DB {db:.0f}ms / {getattr(g, "db_n", 0)}回)')
