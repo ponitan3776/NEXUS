@@ -299,11 +299,44 @@
       card.append(el('div', 'ap-meta', `${p.closed ? '🔒 終了' : '🟢 受付中'} ／ 計${p.total}票 ／ ` + p.options.map(o=>`${esc(o.text)} ${o.votes}`).join(' ・ ')));
       const act = el('div', 'ap-act');
       const mk = (label, fn, cls)=>{ const b = el('button', 'adm-mini ' + (cls || ''), label); b.type = 'button'; b.addEventListener('click', fn); act.append(b); return b; };
+      mk('👀 投票の詳細', ()=> renderPollVoters(p));
       mk('✏️ 編集', ()=> renderPollForm(p));
       mk(p.closed ? '▶ 再開' : '⏹ 終了', async ()=>{ try{ await api('/api/admin/poll/close', 'POST', { id:p.id, closed:!p.closed }); renderPolls(); }catch(e){ alert(e.message); } });
       mk('🧹 票をリセット', async function(){ if(!confirmTap(this, '本当にリセット')) return; try{ await api('/api/admin/poll/reset', 'POST', { id:p.id }); renderPolls(); }catch(e){ alert(e.message); } });
       mk('🗑 削除', async function(){ if(!confirmTap(this, '本当に削除')) return; try{ await api('/api/admin/poll/delete', 'POST', { id:p.id }); renderPolls(); }catch(e){ alert(e.message); } }, 'danger');
       card.append(act); list.append(card);
+    });
+  }
+  /* ---------- 投票の詳細: どのアカウントが、どれに投票したか ---------- */
+  async function renderPollVoters(p){
+    const root = begin();
+    root.append(backBtn('投票の管理', renderPolls));
+    root.append(el('h2', 'adm-h', '👀 投票の詳細'));
+    root.append(el('div', 'ap-q', esc(p.question)));
+    const find = el('input', 'adm-voter-find'); find.type = 'search'; find.placeholder = '🔍 アカウントで探す(何に投票したか表示)'; find.autocomplete = 'off';
+    const found = el('div', 'adm-voter-found'); const box = el('div', 'adm-voters', '<div class="empty-hint">読み込み中...</div>');
+    root.append(find, found, box);
+    let d;
+    try{ d = await api(`/api/admin/poll/${p.id}/voters`); }catch(e){ box.innerHTML = `<div class="empty-hint">${esc(e.message)}</div>`; return; }
+    const when = (iso)=>{ if(!iso) return ''; const t = new Date(iso.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z');
+      return isNaN(t) ? '' : t.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'Asia/Tokyo' }); };
+    root.insertBefore(el('div', 'ap-meta', `${d.closed ? '🔒 終了' : '🟢 受付中'} ／ 計${d.total}票(時刻は日本時間)`), find);
+    box.innerHTML = '';
+    d.options.forEach((o, i)=>{
+      const card = el('div', 'adm-vopt');
+      card.append(el('div', 'avo-h', `<span class="avo-t">${i + 1}. ${esc(o.text)}</span><b>${o.voters.length}票</b>`));
+      const list = el('div', 'avo-list');
+      if(!o.voters.length) list.append(el('span', 'avo-none', 'まだ誰も投票していません'));
+      o.voters.forEach(v=>{ const c = el('span', 'avo-chip', `${esc(v.id)}<small>${esc(when(v.at))}</small>`); c.dataset.uid = v.id.toLowerCase(); list.append(c); });
+      card.append(list); box.append(card);
+    });
+    find.addEventListener('input', ()=>{
+      const q = find.value.trim().toLowerCase(); found.innerHTML = '';
+      box.querySelectorAll('.avo-chip').forEach(c=> c.classList.toggle('hit', !!q && c.dataset.uid.includes(q)));
+      if(!q) return;
+      const hits = [];
+      d.options.forEach((o, i)=> o.voters.forEach(v=>{ if(v.id.toLowerCase().includes(q)) hits.push(`<b>${esc(v.id)}</b> → ${i + 1}. ${esc(o.text)}`); }));
+      found.innerHTML = hits.length ? hits.slice(0, 10).join('<br>') : '投票していない、または見つかりません';
     });
   }
   // ボタンを2回押さないと実行されない(押し間違い防止)。1回目はラベルが変わるだけ
