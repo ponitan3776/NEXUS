@@ -1370,9 +1370,12 @@ const PATTERN_LABELS = {
     try{
       const r = await fetch(`${API_BASE_URL}/api/gacha/state`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
       if(!r.ok) return null;
-      return await r.json();
+      const d = await r.json();
+      gachaStateCache = d;
+      return d;
     }catch(err){ return null; }
   }
+  let gachaStateCache = null;   // 前回のガチャ状態(開いた瞬間に表示するため)
 
   async function openGachaModal(){
     modalContent.dataset.mode = 'gacha';
@@ -1381,11 +1384,15 @@ const PATTERN_LABELS = {
       modalOverlay.classList.add('show');
       return;
     }
-    modalContent.innerHTML = `<h2 style="color:var(--gold);">🎰 ガチャ</h2><div class="empty-hint">読み込み中...</div>`;
     modalOverlay.classList.add('show');
+    const hadCache = !!gachaStateCache;
+    if(hadCache) renderGachaModal(gachaStateCache);      // 前回の内容をすぐ表示し、最新は裏で取る
+    else modalContent.innerHTML = `<h2 style="color:var(--gold);">🎰 ガチャ</h2><div class="empty-hint">読み込み中...</div>`;
+    const before = hadCache ? JSON.stringify(gachaStateCache) : null;
     const state = await fetchGachaState();
     if(!modalOverlay.classList.contains('show') || modalContent.dataset.mode!=='gacha') return;
-    renderGachaModal(state);
+    if(!state && hadCache) return;
+    if(!hadCache || JSON.stringify(state) !== before) renderGachaModal(state);
   }
 
   let gachaRateInfo = { ratePerSkin:0.004, rateTotal:0.032 };   // サーバーの排出率(表示用)。再描画でも保持する
