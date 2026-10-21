@@ -74,11 +74,12 @@
 .lobby-event:active{ transform:scale(.98); }
 
 /* ロゴ(中央に大きく) */
-.lobby-hero{ flex:1 1 auto; min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:8px 0; }
-.lobby-hero .title-logo{ font-size:clamp(30px, 9vw, 40px); line-height:1.15; margin:0; }
+.lobby-hero{ position:relative; z-index:0; flex:1 0 auto; min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:8px 0; }
+.lobby-hero .title-logo{ font-size:clamp(24px, 7.4vw, 36px); line-height:1.15; margin:0; white-space:nowrap; }   /* 途中で改行されない */
 .lobby-hero .title-sub{ margin:8px 0 0; font-size:11px; }
 .lobby-hero.has-logo .title-logo, .lobby-hero.has-logo .title-sub{ display:none; }
-.lobby-hero .title-logo-img{ max-width:86%; max-height:190px; }
+.lobby-hero .title-logo-img{ max-width:86%; max-height:clamp(84px, 22dvh, 170px); width:auto; height:auto; object-fit:contain; margin:0 auto; }
+.lobby-event{ z-index:2; }   /* ハロウィンのバナーは、ロゴより手前 */
 body.hw .lobby-hero .title-logo::before{ font-size:38px; margin-bottom:6px; }
 
 /* 大きなPLAYボタン */
@@ -270,7 +271,7 @@ header .title{
 /* =====================================================================
    🗂 機能の整理 (v3.4) — ロビーと☰メニューを同じ区分(あそぶ / あつめる / みんなと / せってい)に
    ===================================================================== */
-.lobby-hero{ min-height:96px; }
+.lobby-hero{ min-height:96px; padding:12px 0; }
 .lobby-top .lobby-icon{ position:relative; }
 .lobby-icon.gift{ animation:pumpkinGlow 2.2s ease-in-out infinite; border-color:rgba(255,210,140,.7); }
 .lt-badge{ position:absolute; top:6px; right:8px; min-width:18px; height:18px; padding:0 5px; border-radius:9px; display:none; align-items:center; justify-content:center;
