@@ -1,0 +1,66 @@
+/* =====================================================================
+   🏷 称号 (v3.5) / 👀 投票の詳細(管理者)
+   ===================================================================== */
+
+/* ---------- 名前の横に出る称号(小さなラベル)。レアリティで見た目が変わる ---------- */
+.ttl{ display:inline-block; vertical-align:middle; margin-left:6px; padding:1px 8px; border-radius:99px; font:800 10.5px/1.6 var(--sans); letter-spacing:.03em;
+  white-space:nowrap; max-width:100%; color:#e9e3f5; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.22); }
+.ttl.r-rare{ color:#b9e6ff; background:rgba(70,160,255,.16); border-color:rgba(110,190,255,.55); }
+.ttl.r-epic{ color:#ffd0f2; background:linear-gradient(110deg, rgba(160,80,255,.28), rgba(255,90,170,.24)); border-color:rgba(220,130,255,.65); }
+.ttl.r-legendary{ color:#3a2200; font-weight:900; border-color:rgba(255,240,170,.9);
+  background:linear-gradient(110deg,#ffd45a,#fff3b0 45%,#ffb52e); box-shadow:0 0 10px rgba(255,200,60,.5); }
+/* 管理者だけの称号: 虹色にゆらめく特別仕様 */
+.ttl.r-admin{ color:#fff; font-weight:900; text-shadow:0 1px 3px rgba(0,0,0,.55); border-color:rgba(255,255,255,.75);
+  background:linear-gradient(100deg,#6a3cff,#ff4fa3,#ffb13c,#3cd6ff,#6a3cff); background-size:300% 100%;
+  box-shadow:0 0 12px rgba(160,100,255,.65), 0 0 2px rgba(255,255,255,.8) inset; animation:ttlFlow 5s linear infinite; }
+@keyframes ttlFlow{ to{ background-position:300% 0; } }
+
+/* ---------- ロビーの自分の名前(2段: 名前 / 称号) ---------- */
+.lobby-chip .lc-col{ display:flex; flex-direction:column; align-items:flex-start; min-width:0; line-height:1.2; overflow:hidden; }
+.lobby-chip .lc-col > span{ max-width:100%; }
+.lobby-chip .lc-title{ display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:800 10px var(--sans); letter-spacing:.03em; color:var(--text-dim); }
+.lobby-chip .lc-title.r-rare{ color:#8fd2ff; } .lobby-chip .lc-title.r-epic{ color:#e9a6ff; }
+.lobby-chip .lc-title.r-legendary{ color:var(--gold); } .lobby-chip .lc-title.r-admin{ color:#ffb8e6; }
+
+/* ---------- 称号の画面 ---------- */
+.ttl-now{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0 8px; padding:10px 12px; text-align:left;
+  background:var(--panel-light); border:1px solid var(--gold-line); border-radius:var(--r); }
+.ttl-now .ttl{ margin-left:0; font-size:12.5px; padding:2px 10px; }
+.ttl-now small, .ttl-none{ font-size:11px; color:var(--text-dim); font-weight:700; }
+.ttl-list{ display:flex; flex-direction:column; gap:8px; margin-top:8px; text-align:left; }
+.ttl-item{ display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--panel-light); border:1px solid rgba(255,255,255,.08); border-radius:var(--r); }
+.ttl-item.locked{ opacity:.72; }
+.ttl-item.eq{ border-color:var(--gold); box-shadow:0 0 14px var(--gold-soft); }
+.ttl-item.r-legendary.owned{ border-color:rgba(255,210,90,.55); }
+.ttl-item.r-admin{ border-color:rgba(190,140,255,.7); box-shadow:0 0 16px rgba(150,90,255,.3); }
+.ttl-main{ flex:1; min-width:0; }
+.ttl-row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.ttl-row .ttl{ margin-left:0; font-size:12.5px; padding:2px 10px; }
+.ttl-rar{ font-size:9.5px; font-weight:800; letter-spacing:.12em; color:var(--text-dim); }
+.ttl-desc{ margin-top:4px; font-size:11.5px; line-height:1.5; color:var(--text-dim); }
+.ttl-prog{ margin-top:6px; height:5px; border-radius:9px; background:rgba(255,255,255,.1); overflow:hidden; }
+.ttl-prog i{ display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--gold),var(--coral)); }
+.ttl-pn{ margin-top:3px; font-size:10px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.ttl-side{ flex-shrink:0; }
+.ttl-btn{ padding:8px 12px; cursor:pointer; font:800 12px var(--sans); color:#2a1730; border:none; border-radius:var(--r);
+  background:linear-gradient(135deg,var(--gold),var(--coral)); }
+.ttl-btn.on{ color:var(--gold); background:transparent; border:1px solid var(--gold-line); }
+.ttl-lock{ font-size:18px; opacity:.7; }
+
+/* ---------- 管理者: 投票の詳細(誰がどれに投票したか) ---------- */
+.adm-voter-find{ width:100%; margin:8px 0 6px; padding:10px 12px; font:700 13px var(--sans); color:var(--text); background:rgba(0,0,0,.25);
+  border:1px solid var(--gold-line); border-radius:var(--r); outline:none; -webkit-appearance:none; appearance:none; }
+.adm-voter-found{ min-height:0; margin-bottom:6px; font-size:12px; line-height:1.7; color:var(--gold); text-align:left; }
+.adm-voters{ display:flex; flex-direction:column; gap:8px; text-align:left; }
+.adm-vopt{ padding:10px 12px; background:var(--panel-light); border:1px solid rgba(255,255,255,.08); border-radius:var(--r); }
+.avo-h{ display:flex; justify-content:space-between; gap:8px; font:800 13px/1.5 var(--sans); }
+.avo-h b{ color:var(--gold); flex-shrink:0; }
+.avo-list{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.avo-chip{ display:inline-flex; align-items:baseline; gap:6px; padding:4px 9px; font:800 12px var(--sans); border-radius:99px;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); }
+.avo-chip small{ font-size:9.5px; font-weight:700; color:var(--text-dim); }
+.avo-chip.hit{ background:var(--gold); color:#2a1730; border-color:var(--gold); } .avo-chip.hit small{ color:#5a3a20; }
+.avo-none{ font-size:11px; color:var(--text-dim); }
+
+@media (prefers-reduced-motion: reduce){ .ttl.r-admin{ animation:none; } }
+body.reduce-motion .ttl.r-admin{ animation:none; }
