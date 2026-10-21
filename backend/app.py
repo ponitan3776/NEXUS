@@ -267,7 +267,8 @@ def init_db():
         ALTER TABLE users ALTER COLUMN coins TYPE BIGINT;
         ALTER TABLE users ALTER COLUMN best_score TYPE BIGINT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPulls":0,"pityCounter":0}';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_xp INTEGER DEFAULT 0;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_xp BIGINT DEFAULT 0;
+        ALTER TABLE users ALTER COLUMN battlepass_xp TYPE BIGINT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_claimed JSONB DEFAULT '[]';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_forced_scores JSONB DEFAULT '{}';
     """)
@@ -395,7 +396,7 @@ import halloween  # 🎃 期間限定イベント(別ファイル)
 import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
-GACHA_RATE_PER_SKIN = 0.01   # 1スキンあたり1%(8種で合計8%)
+GACHA_RATE_PER_SKIN = 0.004  # 1スキンあたり0.4%(8種で合計3.2%) ← 一般的なソシャゲの最高レア帯
 GACHA_PITY_THRESHOLD = 1000
 GACHA_DUPLICATE_COINS = 500
 GACHA_MISS_COINS = 30
@@ -795,6 +796,85 @@ def gacha_pull():
 
 
 # ===================== 🆕 バトルパス(経験値でレベルアップ、報酬はループ、上限なし) =====================
+# ★ レベルがどれだけ大きくなっても(ギフトで大量XPをもらっても)重くならないようにしてある:
+#    ・受取済みは「1〜upto まで全部受取済み」+「それ以外に個別に受け取ったレベル(extra)」で保存する
+#    ・未受取の件数・合計は、10レベル周期の足し算で一瞬で計算する(1レベルずつ数えない)
+#    ・画面に返す報酬一覧は、いちばん新しい BATTLEPASS_VIEW_LIMIT レベル分だけ
+BATTLEPASS_VIEW_LIMIT = 30
+
+
+def _bp_prefix_sums():
+    coins, tickets = [0], [0]
+    for i in range(1, BATTLEPASS_CYCLE_LENGTH + 1):
+        r = battle_pass_reward_for_level(i)
+        coins.append(coins[-1] + (r['amount'] if r['type'] == 'coins' else 0))
+        tickets.append(tickets[-1] + (r['amount'] if r['type'] == 'gacha_ticket' else 0))
+    return coins, tickets
+
+
+_BP_PREFIX_COINS, _BP_PREFIX_TICKETS = _bp_prefix_sums()
+
+
+def bp_reward_totals(lo, hi):
+    """レベル lo〜hi(両端を含む)の報酬の合計 (コイン, チケット) を、ループ計算なしで返す"""
+    if hi < lo:
+        return 0, 0
+
+    def upto(n):  # レベル 1〜n の合計
+        full, rem = divmod(n, BATTLEPASS_CYCLE_LENGTH)
+        return (full * _BP_PREFIX_COINS[-1] + _BP_PREFIX_COINS[rem],
+                full * _BP_PREFIX_TICKETS[-1] + _BP_PREFIX_TICKETS[rem])
+
+    c_hi, t_hi = upto(hi)
+    c_lo, t_lo = upto(lo - 1)
+    return c_hi - c_lo, t_hi - t_lo
+
+
+def bp_level_of(xp):
+    return int(xp or 0) // BATTLEPASS_XP_PER_LEVEL + 1
+
+
+def bp_load_claimed(raw):
+    """DBの値 → (upto, extra)。旧形式(受取済みレベルのリスト)も読める"""
+    if isinstance(raw, dict):
+        upto = int(raw.get('upto') or 0)
+        extra = {int(x) for x in (raw.get('extra') or [])}
+    else:
+        upto, extra = 0, {int(x) for x in (raw or [])}
+    return bp_normalize(upto, extra)
+
+
+def bp_normalize(upto, extra):
+    extra = {x for x in extra if x > upto}
+    while (upto + 1) in extra:      # 連続している分は upto にまとめる
+        upto += 1
+        extra.discard(upto)
+    return upto, extra
+
+
+def bp_dump_claimed(upto, extra):
+    return json.dumps({'upto': upto, 'extra': sorted(extra)})
+
+
+def bp_is_claimed(lv, upto, extra):
+    return lv <= upto or lv in extra
+
+
+def bp_pending(level, upto, extra):
+    """到達済み・未受取の (件数, コイン合計, チケット合計)"""
+    count = max(0, level - upto)
+    coins, tickets = bp_reward_totals(upto + 1, level)
+    for lv in extra:
+        if upto < lv <= level:
+            count -= 1
+            r = battle_pass_reward_for_level(lv)
+            if r['type'] == 'coins':
+                coins -= r['amount']
+            elif r['type'] == 'gacha_ticket':
+                tickets -= r['amount']
+    return count, coins, tickets
+
+
 @app.get('/api/battlepass/state')
 def battlepass_state():
     try:
@@ -802,13 +882,17 @@ def battlepass_state():
         rows = db_query('SELECT battlepass_xp, battlepass_claimed FROM users WHERE id = %s', [user_id])
         if not rows:
             raise ApiError('ユーザーが見つかりません', 404)
-        xp = rows[0].get('battlepass_xp') or 0
-        claimed = rows[0].get('battlepass_claimed') or []
-        level = xp // BATTLEPASS_XP_PER_LEVEL + 1
+        xp = int(rows[0].get('battlepass_xp') or 0)
+        upto, extra = bp_load_claimed(rows[0].get('battlepass_claimed'))
+        level = bp_level_of(xp)
         xp_into_level = xp % BATTLEPASS_XP_PER_LEVEL
-        rewards = [dict(battle_pass_reward_for_level(lv), claimed=(lv in claimed)) for lv in range(1, level + 1)]
+        first = max(1, level - BATTLEPASS_VIEW_LIMIT + 1)
+        rewards = [dict(battle_pass_reward_for_level(lv), claimed=bp_is_claimed(lv, upto, extra))
+                   for lv in range(first, level + 1)]
+        p_count, p_coins, p_tickets = bp_pending(level, upto, extra)
         return jsonify({'xp': xp, 'level': level, 'xpIntoLevel': xp_into_level,
-                        'xpPerLevel': BATTLEPASS_XP_PER_LEVEL, 'rewards': rewards})
+                        'xpPerLevel': BATTLEPASS_XP_PER_LEVEL, 'rewards': rewards,
+                        'pendingCount': p_count, 'pendingCoins': p_coins, 'pendingTickets': p_tickets})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
@@ -837,28 +921,30 @@ def battlepass_claim():
         lv = int(body.get('level') or 0)
         if lv < 1:
             raise ApiError('レベルを指定してください', 400)
-        rows = db_query('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state FROM users WHERE id = %s', [user_id])
-        if not rows:
-            raise ApiError('ユーザーが見つかりません', 404)
-        u = rows[0]
-        current_level = (u.get('battlepass_xp') or 0) // BATTLEPASS_XP_PER_LEVEL + 1
-        if lv > current_level:
-            raise ApiError('まだそのレベルに到達していません', 400)
-        claimed = u.get('battlepass_claimed') or []
-        if lv in claimed:
-            raise ApiError('すでに受け取り済みです', 400)
-        reward = battle_pass_reward_for_level(lv)
-        coins = int(u.get('coins') or 0)
-        gs = u.get('gacha_state') or {'totalPulls': 0, 'pityCounter': 0}
-        free_tickets = gs.get('freeTickets') or 0
-        if reward['type'] == 'coins':
-            coins += reward['amount']
-        elif reward['type'] == 'gacha_ticket':
-            free_tickets += reward['amount']
-            gs['freeTickets'] = free_tickets
-        claimed.append(lv)
-        db_execute('UPDATE users SET coins=%s, battlepass_claimed=%s, gacha_state=%s WHERE id=%s',
-                   [coins, json.dumps(claimed), json.dumps(gs), user_id])
+        with db_transaction() as cur:
+            cur.execute('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state '
+                        'FROM users WHERE id = %s FOR UPDATE', [user_id])
+            u = cur.fetchone()
+            if not u:
+                raise ApiError('ユーザーが見つかりません', 404)
+            if lv > bp_level_of(u.get('battlepass_xp')):
+                raise ApiError('まだそのレベルに到達していません', 400)
+            upto, extra = bp_load_claimed(u.get('battlepass_claimed'))
+            if bp_is_claimed(lv, upto, extra):
+                raise ApiError('すでに受け取り済みです', 400)
+            reward = battle_pass_reward_for_level(lv)
+            coins = int(u.get('coins') or 0)
+            gs = u.get('gacha_state') or {'totalPulls': 0, 'pityCounter': 0}
+            free_tickets = gs.get('freeTickets') or 0
+            if reward['type'] == 'coins':
+                coins += reward['amount']
+            elif reward['type'] == 'gacha_ticket':
+                free_tickets += reward['amount']
+                gs['freeTickets'] = free_tickets
+            extra.add(lv)
+            upto, extra = bp_normalize(upto, extra)
+            cur.execute('UPDATE users SET coins=%s, battlepass_claimed=%s, gacha_state=%s WHERE id=%s',
+                        [coins, bp_dump_claimed(upto, extra), json.dumps(gs), user_id])
         return jsonify({'ok': True, 'reward': reward, 'coins': coins, 'freeTickets': free_tickets})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
@@ -868,7 +954,7 @@ def battlepass_claim():
 
 @app.post('/api/battlepass/claim-all')
 def battlepass_claim_all():
-    """到達済みで未受け取りの報酬を全部まとめて受け取る。"""
+    """到達済みで未受け取りの報酬を全部まとめて受け取る(何百万レベルぶんでも一瞬)。"""
     try:
         user_id = require_auth()
         with db_transaction() as cur:
@@ -877,30 +963,19 @@ def battlepass_claim_all():
             u = cur.fetchone()
             if not u:
                 raise ApiError('ユーザーが見つかりません', 404)
-            current_level = (u.get('battlepass_xp') or 0) // BATTLEPASS_XP_PER_LEVEL + 1
-            claimed = u.get('battlepass_claimed') or []
-            claimed_set = set(claimed)
-            pending = [lv for lv in range(1, current_level + 1) if lv not in claimed_set]
-            if not pending:
+            level = bp_level_of(u.get('battlepass_xp'))
+            upto, extra = bp_load_claimed(u.get('battlepass_claimed'))
+            count, total_coins, total_tickets = bp_pending(level, upto, extra)
+            if count <= 0:
                 raise ApiError('受け取れる報酬がありません', 400)
-
-            total_coins = 0
-            total_tickets = 0
-            for lv in pending:
-                r = battle_pass_reward_for_level(lv)
-                if r['type'] == 'coins':
-                    total_coins += r['amount']
-                elif r['type'] == 'gacha_ticket':
-                    total_tickets += r['amount']
 
             coins = int(u.get('coins') or 0) + total_coins
             gs = u.get('gacha_state') or {'totalPulls': 0, 'pityCounter': 0}
             gs['freeTickets'] = (gs.get('freeTickets') or 0) + total_tickets
-            claimed.extend(pending)
             cur.execute('UPDATE users SET coins=%s, battlepass_claimed=%s, gacha_state=%s WHERE id=%s',
-                        [coins, json.dumps(claimed), json.dumps(gs), user_id])
+                        [coins, bp_dump_claimed(level, set()), json.dumps(gs), user_id])
 
-        return jsonify({'ok': True, 'claimedCount': len(pending), 'totalCoins': total_coins,
+        return jsonify({'ok': True, 'claimedCount': count, 'totalCoins': total_coins,
                         'totalTickets': total_tickets, 'coins': coins, 'freeTickets': gs['freeTickets']})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
