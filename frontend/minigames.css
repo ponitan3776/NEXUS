@@ -58,7 +58,7 @@
 .tile .tin.spawn{ animation:tileSpawn .2s .1s ease-out backwards; }
 .tile .tin.merge{ animation:tileMerge .24s var(--spring); }
 @keyframes tileSpawn{ from{ transform:scale(.2); opacity:0; } to{ transform:scale(1); opacity:1; } }
-@keyframes tileMerge{ 0%{ transform:scale(1); } 45%{ transform:scale(1.26); filter:brightness(1.35); } 100%{ transform:scale(1); filter:none; } }
+@keyframes tileMerge{ 0%{ transform:scale(1); } 45%{ transform:scale(1.26); } 100%{ transform:scale(1); } }
 .g2048 .g-score{ position:relative; }
 .g2048-board .float-pt{ z-index:3; }
 .g2048 .mg-btn{ margin-top:12px; }
@@ -75,7 +75,7 @@
 .gmem{ width:100%; max-width:380px; display:flex; flex-direction:column; align-items:center; }
 .gmem-grid{ width:100%; display:grid; grid-template-columns:repeat(4,1fr); gap:9px; }
 .mcard{ aspect-ratio:3/4; padding:0; border:none; background:none; cursor:pointer; perspective:600px; }
-.mc-inner{ position:relative; display:block; width:100%; height:100%; transform-style:preserve-3d; transition:transform .38s var(--out); }
+.mc-inner{ position:relative; display:block; width:100%; height:100%; transform-style:preserve-3d; transition:transform .38s var(--out); will-change:transform; }
 .mcard.open .mc-inner, .mcard.done .mc-inner{ transform:rotateY(180deg); }
 .mc-face{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; backface-visibility:hidden; -webkit-backface-visibility:hidden; border-radius:9px; font-size:34px; border:1px solid var(--gold-line); }
 .mc-back{ background:linear-gradient(145deg, var(--panel-light), var(--panel)); color:var(--gold); box-shadow:0 5px 14px rgba(0,0,0,.35); }
@@ -87,8 +87,9 @@
 .gwhack-grid{ width:100%; display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .hole{ position:relative; aspect-ratio:1; border:none; padding:0; border-radius:50%; cursor:pointer; overflow:hidden; touch-action:manipulation;
   background:radial-gradient(ellipse at 50% 68%, #000 0 46%, #2a1a40 48%, #3a2458 100%); box-shadow:inset 0 -8px 16px rgba(0,0,0,.6), 0 6px 14px rgba(0,0,0,.35); }
-.hole .mole{ position:absolute; left:0; right:0; bottom:-60%; text-align:center; font-size:clamp(40px, 13vw, 58px); line-height:1; transition:bottom .12s ease-out; pointer-events:none; }
-.hole.up .mole{ bottom:14%; }
+.hole .mole{ position:absolute; left:0; right:0; bottom:14%; text-align:center; font-size:clamp(40px, 13vw, 58px); line-height:1; pointer-events:none;
+  transform:translate3d(0,135%,0); transition:transform .12s ease-out; will-change:transform; }
+.hole.up .mole{ transform:translate3d(0,0,0); }
 .hole[data-t="bad"]{ box-shadow:inset 0 -8px 16px rgba(0,0,0,.6), 0 0 18px rgba(255,60,90,.5); }
 .hole[data-t="gold"]{ box-shadow:inset 0 -8px 16px rgba(0,0,0,.6), 0 0 18px rgba(255,200,60,.6); }
 .float-pt{ position:absolute; left:50%; top:30%; transform:translateX(-50%); font:900 22px var(--serif); pointer-events:none; animation:floatUp .7s ease-out forwards; text-shadow:0 2px 6px rgba(0,0,0,.6); }
@@ -156,3 +157,24 @@
 .mg-rankme{ margin-top:4px; padding:10px 12px; text-align:center; font:800 13px var(--sans); color:var(--gold); border:1px dashed var(--gold-line); border-radius:var(--r); }
 .mg-rankline{ min-height:18px; margin:-6px 0 12px; font:800 12.5px var(--sans); color:var(--mint); }
 .mg-linkbtn{ margin-top:12px; cursor:pointer; background:none; border:none; color:var(--gold); font:800 13px var(--sans); text-decoration:underline; text-underline-offset:3px; }
+
+/* =====================================================================
+   ⚡ ミニゲームの軽量化 (v3.4.1)
+   ・ミニゲームを開いている間(body.mg-open)は、裏にあるロビーやハロウィン背景を描画・アニメーションさせない
+     (ぼかし・ドロップシャドウ・常時アニメが裏で動き続けていたのが、iPadでのカクつきの主な原因)
+   ・ダブルタップ拡大や長押しメニュー、ゴムバンドスクロールで操作が引っかかるのを防ぐ
+   ===================================================================== */
+body.mg-open #hwBg,
+body.mg-open.hw::before,
+body.mg-open.hw::after{ display:none !important; }
+body.mg-open #titleScreen,
+body.mg-open #app{ visibility:hidden; }
+body.mg-open #titleScreen,
+body.mg-open #titleScreen *,
+body.mg-open #app,
+body.mg-open #app *{ animation-play-state:paused !important; }
+#miniScreen{ touch-action:manipulation; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; overscroll-behavior:none; }
+#miniScreen .mg-body{ overscroll-behavior:contain; }
+#miniScreen .mg-body.play{ overflow-x:hidden; }
+#miniScreen .mg-card{ will-change:auto; }
+@media (prefers-reduced-motion: reduce){ .g2048-tiles .tile{ transition:none; } }
