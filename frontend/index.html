@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>たっくるみさいる</title>
-<meta name="app-version" content="2026.10.21-1">
+<meta name="app-version" content="2026.10.21-2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&family=Shippori+Mincho+B1:wght@600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
 <meta name="theme-color" content="#0a0613">
@@ -16,6 +16,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="loading.css">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="layout.css">
@@ -24,13 +25,78 @@
 <link rel="stylesheet" href="gachafx.css">
 <link rel="stylesheet" href="gifts.css">
 <link rel="stylesheet" href="social.css">
+<link rel="stylesheet" href="titles.css">
 </head>
 <body>
+<!-- ✨ ロード画面: ページを開いた瞬間に出て、準備ができたら消える(script.js の start() が CBLoading を操作する) -->
+<div id="bootLoader" role="status" aria-live="polite">
+  <div class="bl-aurora"></div>
+  <div class="bl-stars" id="blStars"></div>
+  <div class="bl-float" id="blFloat"></div>
+  <div class="bl-center">
+    <div class="bl-orb">
+      <div class="bl-ring"></div><div class="bl-ring r2"></div>
+      <div class="bl-sat"><span>🍭</span></div><div class="bl-sat s2"><span>⭐</span></div>
+      <div class="bl-core"><b id="blCore">🍬</b></div>
+    </div>
+    <img class="bl-logo-img" src="icons/logo.png" alt="キャンディブラスト" onload="document.getElementById('bootLoader').classList.add('has-logo')" onerror="this.remove()">
+    <div class="bl-logo">キャンディブラスト</div>
+    <div class="bl-sub">CANDY BLAST</div>
+    <div class="bl-bar"><i id="blFill"></i></div>
+    <div class="bl-pct" id="blPct">0%</div>
+    <div class="bl-status" id="blStatus">準備しています…</div>
+    <div class="bl-sub2" id="blSub"></div>
+    <div class="bl-tip" id="blTip"><b>TIPS</b><span id="blTipText"></span></div>
+  </div>
+</div>
+<script>
+/* ロード画面の制御(軽く、先に動かすため、ここに直接書いています)。 CBLoading.set(進み具合0-100, 文字) / CBLoading.done() */
+(function(){
+  var L = document.getElementById('bootLoader'); if(!L) return;
+  var $ = function(id){ return document.getElementById(id); };
+  var t0 = Date.now(), cur = 0, target = 6, finished = false, warned = false;
+  // ハロウィン期間(日本時間 10/17〜11/8 の目安)は、夜バージョンに
+  try{ var j = new Date(Date.now() + 9*3600*1000), md = (j.getUTCMonth()+1)*100 + j.getUTCDate();
+       if(j.getUTCFullYear() === 2026 && md >= 1017 && md < 1108){ L.classList.add('bl-hw'); $('blCore').textContent = '🎃'; } }catch(e){}
+  // 星とお菓子(位置はランダム)
+  var st = '', fl = '', candy = L.classList.contains('bl-hw') ? ['🎃','🍬','🦇','👻','🍭'] : ['🍬','🍭','🍩','🍪','⭐','🍫'];
+  for(var i=0;i<26;i++) st += '<i style="left:'+(Math.random()*100).toFixed(1)+'%;top:'+(Math.random()*100).toFixed(1)+'%;animation-delay:'+(Math.random()*3.2).toFixed(2)+'s;animation-duration:'+(2.4+Math.random()*2.4).toFixed(1)+'s"></i>';
+  for(var k=0;k<9;k++) fl += '<span style="left:'+(4+Math.random()*92).toFixed(1)+'%;font-size:'+(16+Math.random()*16).toFixed(0)+'px;animation-duration:'+(9+Math.random()*8).toFixed(1)+'s;animation-delay:'+(-Math.random()*12).toFixed(1)+'s;--dx:'+((Math.random()*80-40)).toFixed(0)+'px;--rot:'+((Math.random()*420-210)).toFixed(0)+'deg">'+candy[k%candy.length]+'</span>';
+  $('blStars').innerHTML = st; $('blFloat').innerHTML = fl;
+  // ヒント(2.8秒ごとに切り替え)
+  var tips = ['同じ色をそろえてブロックを消そう。連鎖(コンボ)するほど高得点!','ミニゲームを遊ぶと、コインとバトルパスのXPがもらえます','ガチャは10連だと一気に引けます。無料チケットが先に使われます','フレンドと「対決」して、スコアで勝負できます','毎日のクエストをこなして、コインを貯めよう','集めた「称号」は、名前の横に飾れます','投票では、みんなの意見がリアルタイムで見られます','バトルパスの報酬は、10レベルごとにループします'];
+  var ti = Math.floor(Math.random()*tips.length), tipEl = $('blTip');
+  function tip(){ $('blTipText').textContent = tips[ti % tips.length]; ti++; }
+  tip();
+  var tipTimer = setInterval(function(){ tipEl.classList.add('swap'); setTimeout(function(){ tip(); tipEl.classList.remove('swap'); }, 350); }, 2800);
+  // 進み具合: 目標に向かってなめらかに進む。待っている間も、ゆっくり(90%まで)進み続ける
+  var tick = setInterval(function(){
+    if(finished) return;
+    if(cur < target) cur += Math.max(0.6, (target - cur) * 0.18); else if(cur < 90) cur += 0.12;
+    cur = Math.min(cur, finished ? 100 : 96);
+    $('blFill').style.width = cur.toFixed(1) + '%'; $('blPct').textContent = Math.floor(cur) + '%';
+    var sec = Math.floor((Date.now() - t0) / 1000);
+    if(sec >= 4 && !warned){ warned = true; $('blStatus').classList.add('warn'); }
+    if(warned && !finished){ $('blStatus').textContent = 'サーバーを起こしています…'; $('blSub').textContent = '最初の1回だけ、最大1分ほどかかることがあります(' + sec + '秒)'; }
+  }, 120);
+  function hide(){
+    if(finished) return; finished = true; clearInterval(tick); clearInterval(tipTimer);
+    $('blFill').style.width = '100%'; $('blPct').textContent = '100%'; $('blStatus').classList.remove('warn');
+    $('blStatus').textContent = '準備完了!'; $('blSub').textContent = '';
+    setTimeout(function(){ L.classList.add('out'); setTimeout(function(){ if(L.parentNode) L.parentNode.removeChild(L); }, 900); }, 380);
+  }
+  window.CBLoading = {
+    set: function(p, text){ if(finished) return; if(p > target) target = p; if(text && !warned) $('blStatus').textContent = text; },
+    done: hide
+  };
+  setTimeout(hide, 30000);   // 何があっても30秒で消す(起動に失敗しても画面が固まらないように)
+})();
+</script>
 <div id="hwBg" aria-hidden="true"></div>
 <div id="titleScreen" class="title-screen lobby-in">
   <div class="lobby">
     <div class="lobby-top">
-      <button class="lobby-chip" id="lobbyAccount" type="button"><span class="lc-ic">👤</span><span id="lobbyAccountName">ゲスト</span></button>
+      <button class="lobby-chip" id="lobbyAccount" type="button"><span class="lc-ic">👤</span><span class="lc-col"><span id="lobbyAccountName">ゲスト</span><small id="lobbyAccountTitle" class="lc-title"></small></span></button>
       <div class="lobby-chip coin"><span class="lc-ic">🪙</span><b id="lobbyCoins">0</b></div>
       <button class="lobby-icon gift" id="lobbyGiftBtn" type="button" aria-label="ギフト" style="display:none;">🎁<span class="lt-badge" id="lobbyGiftBadge"></span></button>
       <button class="lobby-icon" id="lobbyMenuBtn" type="button" aria-label="すべてのメニュー">☰<span class="unread-dot" id="lobbyMenuDot"></span></button>
@@ -68,10 +134,11 @@
     </div>
     <div class="lobby-sec">
       <div class="lobby-sec-h"><span>🎁 あつめる</span></div>
-      <div class="lobby-grid cols3">
+      <div class="lobby-grid cols4">
         <button class="lobby-tile compact" id="titleGachaBtn" type="button"><span class="lt-ic">🎰</span><span class="lt-name">ガチャ</span></button>
         <button class="lobby-tile compact" id="titleBattlePassBtn" type="button"><span class="lt-ic">🎫</span><span class="lt-name">バトルパス</span></button>
         <button class="lobby-tile compact" id="titleRecordsBtn" type="button"><span class="lt-ic">🏆</span><span class="lt-name">記録・実績</span></button>
+        <button class="lobby-tile compact" id="titleTitlesBtn" type="button"><span class="lt-ic">🏷</span><span class="lt-name">称号</span></button>
       </div>
     </div>
     <div class="lobby-sec">
@@ -85,14 +152,14 @@
     </div>
 
     <div class="title-version-row">
-      <span>Ver. 3.4.0</span>
+      <span>Ver. 3.5.0</span>
       <button id="titleSettingsBtn" type="button">⚙ 設定</button>
       <button id="titleChangelogBtn" type="button">📢 更新履歴</button>
     </div>
   </div>
 </div>
 
-<div id="versionBadge">Ver. 3.4.0</div>
+<div id="versionBadge">Ver. 3.5.0</div>
 <div id="changelogPanel"></div>
 <div id="eventCountdownBadge" style="display:none;"><span id="eventCountdownText">⏰ --:--:--</span></div>
 
@@ -128,6 +195,7 @@
           <div class="icon-btn ev-only" data-proxy="titleEventBtn" data-label="ハロウィン" style="display:none;">🎃</div>
           <div class="icon-btn" data-proxy="questBtn" data-label="クエスト">📋</div>
           <div class="icon-btn" data-proxy="titleRecordsBtn" data-label="記録・実績">🏆</div>
+          <div class="icon-btn" data-proxy="titleTitlesBtn" data-label="称号">🏷</div>
         </div></div>
         <div class="qs-sec"><div class="qs-sec-h">👥 みんなと</div><div class="qs-grid">
           <div class="icon-btn" id="friendsBtn" data-label="フレンド">
@@ -241,6 +309,7 @@
 <script src="gachafx.js"></script>
 <script src="gifts.js"></script>
 <script src="social.js"></script>
+<script src="titles.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
