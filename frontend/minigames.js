@@ -157,6 +157,16 @@
     const wrap = $('div','gsnake'), info = $('div','g-score','🎃 0 個'), cv = $('canvas','gs-canvas');
     cv.width = cv.height = N*S*DPR;
     const ctx = cv.getContext('2d'); ctx.scale(DPR, DPR);
+    // ★軽量化: 背景(市松模様)とかぼちゃは最初に1回だけ描いておき、毎フレームは貼るだけにする
+    //   (絵文字の描画と shadowBlur は、iPadなどでとても重いため)
+    const bgCv = document.createElement('canvas'); bgCv.width = bgCv.height = N*S*DPR;
+    { const b = bgCv.getContext('2d'); b.scale(DPR, DPR); b.fillStyle = '#120a22'; b.fillRect(0,0,N*S,N*S);
+      b.fillStyle = 'rgba(255,255,255,.035)';
+      for(let x=0;x<N;x++) for(let y=0;y<N;y++) if((x+y)%2===0) b.fillRect(x*S, y*S, S, S); }
+    const PUMP = S + 16, pumpCv = document.createElement('canvas'); pumpCv.width = pumpCv.height = Math.ceil(PUMP*DPR);
+    { const p = pumpCv.getContext('2d'); p.scale(DPR, DPR);
+      p.shadowColor = 'rgba(255,140,30,.8)'; p.shadowBlur = 12;
+      p.font = `${S-3}px serif`; p.textAlign = 'center'; p.textBaseline = 'middle'; p.fillText('🎃', PUMP/2, PUMP/2 + 1); }
     const pad = $('div','dpad', `<button type="button" data-d="up" class="up">▲</button><button type="button" data-d="left" class="left">◀</button><button type="button" data-d="right" class="right">▶</button><button type="button" data-d="down" class="down">▼</button>`);
     const msg = $('div','g-hint','スワイプ / 矢印キー / 下のボタンでスタート');
     wrap.append(info, cv, msg, pad); stage.append(wrap);
@@ -193,14 +203,11 @@
       return snake.map((s,i)=>{ const f = prev[i] || prev[prev.length-1]; return { x:lerp(f.x, s.x, t) + .5, y:lerp(f.y, s.y, t) + .5 }; });
     }
     function draw(ts, t){
-      ctx.fillStyle = '#120a22'; ctx.fillRect(0,0,N*S,N*S);
-      ctx.fillStyle = 'rgba(255,255,255,.035)';
-      for(let x=0;x<N;x++) for(let y=0;y<N;y++) if((x+y)%2===0) ctx.fillRect(x*S, y*S, S, S);
+      ctx.drawImage(bgCv, 0, 0, N*S, N*S);
       // かぼちゃ(ゆらゆら脈打つ)
       const pulse = 1 + Math.sin(ts/170)*.07;
       ctx.save(); ctx.translate((food.x+.5)*S, (food.y+.5)*S); ctx.scale(pulse, pulse);
-      ctx.shadowColor = 'rgba(255,140,30,.8)'; ctx.shadowBlur = 14;
-      ctx.font = `${S-3}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🎃', 0, 1); ctx.restore();
+      ctx.drawImage(pumpCv, -PUMP/2, -PUMP/2, PUMP, PUMP); ctx.restore();
       // 体(曲線でなめらかに)
       const pts = bodyPoints(t).map(p=>({ x:p.x*S, y:p.y*S }));
       const path = ()=>{
@@ -336,9 +343,11 @@
       else { combo++; const bonus = combo >= 5 ? 5 : 0; score += t.pts + bonus; pop(i, `+${t.pts + bonus}`, 'pos'); CB().sound && CB().sound('coin'); CB().vibrate && CB().vibrate(8); }
       hide(i, false);
     }
+    let lastLabel = '';
     const loop = setInterval(()=>{
       const now = performance.now(), el = now - t0;
-      info.textContent = `👻 ${score} 点 ／ 残り ${Math.max(0, Math.ceil((TOTAL - el)/1000))} 秒${combo >= 5 ? ' 🔥COMBO' : ''}`;
+      const label = `👻 ${score} 点 ／ 残り ${Math.max(0, Math.ceil((TOTAL - el)/1000))} 秒${combo >= 5 ? ' 🔥COMBO' : ''}`;
+      if(label !== lastLabel){ lastLabel = label; info.textContent = label; }
       if(el >= TOTAL){ finish(); return; }
       if(now >= nextSpawn){ spawn(el); nextSpawn = now + clamp(760 - el*0.012, 380, 760); }
     }, 60);
@@ -419,6 +428,14 @@
     const W = 320, H = 480, GX = 80, PW = 54, GAP = 142, GROUND = 438;
     const wrap = $('div','gflight'), info = $('div','g-score','🪦 0 枚'), cv = $('canvas','gf-canvas');
     cv.width = W; cv.height = H; const ctx = cv.getContext('2d');
+    // ★軽量化: グラデーションと月は1回だけ描いておく / おばけ(絵文字)も画像にしておく
+    const bgCv = document.createElement('canvas'); bgCv.width = W; bgCv.height = H;
+    { const b = bgCv.getContext('2d'); const g = b.createLinearGradient(0,0,0,H); g.addColorStop(0,'#150b2e'); g.addColorStop(.7,'#3a1650'); g.addColorStop(1,'#5a2060');
+      b.fillStyle = g; b.fillRect(0,0,W,H);
+      b.fillStyle = '#ffe9a8'; b.beginPath(); b.arc(250,70,26,0,7); b.fill();
+      b.fillStyle = 'rgba(255,233,168,.12)'; b.beginPath(); b.arc(250,70,46,0,7); b.fill(); }
+    const ghostCv = document.createElement('canvas'); ghostCv.width = ghostCv.height = 56;
+    { const gc = ghostCv.getContext('2d'); gc.font = '32px serif'; gc.textAlign = 'center'; gc.textBaseline = 'middle'; gc.fillText('👻', 28, 28); }
     const msg = $('div','g-hint','タップ / スペースで羽ばたく');
     wrap.append(info, cv, msg); stage.append(wrap);
     let y = 220, vy = 0, pipes = [], score = 0, started = false, dead = false, raf = 0, last = 0, spawnX = W + 40, bgx = 0;
@@ -440,10 +457,7 @@
       draw();
     }
     function draw(){
-      const g = ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#150b2e'); g.addColorStop(.7,'#3a1650'); g.addColorStop(1,'#5a2060');
-      ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
-      ctx.fillStyle = '#ffe9a8'; ctx.beginPath(); ctx.arc(250,70,26,0,7); ctx.fill();
-      ctx.fillStyle = 'rgba(255,233,168,.12)'; ctx.beginPath(); ctx.arc(250,70,46,0,7); ctx.fill();
+      ctx.drawImage(bgCv, 0, 0);
       ctx.fillStyle = 'rgba(255,255,255,.7)';
       [[30,40],[90,110],[160,50],[210,150],[290,170],[60,200],[130,260]].forEach(([sx,sy],i)=>ctx.fillRect((sx - bgx*(i%2?.5:1) + W) % W, sy, 2, 2));
       pipes.forEach(p=>{
@@ -455,7 +469,7 @@
       ctx.fillStyle = '#1b0f2c'; ctx.fillRect(0, GROUND, W, H-GROUND);
       ctx.fillStyle = '#ff8a1f'; ctx.fillRect(0, GROUND, W, 3);
       ctx.save(); ctx.translate(GX, y); ctx.rotate(clamp(vy/900, -.5, .7));
-      ctx.font = '32px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('👻', 0, 0); ctx.restore();
+      ctx.drawImage(ghostCv, -28, -28); ctx.restore();
     }
     function die(){
       if(dead) return; dead = true; CB().sound && CB().sound('gameover'); CB().vibrate && CB().vibrate(60);
@@ -492,7 +506,7 @@
     root.querySelector('.mg-back').addEventListener('click', ()=>{ if(current || rankView) openMenu(); else close(); });
   }
   function stopGame(){ if(cleanup){ try{ cleanup(); }catch(e){} cleanup = null; } }
-  function close(){ stopGame(); current = null; if(root){ root.classList.remove('show'); } }
+  function close(){ stopGame(); current = null; document.body.classList.remove('mg-open'); if(root){ root.classList.remove('show'); } }
 
   function bestText(g){
     const r = rec[g.id];
@@ -500,7 +514,7 @@
   }
   function openMenu(){
     ensureRoot(); stopGame(); current = null; rankView = false;
-    root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
+    root.classList.add('show'); document.body.classList.add('mg-open'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = '🕹 ミニゲーム'; bestEl.textContent = '';
     body.className = 'mg-body menu';
     body.innerHTML = `<div class="mg-lead">どれも1回1〜2分。遊ぶと 🪙コイン と 🍬ハロウィンキャンディ(開催中)がもらえます！</div>
@@ -529,7 +543,7 @@
   function openRanking(gameId){
     ensureRoot(); stopGame(); current = null; rankView = true;
     const g = GAMES.find(x=>x.id === gameId) || GAMES[0];
-    root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
+    root.classList.add('show'); document.body.classList.add('mg-open'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = '🏆 ランキング'; bestEl.textContent = '';
     body.className = 'mg-body rank';
     body.innerHTML = `<div class="mg-ranktabs">${GAMES.map(x=>`<button type="button" class="mg-rtab ${x.id===g.id?'active':''}" data-g="${x.id}">${x.emoji}<span>${x.name}</span></button>`).join('')}</div>
@@ -550,7 +564,7 @@
   function startGame(id){
     ensureRoot(); stopGame(); rankView = false;
     current = GAMES.find(g=>g.id === id);
-    root.classList.add('show'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
+    root.classList.add('show'); document.body.classList.add('mg-open'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = `${current.emoji} ${current.name}`; bestEl.textContent = bestText(current);
     body.className = 'mg-body play'; body.innerHTML = '';
     const stage = $('div','mg-stage'); body.append(stage);
