@@ -1127,21 +1127,31 @@ const PATTERN_LABELS = {
   async function restoreSession(){
     const saved = await loadAuthSession();
     if(!saved) return false;
+    // 先にログイン状態にする(サーバーが寝ていても、ここで待たせない)。確認はそのあとで行う
     authToken = saved.token;
     currentUserId = saved.id;
+    updateAccountButton();
+    startPlayTimeTracking();
+    startUserSync();
     try{
-      const r = await fetch(`${API_BASE_URL}/api/sync`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
-      if(!r.ok) throw new Error('invalid session');
-      const data = await r.json();
-      applySyncData(data);
+      const ctrl = new AbortController();
+      const to = setTimeout(()=>ctrl.abort(), 60000);
+      const r = await fetch(`${API_BASE_URL}/api/sync`, { headers:{ 'Authorization':`Bearer ${authToken}` }, signal: ctrl.signal });
+      clearTimeout(to);
+      if(r.status === 401 || r.status === 404){
+        // 本当に無効(期限切れ・アカウント削除)なときだけログアウトする
+        stopUserSync(); stopPlayTimeTracking();
+        authToken = null; currentUserId = null;
+        await clearAuthSession();
+        updateAccountButton();
+        return false;
+      }
+      if(!r.ok) return true;                       // サーバーの一時的な不調ではログアウトしない
+      applySyncData(await r.json());
       updateAccountButton();
-      startPlayTimeTracking();
-      startUserSync();
       return true;
     }catch(err){
-      authToken = null; currentUserId = null;
-      await clearAuthSession();
-      return false;
+      return true;                                 // 通信できなかっただけ。ログイン状態は保つ(以前はここで勝手にログアウトしていた)
     }
   }
   let currentUserId = null;
@@ -1169,6 +1179,7 @@ const PATTERN_LABELS = {
     timeattack: '⏱ タイムアタック'
   };
   let currentRankingMode = 'soft';
+  const rankingCache = {};   // 前回のランキング(開いた瞬間に表示するため)
 
   const RANKING_TYPES = ['score', 'coins', 'playtime'];
   const RANKING_TYPE_LABELS = {
@@ -1185,7 +1196,7 @@ const PATTERN_LABELS = {
   // 再ログインしなくても画面に反映されるように定期的にサーバーから取得する
   function startUserSync() {
     if (userSyncInterval) return;
-    userSyncInterval = setInterval(() => { syncFromServer(); }, 5000);
+    userSyncInterval = setInterval(() => { if(!document.hidden) syncFromServer(); }, 8000);   // 画面を見ていないときは問い合わせない
   }
   function stopUserSync() {
     if (userSyncInterval) { clearInterval(userSyncInterval); userSyncInterval = null; }
@@ -1525,9 +1536,12 @@ const PATTERN_LABELS = {
     try{
       const r = await fetch(`${API_BASE_URL}/api/battlepass/state`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
       if(!r.ok) return null;
-      return await r.json();
+      const d = await r.json();
+      bpStateCache = d;
+      return d;
     }catch(err){ return null; }
   }
+  let bpStateCache = null;   // 前回のバトルパス(開いた瞬間に表示するため)
 
   async function openBattlePassModal(){
     modalContent.dataset.mode = 'battlepass';
@@ -1536,11 +1550,16 @@ const PATTERN_LABELS = {
       modalOverlay.classList.add('show');
       return;
     }
-    modalContent.innerHTML = `<h2 style="color:var(--gold);">🎫 バトルパス</h2><div class="empty-hint">読み込み中...</div>`;
     modalOverlay.classList.add('show');
+    // 前回の内容があればすぐ表示して、最新は裏で取りに行く(待ち時間を感じさせない)
+    const hadCache = !!bpStateCache;
+    if(hadCache) renderBattlePassModal(bpStateCache);
+    else modalContent.innerHTML = `<h2 style="color:var(--gold);">🎫 バトルパス</h2><div class="empty-hint">読み込み中...</div>`;
+    const before = hadCache ? JSON.stringify(bpStateCache) : null;
     const state = await fetchBattlePassState();
     if(!modalOverlay.classList.contains('show') || modalContent.dataset.mode!=='battlepass') return;
-    renderBattlePassModal(state);
+    if(!state && hadCache) return;                       // 取れなかったときは前回の表示のまま
+    if(!hadCache || JSON.stringify(state) !== before) renderBattlePassModal(state);
   }
 
   function battlePassRewardLabel(reward){
@@ -3747,95 +3766,103 @@ restartBtn.addEventListener('click', ()=>{
     });
 
     // 読み込み関数
-    async function loadRanking() {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/ranking?mode=${currentRankingMode}&type=${currentRankingType}`);
-        const data = await res.json();
-        let content = `<div style="text-align:left; max-height:380px; overflow-y:auto;">`;
-        if (data.top && data.top.length > 0) {
-          data.top.forEach((user, index) => {
-            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index+1}.`;
-            const isMe = user.id === currentUserId;
-            const valueLabel = currentRankingType === 'coins' ? `${user.value}コイン` :
-                              currentRankingType === 'playtime' ? `${user.value}秒` :
-                              `${user.value}点`;
-            content += `
-              <div style="display:flex; justify-content:space-between; padding:8px 4px; border-bottom:1px solid rgba(255,255,255,0.05); ${isMe ? 'background:rgba(255,217,61,0.15); border-radius:8px;' : ''}">
-                <span style="font-weight:700; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${user.id} ${isMe ? '👈' : ''}</span>
-                <span style="color:var(--gold); font-weight:800;">${valueLabel}</span>
-              </div>
-            `;
-          });
-        } else {
-          const msg = currentRankingType === 'score' ? 'このモードのランキングデータがまだありません。' :
-                     currentRankingType === 'coins' ? 'まだコインデータがありません。' :
-                     'プレイ時間データがまだありません。';
-          content += `<div class="sub">${msg}</div>`;
-        }
-        content += `</div>`;
+    // ⚡ 速くした点: ①前回の結果をすぐ表示してから裏で更新 ②自分の値はサーバーが一緒に返す(以前は /api/sync を続けてもう1回呼んでいた)
+    //                 ③モーダルが閉じられたら定期更新を止める
+    const rankKey = `${currentRankingType}:${currentRankingMode}`;
+    function drawRanking(data) {
+      let content = `<div style="text-align:left; max-height:380px; overflow-y:auto;">`;
+      if (data.top && data.top.length > 0) {
+        data.top.forEach((user, index) => {
+          const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index+1}.`;
+          const isMe = user.id === currentUserId;
+          const valueLabel = currentRankingType === 'coins' ? `${user.value}コイン` :
+                            currentRankingType === 'playtime' ? `${user.value}秒` :
+                            `${user.value}点`;
+          content += `
+            <div style="display:flex; justify-content:space-between; gap:8px; padding:8px 4px; border-bottom:1px solid rgba(255,255,255,0.05); ${isMe ? 'background:rgba(255,217,61,0.15); border-radius:8px;' : ''}">
+              <span style="font-weight:700; min-width:0; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${escapeHtml(user.id)} ${isMe ? '👈' : ''}${titleTag(user.title)}</span>
+              <span style="color:var(--gold); font-weight:800; flex-shrink:0;">${valueLabel}</span>
+            </div>
+          `;
+        });
+      } else {
+        const msg = currentRankingType === 'score' ? 'このモードのランキングデータがまだありません。' :
+                   currentRankingType === 'coins' ? 'まだコインデータがありません。' :
+                   'プレイ時間データがまだありません。';
+        content += `<div class="sub">${msg}</div>`;
+      }
+      content += `</div>`;
 
-        if (authToken && currentUserId) {
-          let myValue = 0;
-          try {
-            const syncRes = await fetch(`${API_BASE_URL}/api/sync`, {
-              headers: { 'Authorization': `Bearer ${authToken}` }
-            });
-            const syncData = await syncRes.json();
-            if (currentRankingType === 'coins') {
-              myValue = syncData.coins || 0;
-            } else if (currentRankingType === 'playtime') {
-              myValue = syncData.playTime || 0;
-            } else {
-              const bestScoresServer = syncData.bestScores || {};
-              myValue = bestScoresServer[currentRankingMode] || 0;
-            }
-          } catch(e) {}
-
-          if (myValue > 0) {
-            const higherCount = data.top ? data.top.filter(u => u.value > myValue).length : 0;
-            const myInTop = data.top ? data.top.some(u => u.id === currentUserId) : false;
-            let rankDisplay = myInTop ? `${data.top.findIndex(u => u.id === currentUserId) + 1}位` :
-                             (data.top && data.top.length > 0 ? `${higherCount + 1}位以上` : '-');
-            const valueLabel = currentRankingType === 'coins' ? `${myValue}コイン` :
-                              currentRankingType === 'playtime' ? `${myValue}秒` :
-                              `${myValue}点`;
-            content += `
-              <div style="margin-top:16px; padding:14px 16px; background:linear-gradient(135deg,var(--panel-light),var(--panel)); border-radius:14px; border:2px solid var(--gold); display:flex; justify-content:space-between; align-items:center; position:sticky; bottom:0; backdrop-filter:blur(8px);">
-                <span style="font-weight:700; color:var(--gold);">👤 ${currentUserId} の順位</span>
-                <span style="font-weight:800; font-size:20px; color:var(--gold);">
-                  ${rankDisplay}
-                  <span style="font-size:14px; color:var(--text-dim); font-weight:400; margin-left:8px;">${valueLabel}</span>
-                </span>
-              </div>
-            `;
-          } else {
-            const msg = currentRankingType === 'score' ? 'まだこのモードのスコアがありません。' :
-                       currentRankingType === 'coins' ? 'まだコインがありません。' :
-                       'プレイ時間が記録されていません。';
-            content += `
-              <div style="margin-top:16px; padding:14px 16px; background:var(--panel-light); border-radius:14px; text-align:center; color:var(--text-dim);">
-                📊 ${msg}
-              </div>
-            `;
-          }
+      if (authToken && currentUserId) {
+        const myValue = Number(data.me || 0);
+        if (myValue > 0) {
+          const higherCount = data.top ? data.top.filter(u => u.value > myValue).length : 0;
+          const myInTop = data.top ? data.top.some(u => u.id === currentUserId) : false;
+          let rankDisplay = myInTop ? `${data.top.findIndex(u => u.id === currentUserId) + 1}位` :
+                           (data.top && data.top.length > 0 ? `${higherCount + 1}位以上` : '-');
+          const valueLabel = currentRankingType === 'coins' ? `${myValue}コイン` :
+                            currentRankingType === 'playtime' ? `${myValue}秒` :
+                            `${myValue}点`;
+          content += `
+            <div style="margin-top:16px; padding:14px 16px; background:linear-gradient(135deg,var(--panel-light),var(--panel)); border-radius:14px; border:2px solid var(--gold); display:flex; justify-content:space-between; align-items:center; position:sticky; bottom:0; backdrop-filter:blur(8px);">
+              <span style="font-weight:700; color:var(--gold);">👤 ${escapeHtml(currentUserId)} の順位</span>
+              <span style="font-weight:800; font-size:20px; color:var(--gold);">
+                ${rankDisplay}
+                <span style="font-size:14px; color:var(--text-dim); font-weight:400; margin-left:8px;">${valueLabel}</span>
+              </span>
+            </div>
+          `;
         } else {
+          const msg = currentRankingType === 'score' ? 'まだこのモードのスコアがありません。' :
+                     currentRankingType === 'coins' ? 'まだコインがありません。' :
+                     'プレイ時間が記録されていません。';
           content += `
             <div style="margin-top:16px; padding:14px 16px; background:var(--panel-light); border-radius:14px; text-align:center; color:var(--text-dim);">
-              🔐 ログインすると自分の順位が表示されます
+              📊 ${msg}
             </div>
           `;
         }
-        document.getElementById('rankingContent').innerHTML = content;
+      } else {
+        content += `
+          <div style="margin-top:16px; padding:14px 16px; background:var(--panel-light); border-radius:14px; text-align:center; color:var(--text-dim);">
+            🔐 ログインすると自分の順位が表示されます
+          </div>
+        `;
+      }
+      const box = document.getElementById('rankingContent');
+      if (!box) return;
+      const list = box.firstElementChild, keep = list ? list.scrollTop : 0;   // 更新しても、見ていた位置を動かさない
+      box.innerHTML = content;
+      if (keep && box.firstElementChild) box.firstElementChild.scrollTop = keep;
+    }
+    async function loadRanking(first) {
+      // 別の画面に移っていたら更新しない(止め忘れによる無駄な通信を防ぐ)。最初の1回は、画面がこれから出るので判定しない
+      if (!first && (!modalOverlay.classList.contains('show') || modalContent.dataset.mode !== 'ranking')) {
+        if (rankingPollInterval) { clearInterval(rankingPollInterval); rankingPollInterval = null; }
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/ranking?mode=${currentRankingMode}&type=${currentRankingType}`,
+          { headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {} });
+        if (!res.ok) throw new Error('ranking');
+        const data = await res.json();
+        rankingCache[rankKey] = data;
+        if (document.getElementById('rankingContent') && modalContent.dataset.mode === 'ranking'
+            && rankKey === `${currentRankingType}:${currentRankingMode}`) drawRanking(data);
       } catch(err) {
-        document.getElementById('rankingContent').innerHTML = `<div class="sub" style="color:var(--coral);">❌ ランキングの読み込みに失敗しました</div>`;
+        if (!rankingCache[rankKey]) {
+          const box = document.getElementById('rankingContent');
+          if (box) box.innerHTML = `<div class="sub" style="color:var(--coral);">❌ ランキングの読み込みに失敗しました</div>`;
+        }
       }
     }
 
-    await loadRanking();
+    if (rankingCache[rankKey]) drawRanking(rankingCache[rankKey]);   // 前回の結果をまず表示
+    loadRanking(true);   // await しない: 画面は先に出ていて、結果が来たら差し替わる
 
-    // ポーリング開始（既存のものをクリア）
+    // ポーリング開始（既存のものをクリア）。画面を見ていないときは問い合わせない
     if (rankingPollInterval) clearInterval(rankingPollInterval);
-    rankingPollInterval = setInterval(loadRanking, 5000);
+    rankingPollInterval = setInterval(() => { if (!document.hidden) loadRanking(); }, 8000);
   }
 
   rankingBtn.addEventListener('click', () => {
@@ -3849,6 +3876,12 @@ restartBtn.addEventListener('click', ()=>{
   let chatLastSeenId = 0;
   let chatUnreadCount = 0;
   let chatMentionCount = 0;
+  let myTitle = null;   // 自分が付けている称号(titles.js が更新する)
+
+  // 🏷 名前の横に出す称号(サーバーが {n:名前, r:レアリティ} で返す)
+  function titleTag(t) {
+    return t && t.n ? ` <span class="ttl r-${String(t.r).replace(/[^a-z]/g,'')}">${escapeHtml(t.n)}</span>` : '';
+  }
 
   function escapeHtml(text) {
     const div = document.createElement('div');
@@ -3883,6 +3916,7 @@ restartBtn.addEventListener('click', ()=>{
 
   // モーダルを開かず裏側で新着とメンションだけチェックする軽量ポーリング
   async function pollChatUnread(){
+    if (document.hidden) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages`);
       if(!res.ok) return;
@@ -3905,13 +3939,18 @@ restartBtn.addEventListener('click', ()=>{
     } catch(err) { /* 無視 */ }
   }
 
+  // 中身が変わっていないときは再描画しない(3秒ごとの無駄な描画を省く)
+  function chatSig(list){ return list.map(m => `${m.id}${m.edited?'e':''}${m.deleted?'d':''}${m.title?m.title.id:''}`).join(','); }
   async function fetchChatMessages() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages`);
+      if (!res.ok) return;
       const data = await res.json();
+      if(!Array.isArray(data)) return;
+      const changed = chatSig(data) !== chatSig(chatMessages) || data.some((m,i)=> chatMessages[i] && chatMessages[i].message !== m.message);
       chatMessages = data;
       if(data.length) chatLastSeenId = Math.max(...data.map(m => m.id));
-      renderChatMessages();
+      if (changed || !document.querySelector('#chatMessages .chat-item')) renderChatMessages();
     } catch (err) {
       console.warn('チャット取得失敗:', err);
     }
@@ -3935,7 +3974,15 @@ restartBtn.addEventListener('click', ()=>{
         const err = await res.json();
         throw new Error(err.error || '送信失敗');
       }
-      await fetchChatMessages();
+      // 送ったメッセージはサーバーの返事をそのまま画面に足す(全件の取り直しを待たない)。みんなの分は裏で更新
+      const sent = await res.json();
+      if (sent && sent.id && !chatMessages.some(m => m.id === sent.id)) {
+        chatMessages = [...chatMessages, { ...sent, edited:false, deleted:false, title: myTitle || null }].slice(-50);
+        chatLastSeenId = Math.max(chatLastSeenId, sent.id);
+        renderChatMessages();
+        const box = document.getElementById('chatMessages'); if (box) box.scrollTop = box.scrollHeight;
+      }
+      fetchChatMessages();
       return true;
     } catch (err) {
       alert(err.message);
@@ -3952,7 +3999,8 @@ restartBtn.addEventListener('click', ()=>{
       const isFriend = friendsList.some(f => f.id === data.userId);
       const isSelf = data.userId === currentUserId;
       modalContent.innerHTML = `
-        <h2 style="color:var(--gold);">👤 ${data.userId} のプロフィール</h2>
+        <h2 style="color:var(--gold);">👤 ${escapeHtml(data.userId)} のプロフィール</h2>
+        ${data.title ? `<div style="text-align:center; margin:-4px 0 6px;">${titleTag(data.title)}</div>` : ''}
         <div style="text-align:left; padding:8px 0;">
           <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
             <span style="color:var(--text-dim);">🏆 ベストスコア</span>
@@ -4022,7 +4070,7 @@ restartBtn.addEventListener('click', ()=>{
         <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
           <div class="chat-line" data-mid="${msg.id}" style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
             <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); showProfile('${msg.user_id}')">
-              [${msg.user_id}]
+              [${escapeHtml(msg.user_id)}]${titleTag(msg.title)}
             </span>
             <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}</span>
             <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
@@ -4097,8 +4145,9 @@ restartBtn.addEventListener('click', ()=>{
         catch (err) { alert(err.message); }
         return;
       }
-      await sendChatMessage(msg);
-      input.value = '';
+      input.value = '';                       // 先に入力欄を空に(送信の返事を待たずに次を打てる)
+      const sentOk = await sendChatMessage(msg);
+      if (!sentOk && !input.value) input.value = msg;
     });
 
     document.getElementById('chatInput').addEventListener('keydown', (e) => {
@@ -4108,7 +4157,7 @@ restartBtn.addEventListener('click', ()=>{
     });
 
     if (chatPollingInterval) clearInterval(chatPollingInterval);
-    chatPollingInterval = setInterval(fetchChatMessages, 3000);
+    chatPollingInterval = setInterval(() => { if (!document.hidden) fetchChatMessages(); }, 3000);
   }
 
   chatBtn.addEventListener('click', () => {
@@ -4141,13 +4190,9 @@ restartBtn.addEventListener('click', ()=>{
 
   function startBackgroundPolling(){
     stopBackgroundPolling();
-    fetchFriendsData().then(updateFriendsBadge);
-    fetchDMUnreadSummary();
-    friendsBgPollInterval = setInterval(async () => {
-      await fetchFriendsData();
-      await fetchDMUnreadSummary();
-    }, 8000);
-    chatBgPollInterval = setInterval(pollChatUnread, 5000);
+    fetchSocialSummary();
+    friendsBgPollInterval = setInterval(() => { if (!document.hidden) fetchSocialSummary(); }, 12000);
+    chatBgPollInterval = setInterval(pollChatUnread, 10000);
   }
 
   function stopBackgroundPolling(){
@@ -4167,6 +4212,25 @@ restartBtn.addEventListener('click', ()=>{
       friendsMentionBadge.classList.remove('show');
       friendsDot.classList.remove('show');
     }
+  }
+
+  // フレンド一覧・リクエスト・DM未読を、1回の通信でまとめて取る(以前は2回に分けていた)
+  let socialLoaded = false;
+  async function fetchSocialSummary(){
+    if (!authToken) return false;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/social/summary`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+      if (!res.ok) return false;
+      const data = await res.json();
+      friendsList = data.friends || [];
+      incomingRequests = data.incoming || [];
+      outgoingRequests = data.outgoing || [];
+      const dm = data.dm || {};
+      dmUnreadTotal = dm.total || 0; dmMentionCount = dm.mentions || 0; dmPerFriendUnread = dm.perFriend || {};
+      socialLoaded = true;
+      updateFriendsBadge();
+      return true;
+    } catch (err) { return false; }
   }
 
   async function fetchFriendsData(){
@@ -4386,7 +4450,7 @@ restartBtn.addEventListener('click', ()=>{
           html += `
             <div class="friend-item">
               <span class="fname" data-showprofile="${f.id}">
-                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${f.id}${unread ? `<span class="funread">${unread}</span>` : ''}
+                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${f.id}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}
               </span>
               <span class="fsub">${f.online ? '🟢 オンライン' : 'オフライン'}</span>
               <button class="fbtn" data-challenge="${f.id}" data-game="candy">🍬 対決</button>
@@ -4467,7 +4531,7 @@ restartBtn.addEventListener('click', ()=>{
           const unread = dmPerFriendUnread[f.id] || 0;
           html += `
             <div class="friend-item chat" data-openthread="${f.id}" style="cursor:pointer;">
-              <span class="fname">💬 ${f.id}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
+              <span class="fname">💬 ${f.id}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
               <span class="fsub">タップして会話を開く →</span>
             </div>`;
         });
@@ -4630,8 +4694,10 @@ restartBtn.addEventListener('click', ()=>{
     // 先にモーダルを開いて「読み込み中」を見せ、通信が終わってから中身を差し替える
     // (以前は通信完了までモーダル自体が開かず、待ち時間があるように感じられていた)
     modalContent.dataset.mode = 'friends';
-    modalContent.innerHTML = `<h2 style="color:var(--gold);">👥 フレンド・DM</h2><div class="empty-hint">読み込み中...</div>`;
     modalOverlay.classList.add('show');
+    // 裏の定期チェックで取得済みなら、すぐ表示する(取り直しは裏で)。まだなら「読み込み中」
+    if (socialLoaded) renderFriendsModal(incomingRequests.length ? 'requests' : 'friends');
+    else modalContent.innerHTML = `<h2 style="color:var(--gold);">👥 フレンド・DM</h2><div class="empty-hint">読み込み中...</div>`;
     const observer = new MutationObserver(() => {
       if (!modalOverlay.classList.contains('show')) {
         if (dmPollingInterval) { clearInterval(dmPollingInterval); dmPollingInterval = null; }
@@ -4639,9 +4705,12 @@ restartBtn.addEventListener('click', ()=>{
       }
     });
     observer.observe(modalOverlay, { attributes: true, attributeFilter: ['class'] });
-    await fetchFriendsData();
-    await fetchDMUnreadSummary();
-    if (modalOverlay.classList.contains('show')) {
+    const sigOf = () => JSON.stringify([friendsList.map(f=>[f.id,f.online,f.title&&f.title.id]), incomingRequests.length, outgoingRequests.length, dmPerFriendUnread]);
+    const before = socialLoaded ? sigOf() : null;
+    await fetchSocialSummary();
+    const stillHere = modalOverlay.classList.contains('show') && modalContent.dataset.mode === 'friends';
+    const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+    if (stillHere && (before === null || (before !== sigOf() && !typing))) {
       renderFriendsModal(incomingRequests.length ? 'requests' : 'friends');
     }
   });
@@ -6271,6 +6340,13 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.5.0', date:'2026-10-21', items:[
+      '✨ 起動時のロード画面を追加(サーバーが眠っているときは、その状況もお知らせします)',
+      '🏷 「称号」を追加。遊び方に合わせて集められ、名前の横(ランキング・チャット・フレンド・プロフィール)に飾れます',
+      '⚡ ランキング・投票・バトルパス・フレンド・チャットの読み込みと、メッセージ送信を高速化(開いた瞬間に前回の内容を表示)',
+      '🔐 サーバーが眠っているときに、ログインが外れてしまうことがある問題を修正',
+      '🏠 ホームのロゴ画像が、ハロウィンのバナーに重なる問題を修正'
+    ]},
     { version:'3.4.1', date:'2026-10-21', items:[
       '🎫 バトルパスのレベルが大きくなっても、開くときに固まらないように修正(まとめて受け取りも一瞬で完了)',
       '🎰 ガチャの排出率をさらに引き下げ(通常: 1スキン0.4%・合計3.2% / ハロウィン: 1スキン0.5%・合計3%)',
@@ -7062,6 +7138,7 @@ function renderOtherGamesModal(){
     fmt: formatNumber, sound: playSound, vibrate, toast: showEventToast, motionOff,
     isLoggedIn(){ return !!authToken; },
     userId(){ return currentUserId; },
+    setMyTitle(t){ myTitle = t || null; },                    // 🏷 自分が付けている称号(チャットに送った直後の表示用)
     isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
     setCoins(n){ coins = Math.max(0, Number(n) || 0); updateCoinUI(); },
     adminCommand: executeAdminCommand,                       // 文字のコマンドを実行(結果の文字を返す)
@@ -7103,36 +7180,47 @@ function renderOtherGamesModal(){
 
   // ===================== 初期化 =====================
 (async function start(){
-    await loadCustomBackground();
-    await loadAppSettings();
-    await loadBgmSettings();   // ★これを追加
-    await loadBest();
-    await loadBestScores();  // モード別ベスト読み込み
-    await loadCoins();
-    await loadSkinsData();
-    await loadSettings();
-    await loadDailyQuests();
-    // リロード後も安全にログイン状態を復元(トークンをサーバーで検証してから復元)
-    await restoreSession();
-    updateAccountButton();
-    updateModeBadge();
-    if(currentMode === 'tetris'){
-      enterTetrisMode();
-    } else {
-      initBoard();
-      fillTray();
+    const L = window.CBLoading || { set(){}, done(){} };
+    try{
+      L.set(12, 'データを読み込んでいます…');
+      await loadCustomBackground();
+      await loadAppSettings();
+      await loadBgmSettings();
+      await loadBest();
+      await loadBestScores();  // モード別ベスト読み込み
+      await loadCoins();
+      await loadSkinsData();
+      await loadSettings();
+      await loadDailyQuests();
+      L.set(48, 'アカウントを確認しています…');
+      // リロード後も安全にログイン状態を復元。サーバーが寝ていても最大4秒で先へ進む(確認は裏で続く)
+      await Promise.race([restoreSession(), new Promise(r=>setTimeout(r, 4000))]);
+      L.set(72, 'ゲームを準備しています…');
+      updateAccountButton();
+      updateModeBadge();
+      if(currentMode === 'tetris'){
+        enterTetrisMode();
+      } else {
+        initBoard();
+        fillTray();
+      }
+      // 外部サイトへは飛ばさず、まずアプリ内のメインメニュー画面を表示する
+      showTitleScreen();
+      L.set(92, 'もうすぐ始まります…');
+      await loadLastSeenAnnouncement();
+    }catch(err){
+      console.error('起動中にエラー:', err);
+      try{ showTitleScreen(); }catch(e){}
     }
-    // 外部サイトへは飛ばさず、まずアプリ内のメインメニュー画面を表示する
-    showTitleScreen();
-    // お知らせ・アップデート確認(ログイン状態に関わらず定期チェック)
-    await loadLastSeenAnnouncement();
+    L.done();
+    // お知らせ・アップデート確認(ログイン状態に関わらず定期チェック)。画面を出したあとに裏で行う
     checkAnnouncements();
-    setInterval(checkAnnouncements, 20000);
+    setInterval(()=>{ if(!document.hidden) checkAnnouncements(); }, 30000);
     setInterval(checkForUpdate, 60000);
-    // イベントカウントダウン(1秒ごとに更新、1分ごとにサーバーと再同期)
-    await fetchEventsList();
+    // イベントカウントダウン(1秒ごとに更新、サーバーとは定期的に再同期)。待たずに裏で取得する
+    fetchEventsList();
     setInterval(()=>{ if(!document.body.classList.contains('mg-open')) tickEventCountdown(); }, 1000);
-    setInterval(()=>{ if(!document.body.classList.contains('mg-open')) fetchEventsList(); }, 5000); // 短めの間隔にして、管理者がイベントを削除した際も全員の画面にすぐ反映されるようにする
+    setInterval(()=>{ if(!document.hidden && !document.body.classList.contains('mg-open')) fetchEventsList(); }, 15000); // 管理者がイベントを消したときも、15秒以内に全員の画面へ反映
   })();
 
 })();
