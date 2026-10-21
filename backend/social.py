@@ -2,10 +2,11 @@
 """
 💬🗳🎁 ソーシャル機能
 
-  🗳 投票(ゲスト以外が投票できる。管理者が 作成/編集/終了/リセット/削除)
+  🗳 投票(ゲスト以外が投票できる。管理者が 作成/編集/終了/リセット/削除 と、誰が何に投票したかの確認)
      GET  /api/polls                        一覧(結果つき。ゲストは閲覧のみ)
      POST /api/polls/<id>/vote {option}     投票(やり直し可・終了後は不可)
      POST /api/admin/poll/create|update|close|reset|delete
+     GET  /api/admin/poll/<id>/voters       管理者だけ: 誰がどれに投票したか
 
   🎁 ギフト(管理者が メッセージ + コイン/イベント通貨/XP/イベントXP を贈る)
      POST /api/admin/gift {to, message, coins, candies, bpXp, eventXp}     to = ユーザーID or 'all'
@@ -148,7 +149,7 @@ def apply_gift(s, gift):
 
 
 # ===================== ルート登録 =====================
-def register(app, db_query, db_transaction, require_auth, optional_user, ApiError, admin_id):
+def register(app, db_query, db_transaction, require_auth, optional_user, ApiError, admin_id, on_chat_change=None):
 
     def fail(e):
         return jsonify({'error': e.message}), e.status
@@ -174,20 +175,24 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
         return uid
 
     # ---------------------------------------------------------------- 投票
+    POLLS_SQL = """
+        SELECT p.id, p.question, p.options, p.closed, p.created_at,
+               COALESCE((SELECT json_object_agg(c.option_idx, c.n) FROM
+                         (SELECT option_idx, COUNT(*) AS n FROM poll_votes WHERE poll_id = p.id GROUP BY option_idx) c), '{}'::json) AS counts,
+               (SELECT option_idx FROM poll_votes WHERE poll_id = p.id AND user_id = %s) AS mine
+        FROM polls p {where} ORDER BY p.closed ASC, p.id DESC LIMIT 30
+    """
+
     def load_polls(user, only_id=None):
-        rows = (db_query('SELECT id, question, options, closed, created_at FROM polls WHERE id = %s', [only_id]) if only_id
-                else db_query('SELECT id, question, options, closed, created_at FROM polls ORDER BY closed ASC, id DESC LIMIT 30'))
-        if not rows:
-            return []
-        ids = [r['id'] for r in rows]
-        counts = {}
-        for r in db_query('SELECT poll_id, option_idx, COUNT(*) AS n FROM poll_votes WHERE poll_id = ANY(%s) GROUP BY poll_id, option_idx', [ids]):
-            counts.setdefault(r['poll_id'], {})[r['option_idx']] = int(r['n'])
-        mine = {}
-        if user and user != 'ゲスト':
-            for r in db_query('SELECT poll_id, option_idx FROM poll_votes WHERE user_id = %s AND poll_id = ANY(%s)', [user, ids]):
-                mine[r['poll_id']] = r['option_idx']
-        return [poll_view(r, counts.get(r['id'], {}), mine.get(r['id'])) for r in rows]
+        # 以前は「質問」「票の数」「自分の票」を3回に分けて取っていた。1回の問い合わせにまとめて速くした
+        me = user if (user and user != 'ゲスト') else None
+        sql = POLLS_SQL.replace('{where}', 'WHERE p.id = %s' if only_id else '')   # ※ .format は SQL 内の '{}' と衝突するので使わない
+        rows = db_query(sql, [me, only_id] if only_id else [me])
+        out = []
+        for r in rows:
+            counts = {int(k): int(v) for k, v in (r.get('counts') or {}).items()}
+            out.append(poll_view(r, counts, r.get('mine')))
+        return out
 
     @app.get('/api/polls')
     @guard
@@ -215,6 +220,23 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
                  'ON CONFLICT (poll_id, user_id) DO UPDATE SET option_idx = EXCLUDED.option_idx, voted_at = NOW() RETURNING poll_id',
                  [pid, user, idx])
         return jsonify({'ok': True, 'poll': load_polls(user, pid)[0]})
+
+    @app.get('/api/admin/poll/<int:pid>/voters')
+    @guard
+    def poll_voters(pid):
+        """🔍 管理者だけ: どのアカウントがどの選択肢に投票したか(投票した順)"""
+        require_admin()
+        rows = db_query('SELECT id, question, options, closed FROM polls WHERE id = %s', [pid])
+        if not rows:
+            raise ApiError('この投票は見つかりません', 404)
+        opts = rows[0]['options'] if isinstance(rows[0]['options'], list) else json.loads(rows[0]['options'])
+        groups = [{'text': t, 'voters': []} for t in opts]
+        for v in db_query('SELECT user_id, option_idx, voted_at FROM poll_votes WHERE poll_id = %s ORDER BY voted_at ASC', [pid]):
+            if 0 <= v['option_idx'] < len(groups):
+                at = v.get('voted_at')
+                groups[v['option_idx']]['voters'].append({'id': v['user_id'], 'at': at.isoformat() if hasattr(at, 'isoformat') else None})
+        return jsonify({'id': pid, 'question': rows[0]['question'], 'closed': bool(rows[0]['closed']),
+                        'total': sum(len(g['voters']) for g in groups), 'options': groups})
 
     @app.post('/api/admin/poll/create')
     @guard
@@ -350,6 +372,7 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
         if rows[0]['deleted']:
             raise ApiError('取り消したメッセージは編集できません', 400)
         db_query(f'UPDATE {table} SET message = %s, edited_at = NOW() WHERE id = %s RETURNING id', [text, mid])
+        if on_chat_change: on_chat_change()
         return jsonify({'ok': True})
 
     def retract_msg(table, id_col_user):
@@ -363,6 +386,7 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
         if not rows or rows[0]['owner'] != user:
             raise ApiError('自分のメッセージだけ取り消せます', 403)
         db_query(f"UPDATE {table} SET deleted = TRUE, message = '' WHERE id = %s RETURNING id", [mid])
+        if on_chat_change: on_chat_change()
         return jsonify({'ok': True})
 
     @app.post('/api/chat/edit')
