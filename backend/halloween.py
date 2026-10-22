@@ -18,6 +18,9 @@ from zoneinfo import ZoneInfo
 
 from flask import request, jsonify
 
+import hw_content as C            # 🎃 パート2の中身(図鑑・スタンプ・ミッション等の数字と文章)
+import minigames as _minigames    # スタンプラリーの対象(ミニゲームの一覧)を自動で取る
+
 JST = ZoneInfo('Asia/Tokyo')
 EVENT_ID = 'halloween2026'
 
@@ -69,18 +72,20 @@ GACHA_MISS_CANDIES = 8         # ハズレ: 1割が戻ってくる
 GACHA_POOL = [
     'hween_pumpkinking', 'hween_vampire', 'hween_ghostparade',
     'hween_witchbrew', 'hween_blackcat', 'hween_candycorn',
+    'hween_jackolantern', 'hween_mummy',                       # v3.6 で追加(8種になり、合計4.0%)
 ]
-ROAD_SKINS = {20: 'hween_moonlight', 40: 'hween_eternalnight'}
-SHOP_SKINS = ['hween_spiderweb', 'hween_batswarm']
-ALL_SKIN_IDS = set(GACHA_POOL) | set(ROAD_SKINS.values()) | set(SHOP_SKINS)
+ROAD_SKINS = {20: 'hween_moonlight', 40: 'hween_eternalnight', 50: 'hween_crimsonmoon', 60: 'hween_grandcrown'}
+SHOP_SKINS = ['hween_spiderweb', 'hween_batswarm', 'hween_frankenstein', 'hween_skeletondance']
+EXTRA_SKINS = ['hween_trickortreat', 'hween_graveyardfog']     # スタンプラリー完走 / 図鑑コンプリートの報酬
+ALL_SKIN_IDS = set(GACHA_POOL) | set(ROAD_SKINS.values()) | set(SHOP_SKINS) | set(EXTRA_SKINS)
 
 
 # ===================== ハロウィンロード(累計キャンディで進む報酬) =====================
-ROAD_TIERS = 40
+ROAD_TIERS = 60                # v3.6 で40→60段に(41〜60段は後半の長旅)
 
 
 def road_need(tier):
-    return 45 * tier + 3 * tier * tier          # 10段=750 / 20段=2100 / 40段=6600
+    return 45 * tier + 3 * tier * tier          # 10段=750 / 20段=2100 / 40段=6600 / 60段=13500
 
 
 def road_reward(tier):
@@ -88,6 +93,8 @@ def road_reward(tier):
         r = {'type': 'skin', 'skinId': ROAD_SKINS[tier]}
         if tier == 40:
             r['extraCoins'] = 20000
+        if tier == 60:
+            r['extraCoins'] = 40000
         return r
     if tier % 10 == 0:
         return {'type': 'ticket', 'amount': 5}
@@ -101,29 +108,9 @@ def road_reward(tier):
 ROAD = [{'tier': t, 'need': road_need(t), 'reward': road_reward(t)} for t in range(1, ROAD_TIERS + 1)]
 
 
-# ===================== ミッション =====================
-DAILY_POOL = [
-    {'id': 'd_games3',   'stat': 'games',     'target': 3,     'candies': 35, 'text': 'ゲームを3回プレイする'},
-    {'id': 'd_games6',   'stat': 'games',     'target': 6,     'candies': 55, 'text': 'ゲームを6回プレイする'},
-    {'id': 'd_lines20',  'stat': 'lines',     'target': 20,    'candies': 40, 'text': 'テトリスで合計20ライン消す'},
-    {'id': 'd_lines60',  'stat': 'lines',     'target': 60,    'candies': 65, 'text': 'テトリスで合計60ライン消す'},
-    {'id': 'd_score5k',  'stat': 'score_max', 'target': 5000,  'candies': 40, 'text': '1ゲームで5,000点を出す'},
-    {'id': 'd_score20k', 'stat': 'score_max', 'target': 20000, 'candies': 65, 'text': '1ゲームで20,000点を出す'},
-    {'id': 'd_tspin1',   'stat': 'tspin',     'target': 1,     'candies': 50, 'text': 'Tスピンを1回決める'},
-    {'id': 'd_tspin3',   'stat': 'tspin',     'target': 3,     'candies': 70, 'text': 'Tスピンを3回決める'},
-    {'id': 'd_vs1',      'stat': 'vs_games',  'target': 1,     'candies': 40, 'text': 'テトリスでAIと1回対戦する'},
-    {'id': 'd_pulls3',   'stat': 'hw_pulls',  'target': 3,     'candies': 40, 'text': 'ハロウィンガチャを3回引く'},
-    {'id': 'd_duel1',    'stat': 'duels',     'target': 1,     'candies': 55, 'text': 'フレンド対決を1回プレイする'},
-]
-WEEKLY_POOL = [
-    {'id': 'w_games30',  'stat': 'games',     'target': 30,     'candies': 210, 'text': '今週ゲームを30回プレイする'},
-    {'id': 'w_lines300', 'stat': 'lines',     'target': 300,    'candies': 225, 'text': '今週テトリスで300ライン消す'},
-    {'id': 'w_tspin10',  'stat': 'tspin',     'target': 10,     'candies': 240, 'text': '今週Tスピンを10回決める'},
-    {'id': 'w_pc1',      'stat': 'pc',        'target': 1,      'candies': 280, 'text': '今週パーフェクトクリアを1回決める'},
-    {'id': 'w_pulls20',  'stat': 'hw_pulls',  'target': 20,     'candies': 210, 'text': '今週ハロウィンガチャを20回引く'},
-    {'id': 'w_score60k', 'stat': 'score_max', 'target': 60000,  'candies': 250, 'text': '今週1ゲームで60,000点を出す'},
-    {'id': 'w_vs5',      'stat': 'vs_games',  'target': 5,      'candies': 195, 'text': '今週テトリスでAIと5回対戦する'},
-]
+# ===================== ミッション(中身は hw_content.py) =====================
+DAILY_POOL = C.DAILY_POOL
+WEEKLY_POOL = C.WEEKLY_POOL
 
 
 def _today():
@@ -140,24 +127,15 @@ def pick_missions(pool, key, n):
 
 
 def daily_missions(date=None):
-    return pick_missions(DAILY_POOL, date or _today(), 3)
+    return pick_missions(DAILY_POOL, date or _today(), C.DAILY_COUNT)
 
 
 def weekly_missions(week=None):
-    return pick_missions(WEEKLY_POOL, week or _week_key(), 3)
+    return pick_missions(WEEKLY_POOL, week or _week_key(), C.WEEKLY_COUNT)
 
 
-# ===================== 交換所 =====================
-SHOP = [
-    {'id': 'coins', 'name': '🪙 5,000コイン', 'desc': 'すぐ使えるコイン', 'cost': 60, 'limit': 20,
-     'give': {'type': 'coins', 'amount': 5000}},
-    {'id': 'bpxp', 'name': '🎫 バトルパスXP +3,000', 'desc': 'バトルパスが一気に進む', 'cost': 70, 'limit': 10,
-     'give': {'type': 'bpxp', 'amount': 3000}},
-    {'id': 'hween_spiderweb', 'name': '🕸 スパイダーウェブ(スキン)', 'desc': '交換所限定スキン', 'cost': 2000, 'limit': 1,
-     'give': {'type': 'skin', 'skinId': 'hween_spiderweb'}},
-    {'id': 'hween_batswarm', 'name': '🦇 バットスウォーム(スキン)', 'desc': '交換所限定スキン', 'cost': 3500, 'limit': 1,
-     'give': {'type': 'skin', 'skinId': 'hween_batswarm'}},
-]
+# ===================== 交換所(中身は hw_content.py) =====================
+SHOP = C.SHOP
 SHOP_BY_ID = {s['id']: s for s in SHOP}
 
 # ログインボーナス(7日サイクル)
@@ -186,7 +164,26 @@ def norm_state(st):
     st.setdefault('streak', 0)
     st.setdefault('lastLogin', None)
     st.setdefault('lastReport', 0)
+    # --- v3.6 パート2 ---
+    st.setdefault('dex', [])               # 出会ったおばけ
+    st.setdefault('dexClaimed', [])        # 受け取った図鑑ごほうび(必要数)
+    st.setdefault('stamps', [])            # 遊んだミニゲーム
+    st.setdefault('stampClaimed', [])      # 受け取ったスタンプごほうび(文字で保存: '3' '6' … 'all')
+    st.setdefault('fortune', None)
+    st.setdefault('communityClaimed', [])
+    st.setdefault('guestBonus', False)
+    st.setdefault('totTotal', 0)
+    st.setdefault('harvestTotal', 0)
+    st.setdefault('ghostTotal', 0)
+    if not isinstance(st.get('patch'), list):
+        st['patch'] = []
+    while len(st['patch']) < C.PATCH_PLOTS:
+        st['patch'].append(None)
     today, wk = _today(), _week_key()
+    if not isinstance(st.get('tot'), dict) or st['tot'].get('date') != today:
+        st['tot'] = {'date': today, 'used': 0}
+    if not isinstance(st.get('ghost'), dict) or st['ghost'].get('date') != today:
+        st['ghost'] = {'date': today, 'count': 0, 'last': st.get('ghost', {}).get('last', 0) if isinstance(st.get('ghost'), dict) else 0}
     if not isinstance(st.get('daily'), dict) or st['daily'].get('date') != today:
         st['daily'] = {'date': today, 'stats': {}, 'claimed': []}
     if not isinstance(st.get('weekly'), dict) or st['weekly'].get('week') != wk:
@@ -280,6 +277,162 @@ def time_info():
     }
 
 
+
+# ===================== v3.6 パート2: ボーナス・図鑑・スタンプ・畑など =====================
+MINI_IDS = list(_minigames.GAMES.keys())
+
+
+def candy_boost(now=None):
+    """いまのキャンディ倍率 (倍率, 表示文)。いちばん高いものが1つだけ効く"""
+    now = now or now_dt()
+    cands = []
+    d = C.BOOST_DAYS.get((now.month, now.day))
+    if d:
+        cands.append(d)
+    if now.weekday() >= 5:
+        cands.append(C.BOOST_WEEKEND)
+    if 20 <= now.hour < 23:
+        cands.append(C.BOOST_NIGHT)
+    best = (1.0, '')
+    for c in cands:
+        if c[0] > best[0]:
+            best = c
+    return best
+
+
+def days_to_halloween(now=None):
+    now = now or now_dt()
+    target = datetime(now.year, C.HALLOWEEN_MONTH_DAY[0], C.HALLOWEEN_MONTH_DAY[1], tzinfo=JST)
+    return (target.date() - now.date()).days
+
+
+def dex_entry(creature):
+    return {'id': creature[0], 'emoji': creature[1], 'name': creature[2], 'rarity': creature[3]}
+
+
+def dex_give(st, rare_only=False, rng=random):
+    """おばけと出会う。新しければ図鑑に登録、すでに出会っていればキャンディに変わる"""
+    pool = [d for d in C.DEX if (d[3] != 'common' or not rare_only)]
+    c = rng.choices(pool, weights=[d[4] for d in pool])[0]
+    out = dex_entry(c)
+    if c[0] in st['dex']:
+        out.update(new=False, candies=C.DEX_DUP_CANDIES[c[3]])
+        add_candies(st, out['candies'])
+    else:
+        st['dex'].append(c[0])
+        out.update(new=True, candies=0)
+        add_stat_both(st, 'dex_new', 1)
+    return out
+
+
+def stamp_steps():
+    """[(キー文字, 必要数, ごほうび)] 。'all' はミニゲーム全種"""
+    out, seen = [], set()
+    for key in C.STAMP_STEPS:
+        need = len(MINI_IDS) if key == 'all' else int(key)
+        need = min(need, len(MINI_IDS))
+        k = 'all' if key == 'all' else str(key)
+        if need in seen and k != 'all':
+            continue
+        seen.add(need)
+        out.append((k, need, C.STAMP_REWARDS[key]))
+    return out
+
+
+def stamp_add(st, game_id):
+    if game_id in MINI_IDS and game_id not in st['stamps']:
+        st['stamps'].append(game_id)
+        return True
+    return False
+
+
+def add_kind(bucket, game_id):
+    kinds = bucket.setdefault('kinds', [])
+    if game_id not in kinds:
+        kinds.append(game_id)
+    bucket['stats']['mini_kinds'] = len(kinds)
+
+
+def patch_view(st):
+    now_ts = time.time()
+    out = []
+    for i, p in enumerate(st['patch']):
+        if not p or p.get('kind') not in C.PATCH_BY_ID:
+            out.append({'idx': i, 'empty': True})
+            continue
+        k = C.PATCH_BY_ID[p['kind']]
+        ready_at = float(p.get('at') or 0) + k[3]
+        out.append({'idx': i, 'empty': False, 'kind': k[0], 'name': k[1], 'emoji': k[2], 'candies': k[4],
+                    'readyAt': ready_at, 'ripe': now_ts >= ready_at, 'secLeft': max(0, int(ready_at - now_ts))})
+    return out
+
+
+def dex_steps_view(st):
+    n = len(st['dex'])
+    return [{'need': r['need'], 'reward': r['reward'], 'reached': n >= r['need'], 'claimed': r['need'] in st['dexClaimed']}
+            for r in C.DEX_REWARDS]
+
+
+def stamp_steps_view(st):
+    n = len(st['stamps'])
+    return [{'key': k, 'need': need, 'reward': r, 'reached': n >= need, 'claimed': k in st['stampClaimed']}
+            for k, need, r in stamp_steps()]
+
+
+def extra_view(s):
+    """v3.6 パート2 の画面用データ(state に足して返す)"""
+    st = s['st']
+    today = _today()
+    mult, label = candy_boost()
+    tot = st['tot']
+    free_left = max(0, C.TOT_FREE_PER_DAY - tot['used'])
+    ft = st['fortune'] if isinstance(st.get('fortune'), dict) and st['fortune'].get('date') == today else None
+    patch = patch_view(st)
+    dsteps, ssteps = dex_steps_view(st), stamp_steps_view(st)
+    dv, mv = _mission_view(daily_missions(), st['daily']), _mission_view(weekly_missions(), st['weekly'])
+    lg_done = st['lastLogin'] == today
+    badges = {
+        'home': 0 if lg_done else 1,
+        'road': sum(1 for t in ROAD if st['totalCandies'] >= t['need'] and t['tier'] not in st['claimedRoad']),
+        'missions': sum(1 for m in dv + mv if m['done'] and not m['claimed']),
+        'tot': (1 if tot['used'] < C.TOT_MAX_PER_DAY and free_left > 0 else 0) + (0 if ft else 1),
+        'patch': sum(1 for p in patch if not p['empty'] and p['ripe']) or (1 if any(p['empty'] for p in patch) else 0),
+        'dex': sum(1 for d in dsteps if d['reached'] and not d['claimed']),
+        'stamps': sum(1 for d in ssteps if d['reached'] and not d['claimed']),
+    }
+    return {
+        'boost': {'mult': mult, 'label': label},
+        'daysToHalloween': days_to_halloween(),
+        'dexList': [dex_entry(d) for d in C.DEX],
+        'dex': {'owned': st['dex'], 'total': len(C.DEX), 'steps': dsteps},
+        'stamps': {'games': MINI_IDS, 'got': st['stamps'], 'steps': ssteps},
+        'tot': {'used': tot['used'], 'freeLeft': free_left, 'cost': C.TOT_EXTRA_COST, 'max': C.TOT_MAX_PER_DAY,
+                'table': [{'title': t[3], 'weight': t[1]} for t in C.TOT_TABLE]},
+        'fortune': ft,
+        'patch': {'plots': patch, 'kinds': [{'id': k[0], 'name': k[1], 'emoji': k[2], 'sec': k[3], 'candies': k[4]} for k in C.PATCH_KINDS]},
+        'ghost': {'left': max(0, C.GHOST_MAX_PER_DAY - st['ghost']['count']), 'max': C.GHOST_MAX_PER_DAY},
+        'guestBonusUsed': bool(st['guestBonus']),
+        'badges': badges,
+    }
+
+
+def wallet(s):
+    return {'coins': s['coins'], 'candies': s['st']['candies'], 'tickets': s['st']['tickets'],
+            'totalCandies': s['st']['totalCandies'], 'ownedSkins': s['skins'], 'battlepassXp': s['bpxp']}
+
+
+def roll_tot(rng=random):
+    t = rng.choices(C.TOT_TABLE, weights=[x[1] for x in C.TOT_TABLE])[0]
+    return {'kind': t[0], 'title': t[3], 'give': dict(t[2])}
+
+
+def fortune_roll(user_seed, date):
+    rng = random.Random(f'{EVENT_ID}:fortune:{user_seed}:{date}')
+    f = rng.choices(C.FORTUNES, weights=[x[1] for x in C.FORTUNES])[0]
+    return {'date': date, 'rank': f[0], 'candies': f[2], 'text': f[3],
+            'item': rng.choice(C.LUCKY_ITEMS), 'color': rng.choice(C.LUCKY_COLORS), 'number': rng.randint(1, 99)}
+
+
 # ===================== ルート登録 =====================
 def register(app, db_query, db_transaction, require_auth, ApiError):
 
@@ -308,7 +461,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             next_streak = st['streak'] + 1 if st['lastLogin'] == yesterday else 1
             streak_day = ((next_streak - 1) % LOGIN_CYCLE) + 1                 # これから受け取る日
         total = st['totalCandies']
-        return {
+        v = {
             **time_info(),
             'coins': s['coins'], 'ownedSkins': s['skins'],
             'candies': st['candies'], 'totalCandies': total, 'tickets': st['tickets'],
@@ -324,6 +477,8 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
                       'pity': st['pity'], 'pityThreshold': GACHA_PITY, 'pulls': st['pulls'],
                       'dupCandies': GACHA_DUP_CANDIES, 'missCandies': GACHA_MISS_CANDIES, 'currency': 'candy'},
         }
+        v.update(extra_view(s))
+        return v
 
     # --- 公開: 開催状況(ログイン不要。フロントはこれを見て、イベント画面・ガチャ・UIテーマを出し分ける) ---
     @app.get('/api/event/status')
@@ -365,6 +520,8 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
         score, lines, tspins, pcs = num('score', 50_000_000), num('lines', 400), num('tspins', 100), num('pcs', 20)
         is_vs, is_duel = bool(b.get('vs')), bool(b.get('duel'))
         is_tetris = bool(b.get('tetris'))
+        mode = str(b.get('mode') or '')
+        mini_id = mode[5:] if mode.startswith('mini-') and mode[5:] in MINI_IDS else None
         with db_transaction() as cur:
             row = lock_user(cur, user_id)
             if not row:
@@ -374,11 +531,21 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             before = {m['id'] for m in _mission_view(daily_missions(), st['daily']) + _mission_view(weekly_missions(), st['weekly']) if m['done']}
             now_ts = time.time()
             gained = 0
+            dex_drop, new_stamp = None, False
+            mult, boost_label = candy_boost()
             if now_ts - float(st.get('lastReport') or 0) >= 8:       # 連打対策(8秒以内の連続報告は無視)
-                gained = candies_for_game(score, lines, tspins, pcs, is_duel)
+                base = candies_for_game(score, lines, tspins, pcs, is_duel)
+                if mini_id:
+                    base += C.MINI_GAME_BONUS
+                gained = int(round(base * mult))
                 add_candies(st, gained)
                 add_stat_both(st, 'games', 1)
                 add_stat_both(st, 'score_max', score)
+                if mini_id:
+                    add_stat_both(st, 'mini_games', 1)
+                    add_kind(st['daily'], mini_id)
+                    add_kind(st['weekly'], mini_id)
+                    new_stamp = stamp_add(st, mini_id)
                 if is_tetris:
                     add_stat_both(st, 'lines', lines)
                 if tspins:
@@ -389,12 +556,15 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
                     add_stat_both(st, 'vs_games', 1)
                 if is_duel:
                     add_stat_both(st, 'duels', 1)
+                if random.random() < C.DEX_DROP_CHANCE:               # 📖 おばけ図鑑に出会いがあるかも
+                    dex_drop = dex_give(st)
             st['lastReport'] = now_ts
             save_user(cur, user_id, s)
             after_views = _mission_view(daily_missions(), st['daily']) + _mission_view(weekly_missions(), st['weekly'])
         newly = [m['text'] for m in after_views if m['done'] and m['id'] not in before]
         return jsonify({'ok': True, 'active': True, 'gained': gained, 'candies': st['candies'],
-                        'totalCandies': st['totalCandies'], 'newlyCompleted': newly})
+                        'totalCandies': st['totalCandies'], 'newlyCompleted': newly,
+                        'multiplier': mult, 'boostLabel': boost_label, 'dex': dex_drop, 'newStamp': new_stamp})
 
     # --- 毎日のログインボーナス(トリック・オア・トリート) ---
     @app.post('/api/event/halloween/login-bonus')
@@ -568,3 +738,254 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             my_rank = int(r[0]['n']) + 1
         return jsonify({'ranking': [{'id': r['id'], 'total': int(r['total'])} for r in rows],
                         'me': {'id': user_id, 'total': my_total, 'rank': my_rank}})
+
+
+    # ================= v3.6 パート2 のAPI =================
+    def with_state(user_id, fn, phases=('active',)):
+        """ユーザー行をロックして状態を読み、fn(s) を実行して保存する。fn の戻り値を返す"""
+        require_phase(*phases)
+        with db_transaction() as cur:
+            row = lock_user(cur, user_id)
+            if not row:
+                raise ApiError('ユーザーが見つかりません', 404)
+            s = load_state_from_row(row)
+            out = fn(s)
+            save_user(cur, user_id, s)
+        return out
+
+    def body_int(key, default=0):
+        b = request.get_json(silent=True) or {}
+        try:
+            return int(b.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    # --- 🚪 トリック・オア・トリート(3つのドア) ---
+    @app.post('/api/event/halloween/tot/open')
+    @guard
+    def hw_tot_open():
+        user_id = require_auth()
+        door = max(0, min(2, body_int('door', 0)))
+
+        def fn(s):
+            st = s['st']
+            tot = st['tot']
+            if tot['used'] >= C.TOT_MAX_PER_DAY:
+                raise ApiError('今日のドアはもう開けられません。また明日！', 400)
+            cost = 0 if tot['used'] < C.TOT_FREE_PER_DAY else C.TOT_EXTRA_COST
+            if st['candies'] < cost:
+                raise ApiError('キャンディが足りません(2回目からは🍬%d必要です)' % C.TOT_EXTRA_COST, 400)
+            st['candies'] -= cost
+            tot['used'] += 1
+            st['totTotal'] += 1
+            add_stat_both(st, 'tot', 1)
+            res = roll_tot()
+            g = res['give']
+            if g.get('candies'):
+                add_candies(st, g['candies'])
+            if g.get('coins'):
+                s['coins'] += g['coins']
+            if g.get('tickets'):
+                st['tickets'] += g['tickets']
+            res['dex'] = dex_give(st, rare_only=True) if res['kind'] == 'dex' else None
+            others = [roll_tot() for _ in range(2)]
+            doors = [{'kind': o['kind'], 'title': o['title']} for o in others]
+            doors.insert(door, {'kind': res['kind'], 'title': res['title']})
+            return {'ok': True, 'door': door, 'doors': doors, 'result': res, 'cost': cost, **wallet(s)}
+        return jsonify(with_state(user_id, fn))
+
+    # --- 🔮 きょうのおみくじ ---
+    @app.post('/api/event/halloween/fortune')
+    @guard
+    def hw_fortune():
+        user_id = require_auth()
+
+        def fn(s):
+            st = s['st']
+            today = _today()
+            if isinstance(st.get('fortune'), dict) and st['fortune'].get('date') == today:
+                raise ApiError('おみくじは1日1回です。また明日！', 400)
+            f = fortune_roll(user_id, today)
+            st['fortune'] = f
+            add_candies(st, f['candies'])
+            add_stat_both(st, 'fortune', 1)
+            return {'ok': True, 'fortune': f, **wallet(s)}
+        return jsonify(with_state(user_id, fn))
+
+    # --- 🌱 かぼちゃ畑 ---
+    @app.post('/api/event/halloween/patch/plant')
+    @guard
+    def hw_patch_plant():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        kind = C.PATCH_BY_ID.get(b.get('kind'))
+        idx = body_int('plot', -1)
+        if not kind:
+            raise ApiError('育てるかぼちゃを選んでください', 400)
+
+        def fn(s):
+            st = s['st']
+            if idx < 0 or idx >= C.PATCH_PLOTS:
+                raise ApiError('畑が見つかりません', 400)
+            if st['patch'][idx]:
+                raise ApiError('ここにはもう植えてあります', 400)
+            st['patch'][idx] = {'kind': kind[0], 'at': time.time()}
+            return {'ok': True, 'patch': patch_view(st), **wallet(s)}
+        return jsonify(with_state(user_id, fn))
+
+    @app.post('/api/event/halloween/patch/harvest')
+    @guard
+    def hw_patch_harvest():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        want_all = bool(b.get('all'))
+        idx = body_int('plot', -1)
+
+        def fn(s):
+            st = s['st']
+            now_ts = time.time()
+            got, n = 0, 0
+            mult, _ = candy_boost()
+            for i, p in enumerate(st['patch']):
+                if not p or p.get('kind') not in C.PATCH_BY_ID or not (want_all or i == idx):
+                    continue
+                k = C.PATCH_BY_ID[p['kind']]
+                if now_ts < float(p.get('at') or 0) + k[3]:
+                    continue
+                add_candies(st, int(round(k[4] * mult)))
+                got += int(round(k[4] * mult))
+                n += 1
+                st['patch'][i] = None
+            if not n:
+                raise ApiError('まだ収穫できるかぼちゃがありません', 400)
+            st['harvestTotal'] += n
+            add_stat_both(st, 'harvest', n)
+            return {'ok': True, 'harvested': n, 'gained': got, 'patch': patch_view(st), **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
+
+    # --- 👻 さまようおばけ ---
+    @app.post('/api/event/halloween/ghost/catch')
+    @guard
+    def hw_ghost_catch():
+        user_id = require_auth()
+
+        def fn(s):
+            st = s['st']
+            g = st['ghost']
+            now_ts = time.time()
+            if g['count'] >= C.GHOST_MAX_PER_DAY:
+                raise ApiError('今日のおばけは、もうみんな逃げちゃった。また明日！', 400)
+            if now_ts - float(g.get('last') or 0) < C.GHOST_COOLDOWN_SEC:
+                raise ApiError('おばけは、まだ隠れています…', 400)
+            gold = random.random() < C.GHOST_GOLD_CHANCE
+            mult, _ = candy_boost()
+            n = int(round((C.GHOST_GOLD_CANDIES if gold else random.randint(*C.GHOST_NORMAL)) * mult))
+            g['count'] += 1
+            g['last'] = now_ts
+            st['ghostTotal'] += 1
+            add_candies(st, n)
+            add_stat_both(st, 'ghost', 1)
+            return {'ok': True, 'gained': n, 'gold': gold, 'left': C.GHOST_MAX_PER_DAY - g['count'], **wallet(s)}
+        return jsonify(with_state(user_id, fn))
+
+    # --- 📖 図鑑のごほうび ---
+    @app.post('/api/event/halloween/dex/claim')
+    @guard
+    def hw_dex_claim():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        want_all, need = bool(b.get('all')), body_int('need', -1)
+
+        def fn(s):
+            st = s['st']
+            n = len(st['dex'])
+            targets = [r for r in C.DEX_REWARDS if n >= r['need'] and r['need'] not in st['dexClaimed'] and (want_all or r['need'] == need)]
+            if not targets:
+                raise ApiError('受け取れる報酬がありません', 400)
+            gained = []
+            for r in targets:
+                gained.append(apply_reward(r['reward'], s))
+                st['dexClaimed'].append(r['need'])
+            return {'ok': True, 'claimedCount': len(targets), 'rewards': [r['reward'] for r in targets], **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
+
+    # --- 🎪 スタンプラリーのごほうび ---
+    @app.post('/api/event/halloween/stamps/claim')
+    @guard
+    def hw_stamps_claim():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        want_all, key = bool(b.get('all')), str(b.get('key') or '')
+
+        def fn(s):
+            st = s['st']
+            n = len(st['stamps'])
+            targets = [(k, r) for k, need, r in stamp_steps() if n >= need and k not in st['stampClaimed'] and (want_all or k == key)]
+            if not targets:
+                raise ApiError('受け取れる報酬がありません', 400)
+            for k, r in targets:
+                apply_reward(r, s)
+                st['stampClaimed'].append(k)
+            return {'ok': True, 'claimedCount': len(targets), 'rewards': [r for _, r in targets], **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
+
+    # --- 🌍 みんなでキャンディ大作戦(全員の累計の合計) ---
+    comm_cache = {'t': 0.0, 'v': 0}
+
+    def community_total():
+        if time.time() - comm_cache['t'] < C.COMMUNITY_CACHE_SEC:
+            return comm_cache['v']
+        rows = db_query("SELECT COALESCE(SUM((event_state->>'totalCandies')::bigint), 0) AS n FROM users "
+                        "WHERE event_state->>'id' = %s", [EVENT_ID])
+        comm_cache['v'] = int(rows[0]['n'] or 0) if rows else 0
+        comm_cache['t'] = time.time()
+        return comm_cache['v']
+
+    @app.get('/api/event/halloween/community')
+    @guard
+    def hw_community():
+        user_id = require_auth()
+        total = community_total()
+        row = db_query('SELECT event_state FROM users WHERE id = %s', [user_id])
+        st = norm_state(row[0].get('event_state') if row else None)
+        goals = [{'need': g['need'], 'rewards': g['rewards'], 'reached': total >= g['need'], 'claimed': g['need'] in st['communityClaimed']}
+                 for g in C.COMMUNITY_GOALS]
+        return jsonify({'total': total, 'goals': goals})
+
+    @app.post('/api/event/halloween/community/claim')
+    @guard
+    def hw_community_claim():
+        user_id = require_auth()
+        total = community_total()
+
+        def fn(s):
+            st = s['st']
+            targets = [g for g in C.COMMUNITY_GOALS if total >= g['need'] and g['need'] not in st['communityClaimed']]
+            if not targets:
+                raise ApiError('受け取れる報酬がありません', 400)
+            rewards = []
+            for g in targets:
+                for r in g['rewards']:
+                    apply_reward(r, s)
+                    rewards.append(r)
+                st['communityClaimed'].append(g['need'])
+            return {'ok': True, 'claimedCount': len(targets), 'rewards': rewards, **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
+
+    # --- 👤 ゲストでためたキャンディの引き継ぎ(アカウントを作ったあと、1回だけ) ---
+    @app.post('/api/event/halloween/guest-carryover')
+    @guard
+    def hw_guest_carryover():
+        user_id = require_auth()
+        n = max(0, min(C.GUEST_CARRYOVER_MAX, body_int('candies', 0)))
+
+        def fn(s):
+            st = s['st']
+            if st['guestBonus']:
+                raise ApiError('引き継ぎは1回だけです', 400)
+            if n <= 0:
+                return {'ok': True, 'gained': 0, **wallet(s)}
+            st['guestBonus'] = True
+            add_candies(st, n)
+            return {'ok': True, 'gained': n, **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
