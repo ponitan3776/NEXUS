@@ -13,6 +13,9 @@
     pulls   ガチャを引いた回数                  skins    持っているスキンの数
     friends フレンドの人数                      votes    投票に参加した回数
     candy   ハロウィンのキャンディ累計           days     登録してからの日数
+    streak  毎日ログインボーナスの最長連続日数   dex      おばけ図鑑に登録した数
+    stamps  スタンプラリーのスタンプ数           tot      トリック・オア・トリートを開けた回数
+    harvest かぼちゃを収穫した数                 ghost    さまようおばけをつかまえた数
     always  ログインしていれば獲得(need は使わない)
     admin   管理者専用(条件では手に入らない)
 """
@@ -64,6 +67,18 @@ TITLES = [
     ('hw_1k',       '🎃 カボチャ拾い',         'ハロウィンのキャンディを累計 1,000 個',    'rare',      'candy',   1000),
     ('hw_10k',      '🦇 夜宴の住人',           'ハロウィンのキャンディを累計 10,000 個',   'epic',      'candy',   10000),
     ('hw_50k',      '🕯 ハロウィンの支配者',   'ハロウィンのキャンディを累計 50,000 個',   'legendary', 'candy',   50000),
+    # --- 毎日ログイン(v3.6) ---
+    ('login_7',     '📆 続けるのが得意',       '毎日ログインを 7 日連続',                  'rare',      'streak',  7),
+    ('login_30',    '🗓 毎日の習慣',           '毎日ログインを 30 日連続',                 'epic',      'streak',  30),
+    ('login_100',   '🏯 不動の常連',           '毎日ログインを 100 日連続',                'legendary', 'streak',  100),
+    # --- ハロウィンパート2(v3.6) ---
+    ('hw_dex_12',   '📖 おばけ博士',           'おばけ図鑑に 12 種類登録した',             'rare',      'dex',     12),
+    ('hw_dex_24',   '👑 図鑑コンプリート',     'おばけ図鑑を 24 種類すべて集めた',         'legendary', 'dex',     24),
+    ('hw_stamp_9',  '🎪 スタンプ集め',         'ミニゲームのスタンプを 9 個集めた',        'rare',      'stamps',  9),
+    ('hw_stamp_all', '🎠 スタンプマスター',    'ミニゲームのスタンプを全部集めた',         'epic',      'stamps',  18),
+    ('hw_tot_30',   '🚪 ドアたたきの名人',     'トリック・オア・トリートを 30 回',          'rare',      'tot',     30),
+    ('hw_harvest_30', '🌾 かぼちゃ農家',       'かぼちゃを 30 個収穫した',                  'rare',      'harvest', 30),
+    ('hw_ghost_60', '👻 おばけ捕り名人',       'さまようおばけを 60 回つかまえた',          'epic',      'ghost',   60),
     # --- 管理者だけの称号(条件では手に入らない) ---
     ('adm_creator',   '🌌 星海の創造主',       '世界をつくった者だけが名乗れる',           'admin',     'admin',   0),
     ('adm_weaver',    '⚜ 運命の調律者',       'ルールを紡ぎ、運命を整える',               'admin',     'admin',   0),
@@ -77,7 +92,8 @@ STATS_SQL = """
 SELECT u.best_scores, u.coins, u.play_time, u.battlepass_xp, u.gacha_state, u.skins, u.event_state,
        u.created_at, u.titles, u.equipped_title,
        (SELECT COUNT(*) FROM friends f WHERE f.user_id = u.id) AS friends,
-       (SELECT COUNT(*) FROM poll_votes v WHERE v.user_id = u.id) AS votes
+       (SELECT COUNT(*) FROM poll_votes v WHERE v.user_id = u.id) AS votes,
+       (SELECT COALESCE(MAX(d.best_streak), 0) FROM daily_bonus d WHERE d.user_id = u.id) AS login_streak
 FROM users u WHERE u.id = %s
 """
 
@@ -112,6 +128,10 @@ def gather_stats(row):
         'pulls': int(gs.get('totalPulls', 0) or 0), 'skins': len(_as_json(row.get('skins'), [])),
         'friends': int(row.get('friends') or 0), 'votes': int(row.get('votes') or 0),
         'candy': int(ev.get('totalCandies', 0) or 0), 'days': max(0, days),
+        'streak': int(row.get('login_streak') or 0),
+        'dex': len(ev.get('dex') or []), 'stamps': len(ev.get('stamps') or []),
+        'tot': int(ev.get('totTotal', 0) or 0), 'harvest': int(ev.get('harvestTotal', 0) or 0),
+        'ghost': int(ev.get('ghostTotal', 0) or 0),
     }
 
 
