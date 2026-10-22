@@ -13,6 +13,8 @@ import string
 import secrets
 import threading
 import time
+import gzip
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -34,7 +36,9 @@ app = Flask(__name__)
 # 環境変数 ALLOWED_ORIGINS にカンマ区切りで指定する(例: https://ユーザー名.github.io)。
 # 未設定なら従来どおり全オリジン許可。
 _allowed = [o.strip() for o in os.environ.get('ALLOWED_ORIGINS', '').split(',') if o.strip()]
-CORS(app, origins=_allowed or '*')
+# max_age: ブラウザに「事前確認(プリフライト)の結果」を覚えさせる。無いと、GitHub Pages → Render の呼び出しのたびに
+#          本番のリクエストの前に OPTIONS が1往復余計に走っていた(Chromeは最大2時間まで覚える)
+CORS(app, origins=_allowed or '*', max_age=7200, expose_headers=['Server-Timing'])
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
@@ -43,10 +47,17 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
 #   ここを1箇所変えるだけで管理者判定・全スキン無料付与などが全て切り替わる。
 ADMIN_USER_ID = 'spirit'
 
-DISCORD_WEBHOOK_AUTH = os.environ.get('DISCORD_WEBHOOK_AUTH', '')
-DISCORD_WEBHOOK_LOGIN = os.environ.get('DISCORD_WEBHOOK_LOGIN', '')
-DISCORD_WEBHOOK_FEATURE_REQUEST = os.environ.get('DISCORD_WEBHOOK_FEATURE_REQUEST', '')
-DISCORD_WEBHOOK_BUG_REPORT = os.environ.get('DISCORD_WEBHOOK_BUG_REPORT', '')
+def _clean_webhook(raw):
+    """環境変数に貼ったURLの、前後の空白・改行・引用符を取り除く(コピー時に混ざりやすく、これだけで送信エラーになる)。"""
+    u = (raw or '').strip().strip('\'"').strip()
+    u = u.split()[0] if u else ''
+    return u.replace('://discordapp.com/', '://discord.com/')
+
+
+DISCORD_WEBHOOK_AUTH = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_AUTH'))
+DISCORD_WEBHOOK_LOGIN = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_LOGIN'))
+DISCORD_WEBHOOK_FEATURE_REQUEST = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_FEATURE_REQUEST'))
+DISCORD_WEBHOOK_BUG_REPORT = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_BUG_REPORT'))
 
 if not DATABASE_URL:
     print('❌ 環境変数 DATABASE_URL が設定されていません。RenderのEnvironmentタブでSupabaseの接続文字列を設定してください。')
@@ -71,8 +82,22 @@ if DATABASE_URL:
 _CONN_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 
+_last_used = {}            # 接続ごとの最後に使った時刻(長いあいだ使っていない接続は、使う前に生きているか確かめる)
+STALE_AFTER = 120          # 秒。Supabase のプーラーは、使われていない接続を黙って切ることがある
+if _pool is not None:
+    try:
+        for _c in _pool._pool:
+            _last_used[id(_c)] = time.monotonic()
+    except Exception:
+        pass
+
+
 def _release(conn, broken):
     try:
+        if broken or conn.closed:
+            _last_used.pop(id(conn), None)
+        else:
+            _last_used[id(conn)] = time.monotonic()
         _pool.putconn(conn, close=bool(broken or conn.closed))
     finally:
         _pool_sem.release()
@@ -81,7 +106,20 @@ def _release(conn, broken):
 def _getconn():
     _pool_sem.acquire()
     try:
-        return _pool.getconn()
+        for _ in range(DB_POOL_MAX + 1):
+            conn = _pool.getconn()
+            last = _last_used.get(id(conn))
+            if last is not None and time.monotonic() - last > STALE_AFTER:
+                try:                                   # 久しぶりの接続は、軽く確かめてから使う
+                    conn.autocommit = True
+                    with conn.cursor() as cur:
+                        cur.execute('SELECT 1')
+                except Exception:
+                    _last_used.pop(id(conn), None)
+                    _pool.putconn(conn, close=True)   # 死んでいたら捨てて、新しい接続に替える
+                    continue
+            return conn
+        raise psycopg2.OperationalError('DB接続を取得できませんでした')
     except Exception:
         _pool_sem.release()
         raise
@@ -92,19 +130,15 @@ def _run_query(sql, params, fetch):
     conn = _getconn()
     broken = False
     try:
+        # autocommit: 1文だけの問い合わせは、BEGIN/COMMIT の往復を省く(COMMIT のぶん、DBとの往復が1回減る)
+        if not conn.autocommit:
+            conn.autocommit = True
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params or [])
             rows = cur.fetchall() if (fetch and cur.description is not None) else []
-        conn.commit()
         return rows
     except _CONN_ERRORS:
         broken = True
-        raise
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            broken = True
         raise
     finally:
         _release(conn, broken)
@@ -114,11 +148,15 @@ def _run_query(sql, params, fetch):
 
 
 def db_query(sql, params=None, fetch=True):
-    """1クエリを実行するショートカット。SELECT系はdictのリストを返す。"""
-    try:
-        return _run_query(sql, params, fetch)
-    except _CONN_ERRORS:
-        return _run_query(sql, params, fetch)  # 切れた接続を捨てて1回だけ再試行
+    """1クエリを実行するショートカット。SELECT系はdictのリストを返す。
+    接続が切れていたら捨てて再試行する(読むだけの問い合わせは2回まで、書き込みは二重実行を避けて1回まで)。"""
+    retries = 2 if sql.lstrip()[:6].upper() in ('SELECT', 'WITH S') else 1
+    for attempt in range(retries + 1):
+        try:
+            return _run_query(sql, params, fetch)
+        except _CONN_ERRORS:
+            if attempt >= retries:
+                raise
 
 
 def db_execute(sql, params=None):
@@ -132,6 +170,8 @@ def db_transaction():
     conn = _getconn()
     broken = False
     try:
+        if conn.autocommit:
+            conn.autocommit = False      # 複数クエリをひとまとめにするときだけ、通常のトランザクションに戻す
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             yield cur
         conn.commit()
@@ -189,35 +229,115 @@ def to_copy_block(text, limit=1500):
             '📱 **スマホ用**(タップでコピー)\n' + mobile)
 
 
+# --- 送信の仕組み ---
+#  ・ログイン/登録/再設定の通知は「裏で送る」(Discordの応答を待たない → ログインなどが速くなる)
+#  ・ご要望/不具合の報告は、成功したか失敗したかを利用者に返すので、その場で送る(wait=True)
+#  ・429(送りすぎ)は待ち時間(retry_after)のあとに、5xx・通信エラーは少し待って、最大3回までやり直す
+#  ・失敗した理由は Render のログに「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
+_discord_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='discord')
+_discord_last_error = {}
+_DISCORD_HEADERS = {'User-Agent': 'DiscordBot (https://github.com/candyblast, 1.0)'}
+_DISCORD_HOOKS = {'AUTH': 'DISCORD_WEBHOOK_AUTH', 'LOGIN': 'DISCORD_WEBHOOK_LOGIN',
+                  'FEATURE_REQUEST': 'DISCORD_WEBHOOK_FEATURE_REQUEST', 'BUG_REPORT': 'DISCORD_WEBHOOK_BUG_REPORT'}
+
+
+def _discord_label(url):
+    for name, env in _DISCORD_HOOKS.items():
+        if globals().get(env) == url:
+            return name
+    return 'unknown'
+
+
+def _discord_hint(status):
+    if status in (401, 404):
+        return '(Webhookが削除されたか、URLが違います。Discordで作り直して環境変数を更新してください)'
+    if status == 400:
+        return '(送った内容の形式エラーです)'
+    return ''
+
+
+def _discord_send_now(webhook_url, embed, image_bytes, image_filename, image_mime_type):
+    label = _discord_label(webhook_url)
+    last = ''
+    for attempt in range(3):
+        try:
+            if image_bytes:
+                # payload_json側に attachments 配列で「どのファイルがどのattachment idか」を明示しないと、画像が届かないことがある
+                embed = dict(embed, image={'url': f'attachment://{image_filename}'})
+                payload = {'embeds': [embed], 'attachments': [{'id': 0, 'filename': image_filename}], 'allowed_mentions': {'parse': []}}
+                resp = requests.post(webhook_url, data={'payload_json': json.dumps(payload)},
+                                     files={'files[0]': (image_filename, image_bytes, image_mime_type)},
+                                     headers=_DISCORD_HEADERS, timeout=(5, 20))
+            else:
+                resp = requests.post(webhook_url, json={'embeds': [embed], 'allowed_mentions': {'parse': []}},
+                                     headers=_DISCORD_HEADERS, timeout=(5, 15))
+            if resp.status_code < 300:
+                _discord_last_error.pop(label, None)
+                return True
+            last = f'HTTP {resp.status_code} {resp.text[:300]}{_discord_hint(resp.status_code)}'
+            if resp.status_code == 429:
+                try:
+                    wait = float(resp.json().get('retry_after', 1))
+                except Exception:
+                    wait = 1.0
+                time.sleep(min(max(wait, 0.5), 5))
+                continue
+            if resp.status_code >= 500:
+                time.sleep(1 + attempt)
+                continue
+            break                                   # 400/401/403/404 などは、やり直しても直らない
+        except requests.RequestException as err:
+            last = f'通信エラー: {err}'
+            time.sleep(1 + attempt)
+    _discord_last_error[label] = last
+    print(f'Discord通知失敗({label}): {last}')
+    return False
+
+
 def send_discord_notification(webhook_url, title, description, color=0x5865F2,
                                fields=None, image_bytes=None, image_filename='image.png',
-                               image_mime_type='image/png'):
-    """埋め込みメッセージ(必要なら画像添付)をDiscordのWebhookへ送信する。成功したかをboolで返す。"""
+                               image_mime_type='image/png', wait=False):
+    """埋め込みメッセージ(必要なら画像添付)をDiscordのWebhookへ送る。
+    wait=True: 送り終わるまで待って、成功したかを返す / wait=False: 裏で送る(戻り値は「受け付けたか」)"""
     if not webhook_url:
+        print('Discord通知スキップ: Webhook URL が未設定です(RenderのEnvironmentを確認してください)')
         return False
-    fields = fields or []
+    # Discord の上限に収める(超えると 400 で丸ごと拒否される): タイトル256 / 本文4096 / 項目名256 / 項目値1024 / 項目25個まで
+    safe_fields = []
+    for f in (fields or [])[:25]:
+        safe_fields.append({'name': (str(f.get('name') or '-').strip() or '-')[:256],
+                            'value': (str(f.get('value') or '-').strip() or '-')[:1024],
+                            'inline': bool(f.get('inline'))})
     embed = {
-        'title': title, 'description': description, 'color': color,
+        'title': str(title)[:256], 'description': str(description or '-')[:4096], 'color': color,
         'timestamp': datetime.utcnow().isoformat() + 'Z',
-        'fields': fields, 'footer': {'text': 'CandyBlast System'}
+        'fields': safe_fields, 'footer': {'text': 'CandyBlast System'}
     }
+    args = (webhook_url, embed, image_bytes, image_filename, image_mime_type)
+    if wait:
+        return _discord_send_now(*args)
     try:
-        if image_bytes:
-            # payload_json側に attachments 配列で「どのファイルがどのattachment idか」を
-            # 明示しないと、画像がDiscordに届かない/無視されることがある。
-            embed['image'] = {'url': f'attachment://{image_filename}'}
-            payload = {'embeds': [embed], 'attachments': [{'id': 0, 'filename': image_filename}]}
-            files = {'files[0]': (image_filename, image_bytes, image_mime_type)}
-            resp = requests.post(webhook_url, data={'payload_json': json.dumps(payload)}, files=files, timeout=15)
-        else:
-            resp = requests.post(webhook_url, json={'embeds': [embed]}, timeout=15)
-        if resp.status_code >= 300:
-            print(f'Discord通知失敗: HTTP {resp.status_code} {resp.text}')
-            return False
+        _discord_pool.submit(_discord_send_now, *args)
         return True
     except Exception as err:
-        print(f'Discord通知失敗: {err}')
+        print(f'Discord通知失敗(キュー): {err}')
         return False
+
+
+def discord_status_text():
+    lines = []
+    for name, env in _DISCORD_HOOKS.items():
+        url = globals().get(env)
+        if not url:
+            lines.append(f'・{name}: ⚪ 未設定({env})')
+        elif not url.startswith('https://discord.com/api/webhooks/'):
+            lines.append(f'・{name}: ❌ URLの形式が違います(https://discord.com/api/webhooks/… で始まる必要があります)')
+        else:
+            lines.append(f'・{name}: 設定あり')
+    return '\n'.join(lines)
+
+
+print('Discord Webhook 設定:\n' + discord_status_text())
 
 
 # ===================== 認証ヘルパー =====================
@@ -500,9 +620,25 @@ def _timing_end(resp):
         db = getattr(g, 'db_ms', 0.0)
         # ※ HTTPヘッダーは英数字だけ(日本語を入れると、本番のgunicornで全APIがエラーになる)
         resp.headers['Server-Timing'] = f'db;dur={db:.0f};desc="queries {getattr(g, "db_n", 0)}", app;dur={max(0, total - db):.0f}, total;dur={total:.0f}'
-        resp.headers['Access-Control-Expose-Headers'] = 'Server-Timing'
         if total > 800:
             print(f'🐢 遅いリクエスト {request.method} {request.path}: 合計{total:.0f}ms(DB {db:.0f}ms / {getattr(g, "db_n", 0)}回)')
+    except Exception:
+        pass
+    return resp
+
+
+# ===================== 📦 JSONの圧縮(gzip) =====================
+# 投票・バトルパス・チャットなど、1KBを超える応答は gzip で小さくして送る(モバイル回線で効く)
+@app.after_request
+def _gzip_json(resp):
+    try:
+        if (resp.status_code == 200 and not resp.direct_passthrough and resp.mimetype == 'application/json'
+                and 'gzip' in request.headers.get('Accept-Encoding', '') and 'Content-Encoding' not in resp.headers):
+            data = resp.get_data()
+            if len(data) > 1024:
+                resp.set_data(gzip.compress(data, compresslevel=5))
+                resp.headers['Content-Encoding'] = 'gzip'
+                resp.headers['Vary'] = 'Accept-Encoding'
     except Exception:
         pass
     return resp
@@ -1311,7 +1447,7 @@ def feedback_request():
     try:
         sent = send_discord_notification(
             DISCORD_WEBHOOK_FEATURE_REQUEST, '💡 新しいご要望', to_copy_block(message), 0xFFD93D,
-            [{'name': '送信者', 'value': user_id, 'inline': True}]
+            [{'name': '送信者', 'value': user_id, 'inline': True}], wait=True
         )
         if not sent:
             return jsonify({'error': 'Discordへの送信に失敗しました。時間をおいて再度お試しください。'}), 502
@@ -1347,7 +1483,7 @@ def feedback_report():
         sent = send_discord_notification(
             DISCORD_WEBHOOK_BUG_REPORT, '🐞 不具合の報告', to_copy_block(message), 0xFF5555,
             [{'name': '報告者', 'value': user_id, 'inline': True}],
-            image_bytes, f'report.{image_ext}', image_mime_type
+            image_bytes, f'report.{image_ext}', image_mime_type, wait=True
         )
         if not sent:
             return jsonify({'error': 'Discordへの送信に失敗しました。時間をおいて再度お試しください。'}), 502
@@ -1860,6 +1996,17 @@ def admin_command():
             db_execute('INSERT INTO announcements (message) VALUES (%s)', [message])
             cache_drop('ann:')
             result = f'📢 全ユーザーにお知らせを配信しました:\n「{message}」'
+
+        elif cmd == '/discordtest':
+            lines = [discord_status_text(), '', '🔎 テスト送信の結果:']
+            for name, env in _DISCORD_HOOKS.items():
+                url = globals().get(env)
+                if not url:
+                    lines.append(f'・{name}: ⚪ 未設定のため送っていません')
+                    continue
+                ok = send_discord_notification(url, '🔧 接続テスト', 'このメッセージが見えれば、このWebhookは正常です。', 0x00C2A8, wait=True)
+                lines.append(f'・{name}: ' + ('✅ 送信できました' if ok else f"❌ 失敗 — {_discord_last_error.get(name, '原因不明')}"))
+            result = '\n'.join(lines)
 
         elif cmd == '/stats':
             total_users = db_query('SELECT COUNT(*) AS c FROM users')[0]['c']
