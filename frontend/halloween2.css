@@ -1,0 +1,101 @@
+/* =====================================================================
+   🎃 ハロウィン パート2 (v3.6) — タブ(アイコン+赤丸の通知) / 新しい画面 / さまようおばけ
+   見分けやすさ: タブは「大きな絵文字 + 短い名前」で横スクロール。受け取れるものがあるタブには赤丸。
+   ===================================================================== */
+.hw-tabs{ flex-wrap:nowrap !important; overflow-x:auto; gap:4px; padding:5px; scrollbar-width:none; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
+.hw-tabs::-webkit-scrollbar{ display:none; }
+.hw-tabs .tab-btn.hw-tab{
+  position:relative; flex:0 0 auto !important; min-width:62px; display:flex; flex-direction:column; align-items:center; gap:1px;
+  padding:6px 8px 5px !important; border-radius:12px; scroll-snap-align:center;
+}
+.hw-tab .hw-ti{ font-size:21px; line-height:1.15; }
+.hw-tab .hw-tl{ font:800 10.5px var(--sans); white-space:nowrap; }
+.hw-tab.active{ outline:2px solid var(--gold); outline-offset:-2px; }
+.hw-tab .hw-bd{ position:absolute; right:4px; top:1px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; font:900 10px/16px var(--sans); text-align:center; color:#fff; background:#ff3b5c; box-shadow:0 0 0 2px var(--panel-light); }
+.hw-tab.new::after{ content:'NEW'; position:absolute; left:2px; top:-3px; font:900 8px var(--sans); padding:1px 4px; border-radius:4px; color:#fff; background:linear-gradient(135deg,#ff3d6e,#ff8a1f); }
+
+/* ---------- 共通のカード ---------- */
+.hw2-card{ margin:0 0 12px; padding:14px; border-radius:var(--r); background:linear-gradient(160deg, rgba(255,255,255,.07), transparent 60%), var(--panel); border:1px solid rgba(255,255,255,.1); border-left:5px solid var(--gold); }
+.hw2-card.ft{ border-left-color:#c25bff; } .hw2-card.tot{ border-left-color:#ff8a1f; } .hw2-card.ghost{ border-left-color:#7fffd4; } .hw2-card.comm{ border-left-color:#3ddc84; }
+.hw2-ct{ font:800 15px var(--sans); margin-bottom:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.hw2-tag{ font:800 10.5px var(--sans); padding:2px 8px; border-radius:999px; color:#1b1030; background:var(--gold); }
+.hw2-tag.ok{ background:#3ddc84; }
+
+.hw2-boost{ display:flex; align-items:center; gap:8px; justify-content:center; margin:0 0 10px; padding:8px 12px; border-radius:12px; color:#2a1200; background:linear-gradient(90deg,#ffd23d,#ff8a1f); font-size:13px; box-shadow:0 4px 16px rgba(255,138,31,.4); animation:hw2Glow 2s ease-in-out infinite; }
+@keyframes hw2Glow{ 50%{ box-shadow:0 4px 26px rgba(255,200,60,.8); } }
+.hw2-count{ text-align:center; font:800 14px var(--sans); padding:10px; margin-bottom:10px; border-radius:12px; background:rgba(255,138,31,.14); border:1px dashed rgba(255,138,31,.5); }
+.hw2-count b{ color:var(--gold); font-size:18px; }
+.hw2-todo{ margin-bottom:12px; padding:10px; border-radius:12px; background:rgba(255,59,92,.1); border:1px solid rgba(255,59,92,.4); }
+.hw2-todo.done{ background:rgba(61,220,132,.1); border-color:rgba(61,220,132,.4); text-align:center; }
+.hw2-todo .t-h{ font:800 13px var(--sans); margin-bottom:6px; }
+.hw2-todo .t-chip{ position:relative; margin:3px 6px 3px 0; padding:8px 14px 8px 12px; border-radius:999px; cursor:pointer; font:800 12.5px var(--sans); color:var(--text); background:var(--panel-light); border:2px solid #ff3b5c; }
+.hw2-todo .t-chip i{ position:absolute; right:-4px; top:-5px; width:16px; height:16px; border-radius:50%; font:900 11px/16px var(--sans); font-style:normal; color:#fff; background:#ff3b5c; text-align:center; }
+
+/* ---------- おみくじ ---------- */
+.ft-rank{ text-align:center; font:900 48px var(--serif); margin:4px 0; color:var(--gold); text-shadow:0 3px 16px rgba(255,200,60,.5); }
+.ft-rank.r-大吉{ color:#ff5d73; } .ft-rank.r-凶{ color:#9a9ab8; }
+.ft-text{ text-align:center; font-size:13px; margin-bottom:8px; }
+.ft-lucky{ display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--text-dim); text-align:center; } .ft-lucky b{ color:var(--text); }
+.ft-got{ margin-top:8px; text-align:center; font:800 13px var(--sans); color:#3ddc84; }
+
+/* ---------- ドア ---------- */
+.hw2-doors{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:12px 0 8px; }
+.hw2-door{ position:relative; aspect-ratio:3/4; border-radius:14px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  border:3px solid #a86a2a; background:linear-gradient(180deg,#5a3216,#2e1808); box-shadow:inset 0 0 0 3px rgba(0,0,0,.25), 0 6px 16px rgba(0,0,0,.4); transition:transform .2s var(--spring); }
+.hw2-door:not(:disabled):hover{ transform:translateY(-3px) rotate(-1deg); }
+.hw2-door:disabled{ opacity:.55; cursor:default; }
+.hw2-door .d-face{ font-size:46px; } .hw2-door .d-n{ font:900 15px var(--sans); color:#ffd98a; }
+.hw2-door.opening{ animation:hdShake .3s; }
+.hw2-door.chosen{ opacity:1; border-color:#ffd23d; background:linear-gradient(180deg,#7a4a8a,#3a1c5c); box-shadow:0 0 26px rgba(255,210,60,.7); transform:scale(1.05); }
+.hw2-door.other{ opacity:.45; }
+.hw2-door-msg{ min-height:48px; text-align:center; font:700 13.5px/1.6 var(--sans); padding:6px; }
+.hw2-door-msg.hit{ font-size:15px; color:var(--gold); animation:itemIn .4s var(--out) both; }
+.hw2-det{ margin-top:8px; font-size:12px; color:var(--text-dim); } .hw2-det ul{ margin:6px 0 0 18px; padding:0; }
+
+/* ---------- 畑 ---------- */
+.hw2-plots{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.hw2-plot{ display:flex; flex-direction:column; align-items:center; gap:4px; padding:12px 8px; border-radius:14px; text-align:center; background:#2a1708; border:2px solid #6a4020; min-height:150px; justify-content:center; }
+.hw2-plot.empty{ border-style:dashed; background:rgba(106,64,32,.2); }
+.hw2-plot.ripe{ border-color:#ffd23d; background:linear-gradient(160deg,#5a3a08,#2a1708); box-shadow:0 0 20px rgba(255,210,60,.45); animation:hw2Glow 1.6s ease-in-out infinite; }
+.hw2-plot .p-ic{ font-size:34px; } .hw2-plot .p-ic.big{ font-size:46px; }
+.hw2-plot .p-nm{ font:800 12.5px var(--sans); } .hw2-plot .p-st{ font:700 12px var(--sans); color:var(--text-dim); }
+.hw2-plot.ripe .p-st{ color:#ffd23d; }
+.hw2-plot .p-bar{ width:90%; height:8px; border-radius:6px; background:rgba(255,255,255,.12); overflow:hidden; } .hw2-plot .p-bar i{ display:block; height:100%; background:linear-gradient(90deg,#7bd84a,#ffd23d); transition:width 1s linear; }
+.hw2-plot .claim-btn.kind{ width:100%; text-align:left; padding:7px 10px; margin-top:3px; } .hw2-plot .claim-btn.kind small{ display:block; opacity:.8; font-size:10.5px; }
+.hw2-kinds{ display:grid; grid-template-columns:1fr 1fr; gap:6px; } .hw2-kinds .k{ display:flex; flex-wrap:wrap; gap:2px 6px; align-items:center; font-size:12px; padding:6px 8px; border-radius:10px; background:rgba(255,255,255,.06); }
+.hw2-kinds .k-e{ font-size:18px; }
+
+/* ---------- 図鑑 ---------- */
+.hw2-dexgrid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:0 0 12px; }
+.hw2-dex{ position:relative; display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 2px 6px; border-radius:12px; text-align:center; border:2px solid var(--rc); background:rgba(255,255,255,.05); }
+.hw2-dex.no{ opacity:.5; filter:grayscale(.8); border-style:dashed; }
+.hw2-dex.has{ box-shadow:0 0 12px color-mix(in srgb, var(--rc) 45%, transparent); }
+.hw2-dex .dx-e{ font-size:28px; line-height:1.2; } .hw2-dex .dx-n{ font:800 9.5px/1.25 var(--sans); min-height:24px; display:flex; align-items:center; } .hw2-dex .dx-r{ font:900 8.5px var(--sans); color:var(--rc); }
+
+/* ---------- スタンプ ---------- */
+.hw2-stampgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:0 0 12px; }
+.hw2-stamp{ position:relative; display:flex; flex-direction:column; align-items:center; gap:2px; padding:10px 4px 8px; border-radius:12px; text-align:center; background:rgba(255,255,255,.05); border:2px dashed rgba(255,255,255,.2); opacity:.7; }
+.hw2-stamp.has{ opacity:1; border:2px solid #3ddc84; background:rgba(61,220,132,.12); }
+.hw2-stamp .sp-e{ font-size:26px; } .hw2-stamp .sp-n{ font:800 10px/1.25 var(--sans); min-height:25px; display:flex; align-items:center; }
+.hw2-stamp .sp-s{ position:absolute; right:4px; top:3px; font:900 14px var(--sans); color:#3ddc84; }
+
+/* ---------- ごほうびの行(図鑑・スタンプ・みんな) ---------- */
+.hw2-step{ display:flex; align-items:center; gap:10px; padding:10px; margin-top:8px; border-radius:12px; background:rgba(255,255,255,.05); border:2px solid rgba(255,255,255,.1); }
+.hw2-step.ready{ border-color:#ffd23d; background:rgba(255,210,60,.1); } .hw2-step.claimed{ opacity:.55; } .hw2-step.final{ border-color:#c25bff; }
+.hw2-step .st-n{ min-width:46px; text-align:center; font:900 22px var(--serif); color:var(--gold); } .hw2-step .st-n.sm{ font-size:13px; min-width:74px; } .hw2-step .st-n small{ font-size:10px; }
+.hw2-step .st-r{ flex:1; font:700 12.5px/1.5 var(--sans); } .hw2-step .st-a{ min-width:64px; text-align:right; }
+.comm-total{ text-align:center; font:700 13px var(--sans); margin-bottom:6px; } .comm-total b{ font-size:22px; color:var(--gold); }
+
+/* ---------- ゲスト向け ---------- */
+.hw2-guest{ padding:16px; border-radius:var(--r); background:linear-gradient(160deg, rgba(255,138,31,.18), rgba(177,77,255,.14)); border:2px solid rgba(255,138,31,.6); }
+.hw2-guest .g-big{ font:900 16px var(--sans); margin-bottom:6px; } .hw2-guest ul{ margin:8px 0 12px 4px; padding-left:16px; font-size:13px; line-height:1.9; }
+.hw2-guestcandy{ margin:0 0 10px; padding:8px 10px; border-radius:10px; font-size:12.5px; background:rgba(255,210,60,.14); border:1px dashed rgba(255,210,60,.6); } .hw2-guestcandy b{ color:var(--gold); font-size:15px; }
+
+/* ---------- さまようおばけ ---------- */
+.hw2-ghost{ position:fixed; left:-80px; z-index:530; width:68px; height:68px; font-size:46px; border:0; background:transparent; cursor:pointer; filter:drop-shadow(0 0 14px rgba(160,255,230,.8));
+  animation:hw2Fly 11s linear forwards, hw2Bob 1.2s ease-in-out infinite; touch-action:manipulation; }
+.hw2-ghost.gold{ filter:drop-shadow(0 0 18px rgba(255,210,60,.95)); font-size:50px; }
+.hw2-ghost.caught{ animation:none; transition:transform .35s, opacity .35s; transform:scale(2) rotate(25deg); opacity:0; pointer-events:none; }
+@keyframes hw2Fly{ from{ left:-80px; } to{ left:calc(100vw + 20px); } }
+@keyframes hw2Bob{ 50%{ margin-top:-18px; } }
+@media (prefers-reduced-motion:reduce){ .hw2-ghost{ animation:hw2Fly 16s linear forwards; } }
