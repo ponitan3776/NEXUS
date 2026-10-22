@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>ハゲの魂</title>
-<meta name="app-version" content="2026.10.21-3">
+<title>NEXUS by vortx</title>
+<meta name="app-version" content="2026.10.23-1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&family=Shippori+Mincho+B1:wght@600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
 <meta name="theme-color" content="#0a0613">
@@ -22,10 +22,13 @@
 <link rel="stylesheet" href="layout.css">
 <link rel="stylesheet" href="anim.css">
 <link rel="stylesheet" href="minigames.css">
+<link rel="stylesheet" href="minigames2.css">
 <link rel="stylesheet" href="gachafx.css">
 <link rel="stylesheet" href="gifts.css">
 <link rel="stylesheet" href="social.css">
 <link rel="stylesheet" href="titles.css">
+<link rel="stylesheet" href="halloween2.css">
+<link rel="stylesheet" href="engage.css">
 </head>
 <body>
 <!-- ✨ ロード画面: ページを開いた瞬間に出て、準備ができたら消える(script.js の start() が CBLoading を操作する) -->
@@ -109,6 +112,9 @@
       <span class="le-go">›</span>
     </button>
 
+    <!-- 🎁 ゲスト=アカウント作成のお誘い / ログイン中=毎日ログインボーナス(engage.js が中身を入れる) -->
+    <button class="lobby-bonus" id="lobbyBonusBtn" type="button" hidden></button>
+
     <div class="lobby-hero" id="titleCard">
       <!-- icons/logo.png を置くとテキストロゴの代わりに表示される(無ければ自動でテキストロゴ) -->
       <img class="title-logo-img" src="icons/logo.png" alt="キャンディブラスト" onload="document.getElementById('titleCard').classList.add('has-logo')" onerror="this.remove()">
@@ -152,14 +158,14 @@
     </div>
 
     <div class="title-version-row">
-      <span>Ver. 3.5.1</span>
+      <span>Ver. 3.6.0</span>
       <button id="titleSettingsBtn" type="button">⚙ 設定</button>
       <button id="titleChangelogBtn" type="button">📢 更新履歴</button>
     </div>
   </div>
 </div>
 
-<div id="versionBadge">Ver. 3.5.1</div>
+<div id="versionBadge">Ver. 3.6.0</div>
 <div id="changelogPanel"></div>
 <div id="eventCountdownBadge" style="display:none;"><span id="eventCountdownText">⏰ --:--:--</span></div>
 
@@ -307,10 +313,13 @@
 <script src="net.js"></script>
 <script src="script.js"></script>
 <script src="minigames.js"></script>
+<script src="minigames2.js"></script>
 <script src="gachafx.js"></script>
 <script src="gifts.js"></script>
 <script src="social.js"></script>
 <script src="titles.js"></script>
+<script src="halloween2.js"></script>
+<script src="engage.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
