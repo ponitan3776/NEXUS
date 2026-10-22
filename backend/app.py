@@ -532,6 +532,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
 
     # 🗳 投票 / 🎁 ギフト / ✏️ チャット・DMの編集・取り消し用の列
     social.init_tables(db_execute)
+    engage.init_tables(db_execute)          # 📆 毎日ログインボーナス
 
     # ⚡ 読み込みを速くするための索引(無くても動くが、データが増えるほど遅くなる)
     db_execute('''
@@ -549,7 +550,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     # このサーバーは postgres ロールで直接接続するのでRLSの影響を受けない。
     for t in ('users', 'chat_messages', 'friend_requests', 'friends', 'dm_messages',
               'announcements', 'duels', 'scheduled_events', 'weekly_challenge',
-              'weekly_challenge_scores', 'mini_scores'):
+              'weekly_challenge_scores', 'mini_scores', 'daily_bonus'):
         db_execute(f'ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;')
     print('✅ RLS有効化完了')
 
@@ -577,6 +578,7 @@ GACHA_SKIN_IDS = [
 import halloween  # 🎃 期間限定イベント(別ファイル)
 import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
 import titles  # 🏷 称号(別ファイル)
+import engage  # 🎁 毎日ログインボーナス・ウェルカムギフト(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.004  # 1スキンあたり0.4%(8種で合計3.2%) ← 一般的なソシャゲの最高レア帯
@@ -670,6 +672,7 @@ def register():
             [user_id, pw_hash, recovery_code, False]
         )
         token = make_token(user_id)
+        engage.send_welcome_gift(db_query, user_id)      # 🎁 ウェルカムギフト(ログイン後に開封できる)
         send_discord_notification(
             DISCORD_WEBHOOK_AUTH, '📝 新規ユーザー登録', f'ユーザー **{user_id}** が新規登録しました！', 0x00FF00,
             [{'name': '🔑 復元コード', 'value': f'`{recovery_code}`', 'inline': False},
@@ -2277,6 +2280,7 @@ minigames.register(app, db_query, require_auth, ApiError)
 social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID,
                 on_chat_change=lambda: cache_drop('chat:'))
 titles.register(app, db_query, require_auth, ApiError, ADMIN_USER_ID)
+engage.register(app, db_query, db_transaction, require_auth, ApiError)
 
 
 # ===================== ヘルスチェック / スリープ対策 =====================
