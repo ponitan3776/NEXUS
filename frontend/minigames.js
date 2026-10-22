@@ -178,7 +178,7 @@
       while(queue.length){                                       // 入力は最大2つまで先読み。真後ろ・同方向は捨てる
         const d = queue.shift();
         if((d.x === -dir.x && d.y === -dir.y) || (d.x === dir.x && d.y === dir.y)) continue;
-        dir = d; break;
+        dir = d; CB().sound && CB().sound('snakeTurn'); break;
       }
       const h = { x:snake[0].x + dir.x, y:snake[0].y + dir.y };
       const tail = snake[snake.length-1];
@@ -190,12 +190,12 @@
         score++; info.textContent = `🎃 ${score} 個`;
         for(let i=0;i<10;i++){ const a = Math.random()*6.283, v = .05 + Math.random()*.09; particles.push({ x:food.x+.5, y:food.y+.5, vx:Math.cos(a)*v, vy:Math.sin(a)*v, life:1 }); }
         place(); speed = Math.max(75, 150 - score*3);
-        CB().sound && CB().sound('coin'); CB().vibrate && CB().vibrate(10);
+        CB().sound && CB().sound('snakeEat'); CB().vibrate && CB().vibrate(10);
       } else snake.pop();
     }
     function die(){
       if(dead) return; dead = true; deadAt = performance.now();
-      CB().sound && CB().sound('gameover'); CB().vibrate && CB().vibrate([30,30,60]);
+      CB().sound && CB().sound('snakeDie'); CB().vibrate && CB().vibrate([30,30,60]);
       cv.classList.add('shake');
       setTimeout(()=> api.finish({ rating: clamp(score*5, 0, 100), score, better:'high', text:`かぼちゃを ${score} 個 食べた`, valid:true }), 750);
     }
@@ -242,7 +242,7 @@
     }
     function turn(dx, dy){
       if(dead) return;
-      if(!started){ started = true; msg.style.visibility = 'hidden'; if(dx === -dir.x && dy === -dir.y) return; }
+      if(!started){ started = true; msg.style.visibility = 'hidden'; CB().sound && CB().sound('snakeStart'); if(dx === -dir.x && dy === -dir.y) return; }
       if(queue.length < 2) queue.push({ x:dx, y:dy });
     }
     const keyMap = { ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0], w:[0,-1], s:[0,1], a:[-1,0], d:[1,0] };
@@ -487,12 +487,12 @@
      ミニゲームの共通画面(メニュー / プレイ / 結果)
      ===================================================================== */
   const GAMES = [
-    { id:'g2048',  emoji:'🔢', name:'2048',               desc:'スワイプで数字を合体させよう',     unit:'点', better:'high', start:game2048 },
-    { id:'snake',  emoji:'🐍', name:'パンプキン・スネーク', desc:'かぼちゃを食べて長くなろう',       unit:'個', better:'high', start:gameSnake },
-    { id:'memory', emoji:'🃏', name:'おばけ神経衰弱',       desc:'同じ絵を少ない手数でそろえよう',   unit:'手', better:'low',  start:gameMemory },
-    { id:'whack',  emoji:'👻', name:'おばけたたき',         desc:'30秒でおばけをたたきまくれ！',     unit:'点', better:'high', start:gameWhack },
-    { id:'mines',  emoji:'💣', name:'マイン・ハンター',     desc:'9×9の地雷さがし。最速クリアを狙え', unit:'秒', better:'low',  start:gameMines },
-    { id:'flight', emoji:'🪦', name:'ゴースト・フライト',   desc:'タップで飛んで墓石をよけよう',     unit:'枚', better:'high', start:gameFlight }
+    { id:'g2048',  emoji:'🔢', name:'2048',               desc:'スワイプで数字を合体させよう',     unit:'点', better:'high', genre:'puzzle', start:game2048 },
+    { id:'snake',  emoji:'🐍', name:'パンプキン・スネーク', desc:'かぼちゃを食べて長くなろう',       unit:'個', better:'high', genre:'action', start:gameSnake },
+    { id:'memory', emoji:'🃏', name:'おばけ神経衰弱',       desc:'同じ絵を少ない手数でそろえよう',   unit:'手', better:'low',  genre:'brain', start:gameMemory },
+    { id:'whack',  emoji:'👻', name:'おばけたたき',         desc:'30秒でおばけをたたきまくれ！',     unit:'点', better:'high', genre:'reflex', start:gameWhack },
+    { id:'mines',  emoji:'💣', name:'マイン・ハンター',     desc:'9×9の地雷さがし。最速クリアを狙え', unit:'秒', better:'low',  genre:'puzzle', start:gameMines },
+    { id:'flight', emoji:'🪦', name:'ゴースト・フライト',   desc:'タップで飛んで墓石をよけよう',     unit:'枚', better:'high', genre:'action', start:gameFlight }
   ];
   let root = null, body = null, resultEl = null, titleEl = null, bestEl = null, cleanup = null, current = null, rankView = false, summary = null;
 
@@ -505,30 +505,49 @@
     titleEl = root.querySelector('.mg-title'); bestEl = root.querySelector('.mg-bestline');
     root.querySelector('.mg-back').addEventListener('click', ()=>{ if(current || rankView) openMenu(); else close(); });
   }
-  function stopGame(){ if(cleanup){ try{ cleanup(); }catch(e){} cleanup = null; } }
+  let session = 0;      // ゲームを切り替えたあとに、前のゲームの終了処理が遅れて届かないようにする
+  function stopGame(){ session++; if(cleanup){ try{ cleanup(); }catch(e){} cleanup = null; } }
   function close(){ stopGame(); current = null; document.body.classList.remove('mg-open'); if(root){ root.classList.remove('show'); } }
 
+  const GENRES = [
+    ['all', '🕹 ぜんぶ'], ['action', '🏃 アクション'], ['puzzle', '🧩 パズル'], ['reflex', '⚡ はんしゃ'], ['brain', '🧠 あたま']
+  ];
+  const GENRE_NAME = { action:'アクション', puzzle:'パズル', reflex:'はんしゃ', brain:'あたま' };
+  let genreFilter = 'all';
+  const fmtVal = (g, n)=> g.fmt ? g.fmt(n) : `${n}${g.unit}`;
   function bestText(g){
     const r = rec[g.id];
-    return r && r.best != null ? `ベスト ${r.best}${g.unit}` : 'まだ記録なし';
+    return r && r.best != null ? `ベスト ${fmtVal(g, r.best)}` : 'まだ記録なし';
   }
   function openMenu(){
     ensureRoot(); stopGame(); current = null; rankView = false;
     root.classList.add('show'); document.body.classList.add('mg-open'); resultEl.className = 'mg-result'; resultEl.innerHTML = '';
     titleEl.textContent = '🕹 ミニゲーム'; bestEl.textContent = '';
     body.className = 'mg-body menu';
-    body.innerHTML = `<div class="mg-lead">どれも1回1〜2分。遊ぶと 🪙コイン と 🍬ハロウィンキャンディ(開催中)がもらえます！</div>
-      <button class="mg-rankbtn" type="button">🏆 ランキングを見る</button><div class="mg-grid"></div>`;
+    const stamped = GAMES.filter(g=> rec[g.id] && rec[g.id].plays > 0).length;
+    body.innerHTML = `<div class="mg-lead">どれも1回1〜2分。遊ぶと 🪙コイン と 🍬ハロウィンキャンディ(開催中)がもらえます！<br><b>🎪 遊んだ種類: ${stamped} / ${GAMES.length}</b>(全部遊ぶとスタンプラリー達成)</div>
+      <button class="mg-rankbtn" type="button">🏆 ランキングを見る</button>
+      <div class="mg-genres">${GENRES.map(([k,l])=>`<button type="button" class="mg-gchip ${k===genreFilter?'active':''}" data-genre="${k}">${l}</button>`).join('')}</div>
+      <div class="mg-grid"></div>`;
     body.querySelector('.mg-rankbtn').addEventListener('click', ()=> openRanking(GAMES[0].id));
     const grid = body.querySelector('.mg-grid');
     const bestLine = (g)=>{ const sm = summary && summary[g.id]; return sm && sm.rank ? `${bestText(g)}(全体 ${sm.rank}位)` : bestText(g); };
     const bestEls = {};
-    GAMES.forEach((g,i)=>{
-      const card = $('button','mg-card', `<span class="mg-emo">${g.emoji}</span><span class="mg-name">${g.name}</span><span class="mg-desc">${g.desc}</span><span class="mg-best">${bestLine(g)}</span>`);
-      card.type = 'button'; card.style.animationDelay = (i*0.05) + 's';
-      card.addEventListener('click', ()=> startGame(g.id));
-      grid.append(card); bestEls[g.id] = card.querySelector('.mg-best');
-    });
+    const draw = ()=>{
+      grid.innerHTML = ''; Object.keys(bestEls).forEach(k=> delete bestEls[k]);
+      GAMES.filter(g=> genreFilter === 'all' || g.genre === genreFilter).forEach((g,i)=>{
+        const played = rec[g.id] && rec[g.id].plays > 0;
+        const card = $('button','mg-card g-' + (g.genre || 'action'), `${g.isNew ? '<span class="mg-new">NEW</span>' : ''}<span class="mg-genre">${GENRE_NAME[g.genre] || ''}</span><span class="mg-emo">${g.emoji}</span><span class="mg-name">${g.name}</span><span class="mg-desc">${g.desc}</span><span class="mg-best">${bestLine(g)}</span>${played ? '<span class="mg-stamp" title="遊んだ！">✔</span>' : ''}`);
+        card.type = 'button'; card.style.animationDelay = Math.min(i, 12)*0.04 + 's';
+        card.addEventListener('click', ()=> startGame(g.id));
+        grid.append(card); bestEls[g.id] = card.querySelector('.mg-best');
+      });
+    };
+    draw();
+    body.querySelectorAll('.mg-gchip').forEach(b=> b.addEventListener('click', ()=>{
+      genreFilter = b.dataset.genre;
+      body.querySelectorAll('.mg-gchip').forEach(x=> x.classList.toggle('active', x === b)); draw();
+    }));
     // ログイン中なら、自分の順位を取ってきて表示する
     if(CB().isLoggedIn && CB().isLoggedIn() && CB().api){
       CB().api('/api/mini/summary').then(d=>{
@@ -539,7 +558,7 @@
   }
 
   // ---------- ランキング画面 ----------
-  const fmtScore = (g, n)=> `${n}${g.unit}`;
+  const fmtScore = (g, n)=> fmtVal(g, n);
   function openRanking(gameId){
     ensureRoot(); stopGame(); current = null; rankView = true;
     const g = GAMES.find(x=>x.id === gameId) || GAMES[0];
@@ -568,7 +587,8 @@
     titleEl.textContent = `${current.emoji} ${current.name}`; bestEl.textContent = bestText(current);
     body.className = 'mg-body play'; body.innerHTML = '';
     const stage = $('div','mg-stage'); body.append(stage);
-    cleanup = current.start(stage, { finish });
+    const sid = session;
+    cleanup = current.start(stage, { finish: (r)=>{ if(sid === session) finish(r); }, best: rec[current.id] ? rec[current.id].best : null });
   }
 
   function finish(res){
@@ -602,22 +622,29 @@
       <div class="mg-rankline" id="mgRankLine">${res.valid ? (CB().isLoggedIn && CB().isLoggedIn() ? '🏆 ランキングに記録中...' : '🏆 ログインするとランキングに載ります') : ''}</div>
       <div class="mg-btns"><button class="mg-btn" id="mgAgain" type="button">もう一度</button><button class="mg-btn ghost" id="mgMenu" type="button">メニューへ</button></div>
       <button class="mg-linkbtn" id="mgRank" type="button">🏆 ランキングを見る</button>
+      ${window.CBEngage ? window.CBEngage.signupLine() : ''}
     </div>`;
     resultEl.querySelector('#mgAgain').addEventListener('click', ()=> startGame(g.id));
     resultEl.querySelector('#mgMenu').addEventListener('click', openMenu);
     resultEl.querySelector('#mgRank').addEventListener('click', ()=> openRanking(g.id));
+    { const su = resultEl.querySelector('#mgSignup'); if(su) su.addEventListener('click', ()=>{ if(CB().openRegister) CB().openRegister(); }); }
     bestEl.textContent = bestText(g);
     // ランキングに記録して、順位を表示する
     if(res.valid && CB().isLoggedIn && CB().isLoggedIn() && CB().api){
       CB().api('/api/mini/score', 'POST', { game:g.id, score:res.score }).then(d=>{
         const line = resultEl.querySelector('#mgRankLine');
-        if(d && d.rank){ if(summary) summary[g.id] = { ...(summary[g.id]||{}), best:d.best, rank:d.rank }; if(line) line.textContent = `🏆 全体 ${d.rank}位(自己ベスト ${d.best}${g.unit})`; }
+        if(d && d.rank){ if(summary) summary[g.id] = { ...(summary[g.id]||{}), best:d.best, rank:d.rank }; if(line) line.textContent = `🏆 全体 ${d.rank}位(自己ベスト ${fmtVal(g, d.best)})`; }
         else if(line) line.textContent = '';
       }).catch(()=>{ const line = resultEl.querySelector('#mgRankLine'); if(line) line.textContent = ''; });
     }
   }
 
-  window.CBMini = { open: openMenu, close, games: GAMES, _t: { slideLine, planSlide, neighbors, genMines } };
+  // 新しいゲームを足す窓口(minigames2.js から呼ぶ)。同じ id は上書き
+  function register(def){
+    const i = GAMES.findIndex(g=>g.id === def.id);
+    if(i >= 0) GAMES[i] = def; else GAMES.push(def);
+  }
+  window.CBMini = { open: openMenu, close, games: GAMES, register, _t: { slideLine, planSlide, neighbors, genMines } };
   const btn = document.getElementById('titleMiniBtn');
   if(btn) btn.addEventListener('click', openMenu);
 })();
