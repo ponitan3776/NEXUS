@@ -941,7 +941,47 @@ const PATTERN_LABELS = {
         '--gold':'#FF9A6B','--coral':'#E0245A','--mint':'#C25BFF','--blue':'#6A4CFF','--purple':'#9A3DFF',
         '--pink':'#FF3D8A','--lime':'#FFB86B','--text':'#F8EEFF','--text-dim':'#AC90D0' },
       titleGrad:'linear-gradient(90deg,#FF9A6B,#E0245A,#9A3DFF)',
-      colors:hwc([['#E0245A','#7A0F30'],['#9A3DFF','#4A1580'],['#FF3D8A','#A01A55'],['#6A4CFF','#2F1FA0'],['#FF9A6B','#D0502A'],['#C25BFF','#7A2BD9'],['#2A1A3E','#12081E']]) }
+      colors:hwc([['#E0245A','#7A0F30'],['#9A3DFF','#4A1580'],['#FF3D8A','#A01A55'],['#6A4CFF','#2F1FA0'],['#FF9A6B','#D0502A'],['#C25BFF','#7A2BD9'],['#2A1A3E','#12081E']]) },
+    { id:'hween_jackolantern', name:'🎃 ジャック・オ・ランタン', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'くり抜かれたかぼちゃの中でゆれる、あたたかいろうそくの炎。ハロウィンガチャの新スキン。',
+      vars:{ '--bg-deep':'#140700','--bg-deep2':'#2c1000','--panel':'#451a04','--panel-light':'#5e250a','--gold':'#FFB02E','--coral':'#FF5A00','--mint':'#FFD27A','--blue':'#FF8A3D','--purple':'#D9702B','--pink':'#FF7A1F','--lime':'#FFE066','--text':'#FFF1DC','--text-dim':'#D9A878' },
+      titleGrad:'linear-gradient(90deg,#FFB02E,#FF5A00,#FFE066)',
+      colors:hwc([['#FFB02E','#E06A00'],['#FF5A00','#B03A00'],['#FFE066','#FFB020'],['#FF8A3D','#D04A00'],['#D9702B','#8A3A10'],['#FFD27A','#FFA43D'],['#FF7A1F','#C04000']]) },
+    { id:'hween_mummy', name:'🩹 ミイラの包帯', price:0, gacha:true, event:'halloween',
+      desc:'古い遺跡で眠るミイラの包帯。くすんだベージュに、ほんのり赤いしみ。ハロウィンガチャの新スキン。',
+      vars:{ '--bg-deep':'#14110a','--bg-deep2':'#241e12','--panel':'#3a3120','--panel-light':'#4d412a','--gold':'#F0E0B0','--coral':'#C86A4A','--mint':'#E8D8A8','--blue':'#A89870','--purple':'#B8A078','--pink':'#D8B890','--lime':'#F4EAC8','--text':'#FBF5E0','--text-dim':'#B8AA84' },
+      titleGrad:'linear-gradient(90deg,#F0E0B0,#C86A4A,#E8D8A8)',
+      colors:hwc([['#F0E0B0','#C8B078'],['#E8D8A8','#B8A070'],['#C86A4A','#8A3A22'],['#F4EAC8','#D8C890'],['#A89870','#6A5A3A'],['#D8B890','#A08858'],['#FBF5E0','#E0D0A0']]) },
+    { id:'hween_frankenstein', name:'🧪 フランケンラボ', price:0, gacha:true, event:'halloween',
+      desc:'雷が落ちる実験室。ビリビリ光る電気の緑と、金属のグレー。交換所限定スキン。',
+      vars:{ '--bg-deep':'#060d0a','--bg-deep2':'#0d1c15','--panel':'#15302a','--panel-light':'#1f4439','--gold':'#B8FF5C','--coral':'#3DFFC8','--mint':'#7AFFD8','--blue':'#4AC8FF','--purple':'#8A7AFF','--pink':'#FFE14D','--lime':'#B8FF5C','--text':'#EFFFF6','--text-dim':'#8AB8A4' },
+      titleGrad:'linear-gradient(90deg,#B8FF5C,#3DFFC8,#FFE14D)',
+      colors:hwc([['#B8FF5C','#5CC800'],['#3DFFC8','#12B890'],['#FFE14D','#D8A800'],['#4AC8FF','#1A78B8'],['#8A7AFF','#4A3AC2'],['#7AFFD8','#3AC8A0'],['#6A8A7A','#2A4A3A']]) },
+    { id:'hween_skeletondance', name:'💀 スケルトンダンス', price:0, gacha:true, event:'halloween', animType:'pan',
+      desc:'骨がカタカタ踊る真夜中のダンスホール。骨の白と深い青緑が流れ続ける、交換所限定のアニメーションスキン。',
+      vars:{ '--bg-deep':'#05090c','--bg-deep2':'#0b161c','--panel':'#14262e','--panel-light':'#1d3744','--gold':'#F2F6F0','--coral':'#3DD8C8','--mint':'#BFFFF4','--blue':'#5C9DFF','--purple':'#9A8CFF','--pink':'#FF8FB8','--lime':'#E8FFE0','--text':'#F4FAF8','--text-dim':'#8AA8B0' },
+      titleGrad:'linear-gradient(90deg,#F2F6F0,#3DD8C8,#9A8CFF)',
+      colors:hwc([['#F2F6F0','#B8C8C0'],['#3DD8C8','#128A80'],['#BFFFF4','#7AD8CC'],['#5C9DFF','#2A5CB8'],['#9A8CFF','#5A48C2'],['#FF8FB8','#C84A7A'],['#E8FFE0','#A8D8A0']]) },
+    { id:'hween_trickortreat', name:'🍭 トリック・オア・トリート', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'お菓子をくれなきゃいたずらするぞ！ピンクとオレンジのポップな配色。スタンプラリー完走の記念スキン。',
+      vars:{ '--bg-deep':'#1a0714','--bg-deep2':'#2e0b22','--panel':'#4a1236','--panel-light':'#651a4a','--gold':'#FFD23D','--coral':'#FF4FA8','--mint':'#FFB8E0','--blue':'#FF8A3D','--purple':'#C25BFF','--pink':'#FF4FA8','--lime':'#B8FF3D','--text':'#FFF0F8','--text-dim':'#D9A0C0' },
+      titleGrad:'linear-gradient(90deg,#FFD23D,#FF4FA8,#FF8A3D)',
+      colors:hwc([['#FF4FA8','#B82A78'],['#FF8A3D','#D04A00'],['#FFD23D','#E0A000'],['#C25BFF','#7A2BD9'],['#B8FF3D','#6FD000'],['#FFB8E0','#E070B0'],['#FFFFFF','#FFD0E8']]) },
+    { id:'hween_graveyardfog', name:'⚰ グレイブヤード・フォグ', price:0, gacha:true, event:'halloween', animType:'pulse', gachaEffect:true,
+      desc:'霧がたちこめる夜の墓地。青白い月明かりと、湿った紫の影。図鑑コンプリート記念スキン。',
+      vars:{ '--bg-deep':'#06070c','--bg-deep2':'#0e1018','--panel':'#1a1d2c','--panel-light':'#262a40','--gold':'#C8D4F0','--coral':'#7A8CE0','--mint':'#A8E0E8','--blue':'#5C7CC8','--purple':'#8A6CD8','--pink':'#B8A0E8','--lime':'#DCE8FF','--text':'#F0F4FF','--text-dim':'#8E96B8' },
+      titleGrad:'linear-gradient(90deg,#C8D4F0,#7A8CE0,#8A6CD8)',
+      colors:hwc([['#C8D4F0','#8A98C0'],['#7A8CE0','#3A48A0'],['#A8E0E8','#5CA0B0'],['#5C7CC8','#2A3C88'],['#8A6CD8','#4A38A0'],['#B8A0E8','#7860B8'],['#DCE8FF','#A0B0D8']]) },
+    { id:'hween_crimsonmoon', name:'🌙 クリムゾンムーン', price:0, gacha:true, event:'halloween', gachaEffect:true,
+      desc:'血のように赤い月が昇る夜。深紅と黒、金の縁取り。ハロウィンロード50段目の報酬。',
+      vars:{ '--bg-deep':'#0c0204','--bg-deep2':'#1e0408','--panel':'#34080f','--panel-light':'#4c0e18','--gold':'#FFC85C','--coral':'#E0143C','--mint':'#FF7A8A','--blue':'#B8284A','--purple':'#9A2C8A','--pink':'#FF4A6A','--lime':'#FFC85C','--text':'#FFF0F0','--text-dim':'#C89098' },
+      titleGrad:'linear-gradient(90deg,#FFC85C,#E0143C,#9A2C8A)',
+      colors:hwc([['#E0143C','#7A0A22'],['#FFC85C','#C8901A'],['#FF7A8A','#D0344A'],['#B8284A','#6A0F26'],['#9A2C8A','#5A1050'],['#FF4A6A','#B0203C'],['#2A0A12','#10040A']]) },
+    { id:'hween_grandcrown', name:'👑 ハロウィン・グランドクラウン', price:0, gacha:true, event:'halloween', gachaEffect:true, animType:'pan',
+      desc:'ハロウィンを制した者だけがかぶれる、黄金と紫の王冠。ロード60段(完全制覇)の記念スキン。',
+      vars:{ '--bg-deep':'#0b0518','--bg-deep2':'#1a0a34','--panel':'#2c1458','--panel-light':'#40207e','--gold':'#FFE066','--coral':'#FF8A1F','--mint':'#FFD98A','--blue':'#B14DFF','--purple':'#D68CFF','--pink':'#FF5CA8','--lime':'#FFE066','--text':'#FFF8E8','--text-dim':'#C0A8E0' },
+      titleGrad:'linear-gradient(90deg,#FFE066,#FF8A1F,#B14DFF)',
+      colors:hwc([['#FFE066','#E0A800'],['#FF8A1F','#C25A00'],['#B14DFF','#6A1FC2'],['#FF5CA8','#C22A70'],['#FFD98A','#E0A040'],['#D68CFF','#9A4DE0'],['#FFF8E8','#E0C890']]) }
   ];
   const HALLOWEEN_SKIN_IDS = HALLOWEEN_SKINS.map(x=>x.id);
   // ハロウィン開催中、標準スキンを装備している人に自動で適用される配色(黒紫 × 金 × カボチャ色)
@@ -3094,6 +3134,38 @@ function ensureBgmGainNode(){
         o.type='square'; o.frequency.setValueAtTime(880, t0);
         g.gain.setValueAtTime(0.06, t0); g.gain.exponentialRampToValueAtTime(0.001, t0+0.08);
         o.connect(g); g.connect(master); o.start(t0); o.stop(t0+0.09);
+      } else {
+        // ===== v3.6 ミニゲーム用の効果音(ヘビ=Googleのヘビゲーム風 / 恐竜ラン / シモンなど) =====
+        const tone = (wave, f0, f1, start, dur, vol)=>{
+          const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+          o.type = wave; o.frequency.setValueAtTime(f0, t0+start);
+          if(f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0+start+dur);
+          g.gain.setValueAtTime(0.0001, t0+start); g.gain.linearRampToValueAtTime(vol, t0+start+0.008);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0+start+dur);
+          o.connect(g); g.connect(master); o.start(t0+start); o.stop(t0+start+dur+0.02);
+        };
+        const noise = (start, dur, vol, freq)=>{
+          const len = Math.max(1, Math.floor(audioCtx.sampleRate*dur));
+          const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate), d = buf.getChannelData(0);
+          for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+          const src = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+          src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq || 1800; f.Q.value = 0.9;
+          g.gain.setValueAtTime(vol, t0+start); g.gain.exponentialRampToValueAtTime(0.0001, t0+start+dur);
+          src.connect(f); f.connect(g); g.connect(master); src.start(t0+start);
+        };
+        if(type==='snakeEat'){ noise(0, 0.07, 0.22, 2200); tone('square', 420, 700, 0.005, 0.09, 0.07); tone('triangle', 880, 1180, 0.07, 0.07, 0.05); }
+        else if(type==='snakeTurn'){ tone('sine', 310, 250, 0, 0.035, 0.05); }
+        else if(type==='snakeDie'){ tone('sawtooth', 240, 52, 0, 0.55, 0.12); noise(0, 0.18, 0.2, 500); tone('square', 120, 60, 0.12, 0.3, 0.06); }
+        else if(type==='snakeStart'){ [392, 523.25, 659.25].forEach((f,i)=> tone('triangle', f, 0, i*0.07, 0.12, 0.1)); }
+        else if(type==='jump'){ tone('square', 380, 820, 0, 0.11, 0.07); }
+        else if(type==='point'){ tone('square', 880, 0, 0, 0.07, 0.06); tone('square', 1320, 0, 0.1, 0.09, 0.06); }
+        else if(type==='hit'){ tone('sawtooth', 330, 70, 0, 0.28, 0.11); noise(0, 0.12, 0.18, 800); }
+        else if(type==='note'){ tone('triangle', intensity || 440, 0, 0, 0.28, 0.14); tone('sine', (intensity || 440)*2, 0, 0, 0.2, 0.04); }
+        else if(type==='tick'){ tone('square', 1500, 1200, 0, 0.02, 0.04); }
+        else if(type==='pop'){ tone('sine', 300, 900, 0, 0.07, 0.1); }
+        else if(type==='whoosh'){ noise(0, 0.14, 0.12, 1200); }
+        else if(type==='win'){ [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f,i)=> tone('triangle', f, 0, i*0.07, 0.2, 0.11)); }
+        else if(type==='bad'){ tone('square', 200, 110, 0, 0.18, 0.08); }
       }
     }catch(err){}
   }
@@ -3372,6 +3444,7 @@ restartBtn.addEventListener('click', ()=>{
         <div class="auth-msg" id="recMsg"></div>
       </form>
     `;
+    if(window.CBEngage) window.CBEngage.decorateAccount(modalContent);
     modalContent.querySelectorAll('.tab-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         modalContent.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -3447,6 +3520,7 @@ restartBtn.addEventListener('click', ()=>{
         startPlayTimeTracking();
         startUserSync();
         updateAccountButton();
+        try{ window.dispatchEvent(new CustomEvent('cb:registered')); }catch(e){}
         msgEl.textContent = '登録が完了しました！復元コードは管理者のDiscordに通知されました。';
         msgEl.className='auth-msg ok';
         await syncToServer();
@@ -6347,6 +6421,25 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.6.0', date:'2026-10-23', items:[
+      '🎃 ハロウィンパート2！ ハロウィン画面に新しいタブがたくさん増えました(🚪ドア / 🌱畑 / 📖図鑑 / 🎪スタンプ / 🌍みんなで)',
+      '🚪 「トリック・オア・トリート」: 毎日3つのドアから1つ開けてプレゼント。🔮 おみくじ(1日1回)も追加',
+      '🌱 「かぼちゃ畑」: 植えておくと時間で育ち、収穫でキャンディがもらえます(アプリを閉じていても育ちます)',
+      '📖 「おばけ図鑑」24種: ゲームを遊ぶとおばけに出会えます。集めた数に応じてごほうび、コンプリートで限定スキン',
+      '🎪 「スタンプラリー」: ミニゲームを1種類遊ぶごとにスタンプ。全部集めると限定スキン',
+      '👻 ロビーに「さまようおばけ」が飛んでくるように。タップでつかまえるとキャンディ(金色は大当たり)',
+      '🌍 「みんなでキャンディ大作戦」: 全員の累計キャンディが目標に届くたび、みんなにごほうび',
+      '⚡ ボーナスタイム追加: 週末・毎晩20〜23時はキャンディ1.5倍、10/30・10/31(当日は3倍)・11/1はさらに増量',
+      '🛤 ハロウィンロードが60段に拡大。新しいスキンを全8種追加(ガチャ2種 / 交換所2種 / ロード2種 / 図鑑・スタンプの記念各1種)',
+      '📋 ミッションが日替わり4つ・週替わり4つに増え、ミニゲームや畑・ドアのミッションも登場。交換所の商品も増量',
+      '🏷 新しい称号を追加(図鑑・スタンプ・畑・ドア・おばけ捕り・連続ログイン)',
+      '🕹 ミニゲームを12本追加(全18本): ハロウィン・ラン(Chromeの恐竜ゲーム風) / ブロック崩し / キャンディキャッチ / スタック / 迷路 / スライド / ライツアウト / 反射神経 / ナンバータッチ / いろいろモンスター / ろうそくシモン / ばけばけ計算',
+      '🐍 スネークにGoogleのヘビゲーム風の効果音を追加(食べる・曲がる・ぶつかる)',
+      '🕹 ミニゲームのメニューをジャンル別に見分けやすく(アクション / パズル / はんしゃ / あたま)。NEWマークと「遊んだ」印つき',
+      '📆 毎日ログインボーナス(1年中)を追加。連続日数で、7日ごと・14日・30日…に特別ボーナス',
+      '🎁 アカウントを作ると、ウェルカムギフト(🪙3,000・🍬100・バトルパスXP)が届きます。ゲストでためたキャンディは引き継ぎOK',
+      '🔔 ゲストの人には、アカウントを作るメリットをときどきお知らせ(ロビーにも案内バーが出ます)'
+    ]},
     { version:'3.5.1', date:'2026-10-21', items:[
       '⚡ サーバーとの通信を見直し、読み込みの待ち時間を短縮(ログイン・新規登録も速くなりました)',
       '🔄 サーバーが眠っていたり、回線が一瞬途切れたりしても、自動でやり直して失敗しにくくなりました',
@@ -6649,10 +6742,13 @@ function renderOtherGamesModal(){
   async function reportEventGame(info){
     // 🎁 ゲームが終わったら、届いているギフトを確認する(プレイ中には出さず、ゲームオーバー後に出す)
     setTimeout(()=>{ try{ if(window.GiftFx) window.GiftFx.check('gameover'); }catch(e){} }, 1600);
-    if(!authToken || eventPhaseNow()!=='active') return;
+    if(!authToken){ if(eventPhaseNow()==='active' && window.CBEngage) window.CBEngage.guestPlayed(info); return; }   // ゲスト: かりキャンディ(登録で引き継ぎ)
+    if(eventPhaseNow()!=='active') return;
     try{
       const data = await hwApi('report', 'POST', info);
-      if(data && data.active && data.gained > 0) showEventToast(`🍬 キャンディ +${data.gained}`);
+      if(data && data.active && data.gained > 0) showEventToast(`🍬 キャンディ +${data.gained}${data.multiplier > 1 ? `(⚡${data.multiplier}倍!)` : ''}`);
+      if(data && data.dex){ const dx = data.dex; setTimeout(()=>showEventToast(dx.new ? `📖 NEW! ${dx.emoji}${dx.name} が図鑑に仲間入り！` : `📖 ${dx.emoji}${dx.name} に再会(🍬+${dx.candies})`), 700); }
+      if(data && data.newStamp) setTimeout(()=>showEventToast('🎪 スタンプをゲット！'), 1500);
       ((data && data.newlyCompleted) || []).forEach((t,i)=> setTimeout(()=>showEventToast(`✅ ミッション達成: ${t}`), 900*(i+1)));
     }catch(err){ /* 報告に失敗してもゲームには影響させない */ }
   }
@@ -6680,6 +6776,19 @@ function renderOtherGamesModal(){
     }
   }
 
+  // パート2の画面(halloween2.js)に渡す道具
+  function hw2Ctx(){
+    return {
+      api: hwApi, fmt: formatNumber, rewardText: hwRewardText, swatches: hwSwatches, skinName: hwSkinName,
+      applyWallet: hwApplyWallet, sound: playSound, toast: showEventToast, closeModal,
+      active: ()=> eventPhaseNow()==='active',
+      nowSec: ()=> (Date.now() + ((eventInfo && eventInfo.skew) || 0)) / 1000,
+      rerender: ()=> renderHalloween(),
+      refresh: async (msg)=>{ hwState = await hwApi('state'); renderHalloween(msg ? `<div class="hw-banner ok">${msg}</div>` : ''); },
+      silentRefresh: async ()=>{ try{ hwState = await hwApi('state'); }catch(e){} }
+    };
+  }
+
   // ---------- モーダル ----------
   async function openHalloweenModal(tab){
     modalContent.dataset.mode = 'halloween';
@@ -6691,7 +6800,8 @@ function renderOtherGamesModal(){
       return;
     }
     if(!authToken){
-      modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">イベントに参加するにはログインが必要です。<br>右上の 👤 からログインしてください。</div>`;
+      modalContent.innerHTML = window.HW2 ? HW2.guestHtml() : `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">イベントに参加するにはログインが必要です。<br>右上の 👤 からログインしてください。</div>`;
+      if(window.HW2) HW2.bindGuest(modalContent);
       return;
     }
     modalContent.innerHTML = `<h2 class="hw-h2">🎃 ハロウィンイベント</h2><div class="empty-hint">読み込み中...</div>`;
@@ -6704,7 +6814,8 @@ function renderOtherGamesModal(){
     }
   }
 
-  const HW_TABS = [['home','🏠 ホーム'],['road','🛤 ロード'],['missions','📋 ミッション'],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['ranking','🏆 ランキング']];
+  // [キー, '絵文字 名前', NEWバッジ] — 受け取れるものがあるタブには、サーバーの badges で赤丸が付く
+  const HW_TABS = [['home','🏠 ホーム'],['road','🛤 ロード'],['missions','📋 ミッション'],['tot','🚪 ドア',1],['patch','🌱 畑',1],['dex','📖 図鑑',1],['stamps','🎪 スタンプ',1],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['community','🌍 みんなで',1],['ranking','🏆 ランキング']];
   let hwTimerHandle = null;
 
   function renderHalloween(extraHtml){
@@ -6721,11 +6832,13 @@ function renderOtherGamesModal(){
           <span title="コイン">🪙 <b>${formatNumber(s.coins)}</b></span>
         </div>
       </div>
-      <div class="tab-row hw-tabs">${HW_TABS.map(([k,l])=>`<button class="tab-btn ${hwTab===k?'active':''}" data-hwtab="${k}">${l}</button>`).join('')}</div>
+      <div class="tab-row hw-tabs">${HW_TABS.map(([k,l,isNew])=>{ const sp = l.indexOf(' '), bd = (s.badges && s.badges[k]) || 0; return `<button class="tab-btn hw-tab ${hwTab===k?'active':''} ${isNew?'new':''}" data-hwtab="${k}"><span class="hw-ti">${l.slice(0,sp)}</span><span class="hw-tl">${l.slice(sp+1)}</span>${bd?`<i class="hw-bd">${bd>9?'9+':bd}</i>`:''}</button>`; }).join('')}</div>
+      ${window.HW2 ? HW2.boostBar(s) : ''}
       ${active ? '' : `<div class="hw-banner warn">⏳ イベントは終了しました。報酬の受け取りと交換所だけ、あと少し使えます。</div>`}
       ${extraHtml || ''}
       <div id="hwBody"></div>`;
     modalContent.innerHTML = html;
+    { const at = modalContent.querySelector('.hw-tab.active'); if(at && at.scrollIntoView) at.scrollIntoView({ inline:'center', block:'nearest' }); }
     modalContent.querySelectorAll('[data-hwtab]').forEach(b=>b.addEventListener('click', ()=>{
       hwTab = b.dataset.hwtab; renderHalloween();
     }));
@@ -6736,7 +6849,9 @@ function renderOtherGamesModal(){
     else if(hwTab==='gacha') body.innerHTML = hwGachaHtml();
     else if(hwTab==='shop') body.innerHTML = hwShopHtml();
     else if(hwTab==='ranking'){ body.innerHTML = `<div class="empty-hint">読み込み中...</div>`; hwLoadRanking(); }
+    else if(window.HW2 && HW2.has(hwTab)) body.innerHTML = HW2.render(hwTab, hwState, hw2Ctx());
     hwBindBody();
+    if(window.HW2 && HW2.has(hwTab)) HW2.bind(hwTab, modalContent, hwState, hw2Ctx());
 
     const tick = ()=>{
       const el = document.getElementById('hwTimer');
@@ -6769,6 +6884,7 @@ function renderOtherGamesModal(){
     }).join('');
     const claimable = !lg.claimedToday && eventPhaseNow()==='active';
     return `
+      ${window.HW2 ? HW2.homeTop(s, hw2Ctx()) : ''}
       <div class="hw-card">
         <div class="qtitle">🎁 トリック・オア・トリート(毎日ログインボーナス)</div>
         <div class="hw-days">${days}</div>
@@ -6788,6 +6904,9 @@ function renderOtherGamesModal(){
           ・毎日のミッション(3つ)と、毎週のミッション(3つ)をクリア<br>
           ・毎日のログインボーナス<br>
           ・フレンド対決をプレイすると +10 ボーナス<br>
+          ・🚪 トリック・オア・トリートと 🔮 おみくじ(毎日)/ 🌱 かぼちゃ畑の収穫 / 👻 ロビーに飛んでくるおばけ<br>
+          ・📖 図鑑・🎪 スタンプラリー・🌍 みんなの目標のごほうび<br>
+          ・⚡ ボーナスタイム(週末・毎晩20〜23時・10/30〜11/1)はキャンディが増える<br>
           ・ハロウィンガチャは、ハズレでもキャンディが少し戻ってくる<br>
           ・集めたキャンディは、ガチャ(1回🍬80)・交換所・ロード・ランキングに使われます<br>
           ・ガチャや交換所で使っても、ロードの進行(累計)は減りません
@@ -7149,6 +7268,8 @@ function renderOtherGamesModal(){
     sync(){ if(authToken) syncToServer(); },       // コイン等をサーバーへ保存
     fmt: formatNumber, sound: playSound, vibrate, toast: showEventToast, motionOff,
     isLoggedIn(){ return !!authToken; },
+    eventActive(){ return eventPhaseNow()==='active'; },
+    openRegister(){ renderAuthModal(); modalOverlay.classList.add('show'); const t = modalContent.querySelector('[data-tab="register"]'); if(t) t.click(); },
     userId(){ return currentUserId; },
     setMyTitle(t){ myTitle = t || null; },                    // 🏷 自分が付けている称号(チャットに送った直後の表示用)
     isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
