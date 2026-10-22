@@ -1,0 +1,94 @@
+/* =====================================================================
+   🕹 ミニゲーム パート2 (v3.6) — 見分けやすいメニュー + 新ゲームの見た目
+   ・ジャンルごとに色分け(アクション=オレンジ / パズル=青 / はんしゃ=緑 / あたま=紫)
+   ・NEWバッジ / 遊んだ印(✔) / ジャンル絞り込み
+   ===================================================================== */
+.mg-genres{ display:flex; gap:6px; overflow-x:auto; padding:2px 0 10px; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+.mg-genres::-webkit-scrollbar{ display:none; }
+.mg-gchip{
+  flex:0 0 auto; min-height:38px; padding:0 14px; border-radius:999px; cursor:pointer; white-space:nowrap;
+  font:800 13px var(--sans); color:var(--text); background:var(--panel); border:2px solid rgba(255,255,255,.12);
+}
+.mg-gchip.active{ color:#241028; background:linear-gradient(135deg, var(--gold), var(--coral)); border-color:#fff; box-shadow:0 4px 14px var(--gold-soft); }
+
+.mg-card{ --gc:#ff9a3d; border-left:6px solid var(--gc); min-height:128px; }
+.mg-card.g-action{ --gc:#ff9a3d; }
+.mg-card.g-puzzle{ --gc:#5c9dff; }
+.mg-card.g-reflex{ --gc:#3ddc84; }
+.mg-card.g-brain{ --gc:#b97bff; }
+.mg-genre{ position:absolute; right:10px; top:10px; padding:2px 8px; border-radius:999px; font:800 10px var(--sans); color:#1b1030; background:var(--gc); }
+.mg-emo{ font-size:30px; line-height:1.1; }
+.mg-name{ font-weight:800; font-size:14px; }
+.mg-new{ position:absolute; left:-4px; top:-8px; z-index:2; padding:2px 8px; border-radius:6px; font:900 10px var(--sans); letter-spacing:.08em;
+  color:#fff; background:linear-gradient(135deg,#ff3d6e,#ff8a1f); box-shadow:0 3px 10px rgba(255,60,110,.5); animation:m2Pulse 1.6s ease-in-out infinite; }
+.mg-stamp{ position:absolute; right:10px; bottom:10px; width:22px; height:22px; border-radius:50%; display:grid; place-items:center;
+  font:900 13px var(--sans); color:#10301c; background:#3ddc84; box-shadow:0 2px 8px rgba(61,220,132,.5); }
+.mg-lead b{ color:var(--gold); }
+@keyframes m2Pulse{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.1); } }
+
+/* ---------- 共通 ---------- */
+.m2-wrap{ width:100%; max-width:400px; display:flex; flex-direction:column; align-items:center; }
+.m2-canvas{ width:100%; max-width:340px; border-radius:12px; border:1px solid var(--gold-line); box-shadow:0 14px 40px rgba(0,0,0,.45); background:#120a22; touch-action:none; display:block; }
+.m2-canvas.wide{ max-width:400px; }
+.m2-canvas.sq{ max-width:336px; aspect-ratio:1; }
+.m2-duck{ margin-top:10px; width:100%; max-width:340px; min-height:52px; font-size:15px; }
+.m2-timebar{ width:100%; max-width:340px; height:10px; border-radius:6px; background:rgba(255,255,255,.1); overflow:hidden; margin-bottom:10px; }
+.m2-timebar i{ display:block; height:100%; width:100%; background:linear-gradient(90deg,#ff3d6e,#ffb347,#3ddc84); transition:width .1s linear; }
+
+/* ---------- シモン ---------- */
+.m2-simon-msg{ min-height:26px; font:800 15px var(--sans); color:var(--text); margin-bottom:10px; }
+.m2-simon{ display:grid; grid-template-columns:1fr 1fr; gap:12px; width:100%; max-width:320px; }
+.m2-pad{ aspect-ratio:1; font-size:46px; cursor:pointer; border-radius:20px; border:3px solid rgba(255,255,255,.25); color:rgba(0,0,0,.35);
+  background:color-mix(in srgb, var(--c) 40%, #1a1030); transition:transform .1s, filter .1s, box-shadow .1s; touch-action:manipulation; }
+.m2-pad.lit{ background:var(--c); transform:scale(1.05); box-shadow:0 0 34px var(--c); color:#fff; filter:brightness(1.3); }
+
+/* ---------- 反射神経 ---------- */
+.m2-reflex{ width:100%; max-width:340px; min-height:240px; border-radius:20px; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+  font:800 18px var(--sans); color:#fff; border:3px solid rgba(255,255,255,.25); touch-action:manipulation; user-select:none; }
+.m2-reflex .rf-emo{ font-size:64px; }
+.m2-reflex.wait{ background:linear-gradient(160deg,#3a1c5c,#1c0f33); }
+.m2-reflex.go{ background:linear-gradient(160deg,#18c46a,#0b7a3e); box-shadow:0 0 40px rgba(61,220,132,.6); }
+.m2-reflex.early{ background:linear-gradient(160deg,#d23a4a,#7a1426); }
+.m2-rflist{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:12px; font-size:12px; color:var(--text-dim); }
+.m2-rflist b{ color:var(--gold); }
+
+/* ---------- 計算 ---------- */
+.m2-q{ font:800 40px var(--serif); color:var(--text); margin:8px 0 16px; letter-spacing:.04em; transition:color .1s; }
+.m2-q.good{ color:#3ddc84; } .m2-q.bad{ color:#ff5d73; }
+.m2-opts{ display:grid; grid-template-columns:1fr 1fr; gap:12px; width:100%; max-width:320px; }
+.m2-opt{ min-height:64px; font:800 26px var(--sans); border-radius:16px; cursor:pointer; color:var(--text); background:var(--panel-light); border:3px solid rgba(255,255,255,.18); touch-action:manipulation; }
+.m2-opt:active{ transform:scale(.95); }
+.m2-opt.ok{ background:#1f9d57; border-color:#7dffb2; } .m2-opt.ng{ background:#a02a3a; border-color:#ff8f9e; }
+
+/* ---------- スライド ---------- */
+.m2-slide{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; width:100%; max-width:300px; aspect-ratio:1; padding:10px; border-radius:18px; background:#120a22; border:1px solid var(--gold-line); }
+.m2-tile{ position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:14px; cursor:pointer; border:2px solid rgba(255,255,255,.22);
+  background:linear-gradient(160deg,#5a2fa0,#3a1c6c); color:#fff; touch-action:manipulation; }
+.m2-tile .e{ font-size:34px; line-height:1; } .m2-tile .n{ font:800 13px var(--sans); opacity:.9; }
+.m2-tile.right{ background:linear-gradient(160deg,#c46a12,#8a4a08); border-color:#ffd98a; }
+.m2-tile.blank{ background:transparent; border:2px dashed rgba(255,255,255,.12); cursor:default; }
+.m2-tile:active:not(.blank){ transform:scale(.94); }
+
+/* ---------- ライツアウト ---------- */
+.m2-lights{ display:grid; grid-template-columns:repeat(5,1fr); gap:6px; width:100%; max-width:320px; aspect-ratio:1; padding:10px; border-radius:18px; background:#120a22; border:1px solid var(--gold-line); }
+.m2-light{ border-radius:12px; cursor:pointer; font-size:26px; border:2px solid rgba(255,255,255,.12); background:#241640; touch-action:manipulation; }
+.m2-light span{ filter:grayscale(1) brightness(.5); transition:filter .15s; }
+.m2-light.on{ background:radial-gradient(circle,#ff9a3d,#a24a00); border-color:#ffd98a; box-shadow:0 0 16px rgba(255,150,40,.7); }
+.m2-light.on span{ filter:none; }
+
+/* ---------- ナンバータッチ ---------- */
+.m2-num{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; width:100%; max-width:320px; }
+.m2-n{ aspect-ratio:1; font:800 26px var(--sans); border-radius:14px; cursor:pointer; color:#fff; border:2px solid rgba(255,255,255,.3);
+  background:hsl(var(--h) 55% 38%); touch-action:manipulation; transition:transform .08s, opacity .2s; }
+.m2-n:active{ transform:scale(.92); } .m2-n.done{ opacity:.18; pointer-events:none; } .m2-n.ng{ background:#a02a3a; animation:hdShake .2s; }
+
+/* ---------- ストループ ---------- */
+.m2-word{ font:900 64px var(--sans); min-height:90px; display:flex; align-items:center; margin:6px 0 14px; text-shadow:0 3px 14px rgba(0,0,0,.5); background:rgba(255,255,255,.07); border-radius:18px; padding:0 28px; border:2px solid rgba(255,255,255,.1); }
+.m2-word.ng{ animation:hdShake .2s; }
+.m2-inks{ display:grid; grid-template-columns:1fr 1fr; gap:12px; width:100%; max-width:320px; }
+.m2-ink{ min-height:64px; font:900 20px var(--sans); color:#1b1030; border-radius:16px; cursor:pointer; border:3px solid rgba(255,255,255,.6); touch-action:manipulation; text-shadow:0 1px 0 rgba(255,255,255,.4); }
+.m2-ink:active{ transform:scale(.94); }
+
+/* ---------- ランキングの種類タブ(18本以上でも見分けやすく) ---------- */
+.mg-ranktabs{ padding-bottom:10px; }
+.mg-rtab{ min-width:80px; }
