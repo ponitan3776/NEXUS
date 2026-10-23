@@ -1,10 +1,27 @@
+// ===== 旧名称で保存されたデータの引き継ぎ(名前変更の移行用。1回だけ動く。数週間たったらこのブロックごと消してOK) =====
+(function migrateLegacyStorage(){
+  try{
+    const OLD = 'candyblast-', NEW = 'nexus-';
+    Object.keys(localStorage).filter(k=> k.startsWith(OLD)).forEach(k=>{
+      const nk = NEW + k.slice(OLD.length);
+      if(localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      localStorage.removeItem(k);
+    });
+    const m = document.cookie.match(/(?:^|; )candyblast_auth=([^;]*)/);      // ログイン状態(Cookie)
+    if(m && !/(?:^|; )nexus_auth=/.test(document.cookie)){
+      document.cookie = `nexus_auth=${m[1]}; expires=${new Date(Date.now() + 30*24*60*60*1000).toUTCString()}; path=/; SameSite=Lax`;
+    }
+    if(m) document.cookie = 'candyblast_auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
+  }catch(e){}
+})();
+
 (function(){
 
 // バックエンドのURLは config.js で設定する(GitHub Pagesでもここを触らずに済む)
-const API_BASE_URL = String((window.CANDYBLAST_CONFIG && window.CANDYBLAST_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
+const API_BASE_URL = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
 
-// ★管理者アカウントを 'admin' から 'spirit' へ移行(バックエンドのADMIN_USER_IDと合わせること)
-const ADMIN_USER_ID = 'spirit';
+// ★管理者アカウントのID(バックエンドの ADMIN_USER_ID と必ず合わせること)
+const ADMIN_USER_ID = 'vortx';
 
 // ===================== 🎵 音楽ライブラリ =====================
   // 曲を追加するときは、この配列に1行足すだけ！
@@ -180,7 +197,7 @@ const ADMIN_USER_ID = 'spirit';
 
   // ===================== スキン =====================
   // ===================== 背景画像(お好みの写真を背景に設定) =====================
-  const STORAGE_BG_IMAGE = 'candyblast-bg-image-v1';
+  const STORAGE_BG_IMAGE = 'nexus-bg-image-v1';
   let customBgDataUrl = null;
 
   function renderBgTab(){
@@ -1096,7 +1113,7 @@ const PATTERN_LABELS = {
   let soundOn = true;
   let soundVolume = 1;
   let darkMode = true;
-  const STORAGE_APPSETTINGS = 'candyblast-appsettings-v1';
+  const STORAGE_APPSETTINGS = 'nexus-appsettings-v1';
   async function loadAppSettings(){
     try{
       const res = await appStorage.get(STORAGE_APPSETTINGS, false);
@@ -1144,7 +1161,7 @@ const PATTERN_LABELS = {
 
   let pendingMode = currentMode, pendingSize = SIZE;
   let authToken = null;
-  const COOKIE_AUTH = 'candyblast_auth';
+  const COOKIE_AUTH = 'nexus_auth';
   async function saveAuthSession(token, id){
     try{ setCookie(COOKIE_AUTH, JSON.stringify({token, id}), 30); }catch(err){}
   }
@@ -1181,7 +1198,7 @@ const PATTERN_LABELS = {
       if(r.status === 401 || r.status === 404){
         // 本当に無効(期限切れ・アカウント削除)なときだけログアウトする
         stopUserSync(); stopPlayTimeTracking();
-        authToken = null; currentUserId = null;
+        authToken = null; currentUserId = null; currentDisplayName = '';
         await clearAuthSession();
         updateAccountButton();
         return false;
@@ -1195,18 +1212,24 @@ const PATTERN_LABELS = {
     }
   }
   let currentUserId = null;
+  let currentDisplayName = '';                       // 表示名(未設定なら空 → 画面にはIDが出る)
+  const nameCache = {};                              // {ID: 表示名} フレンド・対決・チャットで見かけた人
+  const nameOf = (name, id)=> escapeHtml(name || id || '');          // 表示名(なければID)。HTMLに安全に埋め込める
+  const myName = ()=> currentDisplayName || currentUserId || 'ゲスト';
+  const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id) nameCache[x.id] = x.name || x.id; }); };
+  const cachedName = (id)=> escapeHtml(nameCache[id] || id || '');
   let playTime = 0;
   let playTimeInterval = null;
 
   // モード別ベストスコア
   let bestScores = { soft:0, baked:0, hard:0, extreme:0 };
 
-  const STORAGE_BEST = 'candyblast-highscore';
-  const STORAGE_BEST_SCORES = 'candyblast-bestScores-v1';
-  const STORAGE_COINS = 'candyblast-coins';
-  const STORAGE_QUESTS = 'candyblast-quests-v2';
-  const STORAGE_SETTINGS = 'candyblast-settings-v1';
-  const STORAGE_SKINS = 'candyblast-skins-v1';
+  const STORAGE_BEST = 'nexus-highscore';
+  const STORAGE_BEST_SCORES = 'nexus-bestScores-v1';
+  const STORAGE_COINS = 'nexus-coins';
+  const STORAGE_QUESTS = 'nexus-quests-v2';
+  const STORAGE_SETTINGS = 'nexus-settings-v1';
+  const STORAGE_SKINS = 'nexus-skins-v1';
 
   // ===================== ランキング用 =====================
   const RANKING_MODES = ['soft', 'baked', 'hard', 'extreme', 'tetris', 'timeattack'];
@@ -1377,7 +1400,7 @@ const PATTERN_LABELS = {
       html += `<div class="empty-hint">まだ挑戦者がいません。一番乗りを目指そう！</div>`;
     } else {
       data.ranking.forEach((r,i)=>{
-        html += `<div class="friend-item"><span class="fname">${i+1}. ${r.id}</span><span class="fsub">${r.score}点</span></div>`;
+        html += `<div class="friend-item"><span class="fname">${i+1}. ${nameOf(r.name, r.id)}</span><span class="fsub">${r.score}点</span></div>`;
       });
     }
     modalContent.innerHTML = html;
@@ -2556,7 +2579,7 @@ function issueNewQuest(excludePoolIds){
         <label class="switch"><input type="checkbox" id="vibrateToggle" ${uiPrefs.vibrate?'checked':''}><span class="switch-slider"></span></label>
       </div>
       <div class="settings-row" id="settingsAccountRow" style="cursor:pointer;">
-        <span>👤 アカウント</span><span class="sub">${currentUserId ? currentUserId : 'ゲスト'} ›</span>
+        <span>👤 アカウント</span><span class="sub">${currentUserId ? escapeHtml(myName()) : 'ゲスト'} ›</span>
       </div>
       <div class="settings-row" id="settingsFeedbackRow" style="cursor:pointer;">
         <span>📮 ご要望・不具合報告</span><span class="sub">›</span>
@@ -2953,7 +2976,7 @@ const titleEl = document.querySelector('.title');
   });
 
 // ===================== 🎵 BGMプレイヤー =====================
-  const STORAGE_BGM = 'candyblast-bgm-v1';
+  const STORAGE_BGM = 'nexus-bgm-v1';
   let bgmAudio = null;
   let bgmEnabled = true;
   let bgmVolume = 0.4;
@@ -3310,6 +3333,7 @@ restartBtn.addEventListener('click', ()=>{
     // ゲスト状態にリセット
     authToken = null;
     currentUserId = null;
+    currentDisplayName = '';
     clearAuthSession();
     // データ初期化
     bestScores = { soft:0, baked:0, hard:0, extreme:0 };
@@ -3362,7 +3386,7 @@ restartBtn.addEventListener('click', ()=>{
 
   function updateAccountButton(){
     accountBtn.textContent = currentUserId ? '👤' : '👤';
-    accountBtn.title = currentUserId ? `ログイン中: ${currentUserId}` : '未ログイン';
+    accountBtn.title = currentUserId ? `ログイン中: ${myName()}` : '未ログイン';
     if (currentUserId === ADMIN_USER_ID) {
       adminPanelBtn.style.display = 'flex';
       loadAdminSettings();
@@ -3395,12 +3419,71 @@ restartBtn.addEventListener('click', ()=>{
     }
   }
 
+  // ---------- 🏷 表示名 / 🪪 ID変更(アカウント画面) ----------
+  const fmtWait = (sec)=>{ sec = Math.max(0, Math.floor(sec)); const d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60); return d ? `${d}日${h}時間` : (h ? `${h}時間${m}分` : `${Math.max(1, m)}分`); };
+  async function setupAccountSettings(){
+    const hint = document.getElementById('idHint'), idBtn = document.getElementById('idSave'), idNew = document.getElementById('idNew'), idPw = document.getElementById('idPw');
+    const dnBtn = document.getElementById('dnSave'), dnInput = document.getElementById('dnInput'), dnMsg = document.getElementById('dnMsg'), idMsg = document.getElementById('idMsg');
+    if(!hint) return;
+    const setMsg = (el, text, ok)=>{ el.textContent = text; el.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
+    const lockId = (text)=>{ hint.textContent = text; idBtn.disabled = true; idNew.disabled = true; idPw.disabled = true; };
+    try{
+      const r = await fetch(`${API_BASE_URL}/api/account/info`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
+      const info = await r.json();
+      if(!r.ok) throw new Error(info.error || '');
+      if(info.isAdmin) lockId('管理者アカウントのIDは変更できません。');
+      else if(!info.canChangeId) lockId(`IDは${info.idChangeDays}日に1回だけ変更できます。あと ${fmtWait(info.waitSec)} で変更できます。`);
+      else hint.textContent = `IDはログインに使う名前です。${info.idChangeDays}日に1回だけ変更できます(変更すると運営に通知されます)。他の端末では、新しいIDでログインし直しが必要です。`;
+    }catch(err){ hint.textContent = 'IDの情報を取得できませんでした。通信を確認してください。'; }
+    dnBtn.addEventListener('click', async ()=>{
+      dnBtn.disabled = true; setMsg(dnMsg, '保存中...', true);
+      try{
+        const r = await fetch(`${API_BASE_URL}/api/account/display-name`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` }, body: JSON.stringify({ name: dnInput.value }) });
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || '保存に失敗しました');
+        currentDisplayName = d.displayName || ''; nameCache[currentUserId] = d.name;
+        updateAccountButton(); setMsg(dnMsg, `表示名を「${d.name}」にしました！`, true);
+        const card = modalContent.querySelector('.acct-name'); if(card) card.textContent = myName();
+      }catch(err){ setMsg(dnMsg, err.message, false); }
+      dnBtn.disabled = false;
+    });
+    idBtn.addEventListener('click', async ()=>{
+      const newId = idNew.value.trim(), password = idPw.value;
+      if(!newId || !password){ setMsg(idMsg, '新しいIDとパスワードを入力してください', false); return; }
+      if(!confirm(`IDを「${currentUserId}」から「${newId}」に変更します。\n\n・${7}日間は、もう一度変更できません\n・他の端末では、新しいIDでログインし直しが必要です\n・フレンドなどはそのまま引き継がれます\n\nよろしいですか？`)) return;
+      idBtn.disabled = true; setMsg(idMsg, '変更中...', true);
+      try{
+        const r = await fetch(`${API_BASE_URL}/api/account/change-id`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` }, body: JSON.stringify({ newId, password }) });
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || '変更に失敗しました');
+        authToken = d.token; currentUserId = d.id;
+        await saveAuthSession(authToken, currentUserId);
+        updateAccountButton(); renderAuthModal();
+        const m2 = document.getElementById('idMsg'); if(m2){ m2.textContent = `IDを「${d.id}」に変更しました！`; m2.className = 'auth-msg ok'; }
+      }catch(err){ setMsg(idMsg, err.message, false); idBtn.disabled = false; }
+    });
+  }
+
   function renderAuthModal(){
     modalContent.dataset.mode = 'auth';
     if(currentUserId){
       modalContent.innerHTML = `
         <h2 style="color:var(--gold);">👤 アカウント</h2>
-        <div class="sub">ログイン中: <b>${currentUserId}</b></div>
+        <div class="acct-card"><div class="acct-name">${escapeHtml(myName())}</div><div class="sub">ID: <b>${escapeHtml(currentUserId)}</b></div></div>
+        <div class="acct-sec">
+          <div class="acct-h">🏷 表示名</div>
+          <div class="sub">ランキング・チャット・フレンドに表示される名前です。日本語OK・16文字まで・何度でも変えられます。空にするとIDが表示されます。</div>
+          <div class="acct-row"><input type="text" id="dnInput" maxlength="16" placeholder="${escapeHtml(currentUserId)}" value="${escapeHtml(currentDisplayName)}" /><button class="primary-btn" id="dnSave" type="button">保存</button></div>
+          <div class="auth-msg" id="dnMsg"></div>
+        </div>
+        <div class="acct-sec">
+          <div class="acct-h">🪪 IDの変更</div>
+          <div class="sub" id="idHint">確認中...</div>
+          <input type="text" id="idNew" placeholder="新しいID(半角英数字とアンダースコア3〜20文字)" autocomplete="off" autocapitalize="off" />
+          <input type="password" id="idPw" placeholder="パスワード(確認用)" autocomplete="current-password" />
+          <button class="primary-btn" id="idSave" type="button">IDを変更する</button>
+          <div class="auth-msg" id="idMsg"></div>
+        </div>
         <div class="sub">スコア・コインはサーバーと同期されています。</div>
         <button class="primary-btn" id="syncNowBtn">今すぐ同期する</button>
         <button class="ghost-btn" id="logoutBtn">ログアウト</button>
@@ -3415,6 +3498,7 @@ restartBtn.addEventListener('click', ()=>{
         await syncFromServer();
       });
       document.getElementById('deleteAccountBtn').addEventListener('click', deleteAccount);
+      setupAccountSettings();
       return;
     }
     modalContent.innerHTML = `
@@ -3433,6 +3517,7 @@ restartBtn.addEventListener('click', ()=>{
       <form class="auth-form" id="registerForm">
         <label>ID (半角英数字3〜20文字)</label><input type="text" id="regId" autocomplete="username" />
         <label>パスワード (6文字以上)</label><input type="password" id="regPw" autocomplete="new-password" />
+        <label>表示名(省略OK・日本語OK・16文字まで・あとから変えられます)</label><input type="text" id="regName" maxlength="16" autocomplete="nickname" placeholder="例: たろう" />
         <button type="submit" class="primary-btn">新規登録</button>
         <div class="auth-msg" id="regMsg"></div>
       </form>
@@ -3465,6 +3550,7 @@ restartBtn.addEventListener('click', ()=>{
         if(!r.ok) throw new Error(data.error || 'ログインに失敗しました。');
         authToken = data.token;
         currentUserId = data.id;
+        currentDisplayName = data.displayName || '';
         await saveAuthSession(authToken, currentUserId);
         // ログイン後、サーバーからデータ取得
         await syncFromServer();
@@ -3490,13 +3576,14 @@ restartBtn.addEventListener('click', ()=>{
       e.preventDefault();
       const id = document.getElementById('regId').value.trim();
       const password = document.getElementById('regPw').value;
+      const displayName = document.getElementById('regName').value.trim();
       const msgEl = document.getElementById('regMsg');
       msgEl.textContent = '処理中...'; msgEl.className='auth-msg';
       try{
-        const r = await fetch(`${API_BASE_URL}/api/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id,password}) });
+        const r = await fetch(`${API_BASE_URL}/api/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id,password,displayName}) });
         const data = await r.json();
         if(!r.ok) throw new Error(data.error || '登録に失敗しました。');
-        authToken = data.token; currentUserId = data.id;
+        authToken = data.token; currentUserId = data.id; currentDisplayName = data.displayName || '';
         await saveAuthSession(authToken, currentUserId);
         // 新規登録時はデフォルトデータ
         bestScores = { soft:0, baked:0, hard:0, extreme:0 };
@@ -3607,6 +3694,7 @@ restartBtn.addEventListener('click', ()=>{
   }
 
   function applySyncData(data){
+    if (typeof data.displayName === 'string') currentDisplayName = data.displayName;
     // ベストスコア（モード別がある場合はそちらを優先）
     if (data.bestScores && typeof data.bestScores === 'object') {
       bestScores = { ...bestScores, ...data.bestScores };
@@ -3861,7 +3949,7 @@ restartBtn.addEventListener('click', ()=>{
                             `${user.value}点`;
           content += `
             <div style="display:flex; justify-content:space-between; gap:8px; padding:8px 4px; border-bottom:1px solid rgba(255,255,255,0.05); ${isMe ? 'background:rgba(255,217,61,0.15); border-radius:8px;' : ''}">
-              <span style="font-weight:700; min-width:0; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${escapeHtml(user.id)} ${isMe ? '👈' : ''}${titleTag(user.title)}</span>
+              <span style="font-weight:700; min-width:0; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${nameOf(user.name, user.id)} ${isMe ? '👈' : ''}${titleTag(user.title)}</span>
               <span style="color:var(--gold); font-weight:800; flex-shrink:0;">${valueLabel}</span>
             </div>
           `;
@@ -3886,7 +3974,7 @@ restartBtn.addEventListener('click', ()=>{
                             `${myValue}点`;
           content += `
             <div style="margin-top:16px; padding:14px 16px; background:linear-gradient(135deg,var(--panel-light),var(--panel)); border-radius:14px; border:2px solid var(--gold); display:flex; justify-content:space-between; align-items:center; position:sticky; bottom:0; backdrop-filter:blur(8px);">
-              <span style="font-weight:700; color:var(--gold);">👤 ${escapeHtml(currentUserId)} の順位</span>
+              <span style="font-weight:700; color:var(--gold);">👤 ${escapeHtml(myName())} の順位</span>
               <span style="font-weight:800; font-size:20px; color:var(--gold);">
                 ${rankDisplay}
                 <span style="font-size:14px; color:var(--text-dim); font-weight:400; margin-left:8px;">${valueLabel}</span>
@@ -4021,7 +4109,7 @@ restartBtn.addEventListener('click', ()=>{
   }
 
   // 中身が変わっていないときは再描画しない(3秒ごとの無駄な描画を省く)
-  function chatSig(list){ return list.map(m => `${m.id}${m.edited?'e':''}${m.deleted?'d':''}${m.title?m.title.id:''}`).join(','); }
+  function chatSig(list){ return list.map(m => `${m.id}${m.edited?'e':''}${m.deleted?'d':''}${m.title?m.title.id:''}${m.name||''}`).join(','); }
   async function fetchChatMessages() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages`);
@@ -4029,7 +4117,7 @@ restartBtn.addEventListener('click', ()=>{
       const data = await res.json();
       if(!Array.isArray(data)) return;
       const changed = chatSig(data) !== chatSig(chatMessages) || data.some((m,i)=> chatMessages[i] && chatMessages[i].message !== m.message);
-      chatMessages = data;
+      chatMessages = data; rememberNames(data.map(m=>({ id:m.user_id, name:m.name })));
       if(data.length) chatLastSeenId = Math.max(...data.map(m => m.id));
       if (changed || !document.querySelector('#chatMessages .chat-item')) renderChatMessages();
     } catch (err) {
@@ -4080,7 +4168,8 @@ restartBtn.addEventListener('click', ()=>{
       const isFriend = friendsList.some(f => f.id === data.userId);
       const isSelf = data.userId === currentUserId;
       modalContent.innerHTML = `
-        <h2 style="color:var(--gold);">👤 ${escapeHtml(data.userId)} のプロフィール</h2>
+        <h2 style="color:var(--gold);">👤 ${nameOf(data.name, data.userId)} のプロフィール</h2>
+        ${data.name && data.name !== data.userId ? `<div class="sub" style="text-align:center; margin:-6px 0 6px;">ID: ${escapeHtml(data.userId)}</div>` : ''}
         ${data.title ? `<div style="text-align:center; margin:-4px 0 6px;">${titleTag(data.title)}</div>` : ''}
         <div style="text-align:left; padding:8px 0;">
           <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
@@ -4151,7 +4240,7 @@ restartBtn.addEventListener('click', ()=>{
         <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
           <div class="chat-line" data-mid="${msg.id}" style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
             <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); showProfile('${msg.user_id}')">
-              [${escapeHtml(msg.user_id)}]${titleTag(msg.title)}
+              [${nameOf(msg.name, msg.user_id)}]${titleTag(msg.title)}
             </span>
             <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}</span>
             <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
@@ -4306,6 +4395,7 @@ restartBtn.addEventListener('click', ()=>{
       friendsList = data.friends || [];
       incomingRequests = data.incoming || [];
       outgoingRequests = data.outgoing || [];
+      rememberNames(friendsList); rememberNames(incomingRequests); rememberNames(outgoingRequests);
       const dm = data.dm || {};
       dmUnreadTotal = dm.total || 0; dmMentionCount = dm.mentions || 0; dmPerFriendUnread = dm.perFriend || {};
       socialLoaded = true;
@@ -4325,6 +4415,7 @@ restartBtn.addEventListener('click', ()=>{
       friendsList = data.friends || [];
       incomingRequests = data.incoming || [];
       outgoingRequests = data.outgoing || [];
+      rememberNames(friendsList); rememberNames(incomingRequests); rememberNames(outgoingRequests);
       updateFriendsBadge();
     } catch (err) { /* 無視 */ }
   }
@@ -4397,6 +4488,7 @@ restartBtn.addEventListener('click', ()=>{
       if (!res.ok) return;
       const data = await res.json();
       duelsList = data.duels || [];
+      Object.assign(nameCache, data.names || {});
     } catch (err) { /* 無視 */ }
   }
 
@@ -4461,7 +4553,7 @@ restartBtn.addEventListener('click', ()=>{
     const isChallenger = duel.challenger_id === currentUserId;
     const myScore = isChallenger ? duel.challenger_score : duel.opponent_score;
     const oppScore = isChallenger ? duel.opponent_score : duel.challenger_score;
-    const oppId = isChallenger ? duel.opponent_id : duel.challenger_id;
+    const oppId = cachedName(isChallenger ? duel.opponent_id : duel.challenger_id);
     if (duel.status !== 'completed') return `対 ${oppId}：相手の結果を待っています…`;
     if (myScore > oppScore) return `🏆 対 ${oppId} に勝利！（自分 ${myScore} - 相手 ${oppScore}）🪙+200コイン獲得！`;
     if (myScore < oppScore) return `😢 対 ${oppId} に敗北…（自分 ${myScore} - 相手 ${oppScore}）`;
@@ -4469,7 +4561,7 @@ restartBtn.addEventListener('click', ()=>{
   }
 
   async function removeFriendFn(friendId){
-    if (!confirm(`${friendId} をフレンドから削除しますか？\nDMの履歴は残りますが、再度フレンドになるまで送信できません。`)) return;
+    if (!confirm(`${nameCache[friendId] || friendId} をフレンドから削除しますか？\nDMの履歴は残りますが、再度フレンドになるまで送信できません。`)) return;
     try {
       await fetch(`${API_BASE_URL}/api/friends/remove`, {
         method: 'DELETE',
@@ -4531,7 +4623,7 @@ restartBtn.addEventListener('click', ()=>{
           html += `
             <div class="friend-item">
               <span class="fname" data-showprofile="${f.id}">
-                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${f.id}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}
+                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${nameOf(f.name, f.id)}${f.name && f.name !== f.id ? `<small class="fid">@${escapeHtml(f.id)}</small>` : ''}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}
               </span>
               <span class="fsub">${f.online ? '🟢 オンライン' : 'オフライン'}</span>
               <button class="fbtn" data-challenge="${f.id}" data-game="candy">🍬 対決</button>
@@ -4553,7 +4645,7 @@ restartBtn.addEventListener('click', ()=>{
       html += pendingIncoming.length===0 ? `<div class="empty-hint">届いている挑戦はありません。</div>` :
         pendingIncoming.map(d=>`
           <div class="friend-item pending">
-            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} ${d.challenger_id}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} ${cachedName(d.challenger_id)}</span>
             <button class="fbtn accept" data-duelaccept="${d.id}">受ける</button>
             <button class="fbtn decline" data-dueldecline="${d.id}">断る</button>
           </div>`).join('');
@@ -4563,7 +4655,7 @@ restartBtn.addEventListener('click', ()=>{
           const opp = d.challenger_id===currentUserId ? d.opponent_id : d.challenger_id;
           return `
           <div class="friend-item chat">
-            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} 対 ${opp}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} 対 ${cachedName(opp)}</span>
             <button class="fbtn" data-duelplay="${d.id}">プレイする</button>
           </div>`;
         }).join('');
@@ -4572,7 +4664,7 @@ restartBtn.addEventListener('click', ()=>{
       html += pendingAndWaiting.length===0 ? `<div class="empty-hint">ありません。</div>` :
         pendingAndWaiting.map(d=>{
           const opp = d.challenger_id===currentUserId ? d.opponent_id : d.challenger_id;
-          return `<div class="friend-item pending"><span class="fname">⚔️ 対 ${opp}</span><span class="fsub">結果待ち…</span></div>`;
+          return `<div class="friend-item pending"><span class="fname">⚔️ 対 ${cachedName(opp)}</span><span class="fsub">結果待ち…</span></div>`;
         }).join('');
       html += `<div class="qtitle" style="margin:14px 0 6px;">🏁 完了した対決</div>`;
       html += completed.length===0 ? `<div class="empty-hint">まだありません。</div>` :
@@ -4585,7 +4677,7 @@ restartBtn.addEventListener('click', ()=>{
         incomingRequests.forEach(r => {
           html += `
             <div class="friend-item pending">
-              <span class="fname" data-showprofile="${r.id}">🔔 ${r.id}</span>
+              <span class="fname" data-showprofile="${r.id}">🔔 ${nameOf(r.name, r.id)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
               <button class="fbtn accept" data-accept="${r.id}">承認</button>
               <button class="fbtn decline" data-decline="${r.id}">拒否</button>
             </div>`;
@@ -4598,7 +4690,7 @@ restartBtn.addEventListener('click', ()=>{
         outgoingRequests.forEach(r => {
           html += `
             <div class="friend-item pending">
-              <span class="fname">📤 ${r.id}</span>
+              <span class="fname">📤 ${nameOf(r.name, r.id)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
               <span class="fsub">承認待ち</span>
               <button class="fbtn decline" data-cancel="${r.id}">取消</button>
             </div>`;
@@ -4612,7 +4704,7 @@ restartBtn.addEventListener('click', ()=>{
           const unread = dmPerFriendUnread[f.id] || 0;
           html += `
             <div class="friend-item chat" data-openthread="${f.id}" style="cursor:pointer;">
-              <span class="fname">💬 ${f.id}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
+              <span class="fname">💬 ${nameOf(f.name, f.id)}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
               <span class="fsub">タップして会話を開く →</span>
             </div>`;
         });
@@ -4678,12 +4770,12 @@ restartBtn.addEventListener('click', ()=>{
   async function openDMThread(friendId){
     dmThreadWith = friendId;
     modalContent.dataset.mode = 'dmthread';
-    const initial = (friendId||'?').charAt(0).toUpperCase();
+    const initial = escapeHtml(Array.from(nameCache[friendId] || friendId || '?')[0].toUpperCase());
     modalContent.innerHTML = `
       <div class="dm-thread-header">
         <button class="dm-thread-back" id="dmBackBtn">←</button>
         <div class="dm-thread-avatar">${initial}</div>
-        <div class="dm-thread-title"><b>${friendId}</b><span>💬 ダイレクトメッセージ</span></div>
+        <div class="dm-thread-title"><b>${cachedName(friendId)}</b><span>💬 ダイレクトメッセージ</span></div>
       </div>
       <div id="dmMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; border:1px solid rgba(255,255,255,0.05);">
         <div class="empty-hint">読み込み中...</div>
@@ -4786,7 +4878,7 @@ restartBtn.addEventListener('click', ()=>{
       }
     });
     observer.observe(modalOverlay, { attributes: true, attributeFilter: ['class'] });
-    const sigOf = () => JSON.stringify([friendsList.map(f=>[f.id,f.online,f.title&&f.title.id]), incomingRequests.length, outgoingRequests.length, dmPerFriendUnread]);
+    const sigOf = () => JSON.stringify([friendsList.map(f=>[f.id,f.name,f.online,f.title&&f.title.id]), incomingRequests.length, outgoingRequests.length, dmPerFriendUnread]);
     const before = socialLoaded ? sigOf() : null;
     await fetchSocialSummary();
     const stillHere = modalOverlay.classList.contains('show') && modalContent.dataset.mode === 'friends';
@@ -4868,7 +4960,7 @@ restartBtn.addEventListener('click', ()=>{
   const TETRIS_SPRINT_LINES = 40, TETRIS_ULTRA_SECONDS = 120;
   let tetrisClockStart = 0, tetrisClockTimer = null;
   let tetrisStats = { tspins:0, pcs:0, startLines:0 };       // イベント報告用(Tスピン回数・パーフェクトクリア回数)
-  const TETRIS_REC_KEY = 'candyblast-tetris-records-v1';
+  const TETRIS_REC_KEY = 'nexus-tetris-records-v1';
   let tetrisRecords = { sprintMs:null, ultraScore:0 };
   try{ Object.assign(tetrisRecords, JSON.parse(localStorage.getItem(TETRIS_REC_KEY) || '{}')); }catch(e){}
   function saveTetrisRecords(){ try{ localStorage.setItem(TETRIS_REC_KEY, JSON.stringify(tetrisRecords)); }catch(e){} }
@@ -6136,7 +6228,7 @@ function enterTetrisMode(){
   });
 
   // ===================== サーバーお知らせ(管理者コマンド /announce の配信を表示) =====================
-  const STORAGE_LAST_ANNOUNCEMENT = 'candyblast-last-announcement-v1';
+  const STORAGE_LAST_ANNOUNCEMENT = 'nexus-last-announcement-v1';
   let lastSeenAnnouncementId = 0;
 
   async function loadLastSeenAnnouncement(){
@@ -6421,6 +6513,16 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.7.0', date:'2026-10-24', items:[
+      '🏷 「表示名」を追加。IDとは別に、ランキング・チャット・フレンドなどに出る名前を決められます(日本語OK・16文字まで・何度でも変更OK)',
+      '🪪 IDを変更できるように(7日に1回まで)。アカウント画面から、パスワードで確認して変更します。フレンド・記録・ギフトなどはそのまま引き継がれます',
+      '🆕 新規登録のときに、表示名も決められるようになりました(省略するとIDが表示されます)',
+      '🛠 フレンド一覧などに、表示名とあわせてIDも小さく表示(フレンド申請はIDで探します)'
+    ]},
+    { version:'3.6.1', date:'2026-10-23', items:[
+      '✨ ゲーム名が「NEXUS」になりました(制作: vortx)。タイトル・アプリ名・各画面の表記をすべて変更',
+      '💾 今までのデータ(ハイスコア・コイン・スキン・設定・ログイン状態)は、そのまま引き継がれます'
+    ]},
     { version:'3.6.0', date:'2026-10-23', items:[
       '🎃 ハロウィンパート2！ ハロウィン画面に新しいタブがたくさん増えました(🚪ドア / 🌱畑 / 📖図鑑 / 🎪スタンプ / 🌍みんなで)',
       '🚪 「トリック・オア・トリート」: 毎日3つのドアから1つ開けてプレゼント。🔮 おみくじ(1日1回)も追加',
@@ -6643,8 +6745,8 @@ function renderOtherGamesModal(){
   });
 
   // ===================== 🎃 ハロウィンイベント(期間はサーバーが管理。終了したら自動で消える) =====================
-  const EVENT_CACHE_KEY = 'candyblast-event-v1';
-  const EVENT_PREF_KEY = 'candyblast-uiprefs-v1';
+  const EVENT_CACHE_KEY = 'nexus-event-v1';
+  const EVENT_PREF_KEY = 'nexus-uiprefs-v1';
   let eventInfo = null;        // { phase, startsAt, endsAt, graceEndsAt, skew }
   let hwState = null;          // /api/event/halloween/state の結果
   let hwTab = 'home';
@@ -7077,7 +7179,7 @@ function renderOtherGamesModal(){
       const me = d.me;
       let html = `<div class="sub" style="margin-bottom:8px;">累計キャンディのランキング(上位20人)。あなた: ${me.rank ? `${me.rank}位 / 🍬${formatNumber(me.total)}` : '圏外(まだ0)'}</div>`;
       html += d.ranking.length ? d.ranking.map((r,i)=>`
-        <div class="friend-item ${r.id===me.id?'pending':''}"><span class="fname">${['🥇','🥈','🥉'][i] || (i+1)+'位'} ${r.id}</span><span class="fsub">🍬 ${formatNumber(r.total)}</span></div>`).join('')
+        <div class="friend-item ${r.id===me.id?'pending':''}"><span class="fname">${['🥇','🥈','🥉'][i] || (i+1)+'位'} ${nameOf(r.name, r.id)}</span><span class="fsub">🍬 ${formatNumber(r.total)}</span></div>`).join('')
         : `<div class="empty-hint">まだ誰もキャンディを集めていません。一番乗りを目指そう！</div>`;
       body.innerHTML = html;
     }catch(err){ if(body) body.innerHTML = `<div class="empty-hint">${err.message}</div>`; }
@@ -7191,7 +7293,7 @@ function renderOtherGamesModal(){
     const setBadge = (el, n)=>{ if(!el) return; el.classList.toggle('show', n > 0); const t = n > 99 ? '99+' : (n > 0 ? String(n) : ''); if(el.textContent !== t) el.textContent = t; };
     let wasAuth = false;
     const update = ()=>{
-      const nm = currentUserId || 'ゲスト', cn = formatNumber(coins);
+      const nm = myName(), cn = formatNumber(coins);
       if(lobbyName.textContent !== nm) lobbyName.textContent = nm;
       if(lobbyCoins.textContent !== cn) lobbyCoins.textContent = cn;   // 変わったときだけ書き換える(アニメが毎秒走らないように)
       const frOn = friendsDot.classList.contains('show'), chOn = chatDot.classList.contains('show');
@@ -7271,6 +7373,7 @@ function renderOtherGamesModal(){
     eventActive(){ return eventPhaseNow()==='active'; },
     openRegister(){ renderAuthModal(); modalOverlay.classList.add('show'); const t = modalContent.querySelector('[data-tab="register"]'); if(t) t.click(); },
     userId(){ return currentUserId; },
+    displayName(){ return myName(); },
     setMyTitle(t){ myTitle = t || null; },                    // 🏷 自分が付けている称号(チャットに送った直後の表示用)
     isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
     setCoins(n){ coins = Math.max(0, Number(n) || 0); updateCoinUI(); },
