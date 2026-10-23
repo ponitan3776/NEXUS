@@ -1,11 +1,12 @@
 """
-CandyBlast サーバー (Python / Flask 版)
+NEXUS サーバー (Python / Flask 版)
 元は Node.js / Express で書かれていた server.js を、機能・挙動をできるだけ
 そのまま保ったうえで Python に移植したものです。
 フロントエンド(index.html / styles.css / script.js)は変更していません。
 """
 import os
 import re
+import unicodedata
 import json
 import base64
 import random
@@ -43,9 +44,11 @@ CORS(app, origins=_allowed or '*', max_age=7200, expose_headers=['Server-Timing'
 DATABASE_URL = os.environ.get('DATABASE_URL')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key')
 
-# ★管理者アカウントを 'admin' から 'spirit' へ移行。
+# ★管理者アカウントのID(2026-10: 'spirit' → 'vortx' に変更)。
 #   ここを1箇所変えるだけで管理者判定・全スキン無料付与などが全て切り替わる。
-ADMIN_USER_ID = 'spirit'
+#   旧管理者 LEGACY_ADMIN_ID のアカウントは、起動時に自動でこのIDへ引っ越す(migrate_admin_id)。
+ADMIN_USER_ID = 'vortx'
+LEGACY_ADMIN_ID = 'spirit'
 
 def _clean_webhook(raw):
     """環境変数に貼ったURLの、前後の空白・改行・引用符を取り除く(コピー時に混ざりやすく、これだけで送信エラーになる)。"""
@@ -58,6 +61,8 @@ DISCORD_WEBHOOK_AUTH = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_AUTH'))
 DISCORD_WEBHOOK_LOGIN = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_LOGIN'))
 DISCORD_WEBHOOK_FEATURE_REQUEST = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_FEATURE_REQUEST'))
 DISCORD_WEBHOOK_BUG_REPORT = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_BUG_REPORT'))
+# 🪪 IDが変更されたときの通知先。未設定なら DISCORD_WEBHOOK_AUTH(新規登録と同じチャンネル)に送る
+DISCORD_WEBHOOK_ID_CHANGE = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_ID_CHANGE'))
 
 if not DATABASE_URL:
     print('❌ 環境変数 DATABASE_URL が設定されていません。RenderのEnvironmentタブでSupabaseの接続文字列を設定してください。')
@@ -236,9 +241,10 @@ def to_copy_block(text, limit=1500):
 #  ・失敗した理由は Render のログに「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
 _discord_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='discord')
 _discord_last_error = {}
-_DISCORD_HEADERS = {'User-Agent': 'DiscordBot (https://github.com/candyblast, 1.0)'}
+_DISCORD_HEADERS = {'User-Agent': 'DiscordBot (https://github.com/vortx, 1.0)'}
 _DISCORD_HOOKS = {'AUTH': 'DISCORD_WEBHOOK_AUTH', 'LOGIN': 'DISCORD_WEBHOOK_LOGIN',
-                  'FEATURE_REQUEST': 'DISCORD_WEBHOOK_FEATURE_REQUEST', 'BUG_REPORT': 'DISCORD_WEBHOOK_BUG_REPORT'}
+                  'FEATURE_REQUEST': 'DISCORD_WEBHOOK_FEATURE_REQUEST', 'BUG_REPORT': 'DISCORD_WEBHOOK_BUG_REPORT',
+                  'ID_CHANGE': 'DISCORD_WEBHOOK_ID_CHANGE'}
 
 
 def _discord_label(url):
@@ -311,7 +317,7 @@ def send_discord_notification(webhook_url, title, description, color=0x5865F2,
     embed = {
         'title': str(title)[:256], 'description': str(description or '-')[:4096], 'color': color,
         'timestamp': datetime.utcnow().isoformat() + 'Z',
-        'fields': safe_fields, 'footer': {'text': 'CandyBlast System'}
+        'fields': safe_fields, 'footer': {'text': 'NEXUS System'}
     }
     args = (webhook_url, embed, image_bytes, image_filename, image_mime_type)
     if wait:
@@ -329,7 +335,7 @@ def discord_status_text():
     for name, env in _DISCORD_HOOKS.items():
         url = globals().get(env)
         if not url:
-            lines.append(f'・{name}: ⚪ 未設定({env})')
+            lines.append(f'・{name}: ⚪ 未設定({env})' + ('  ※未設定なら AUTH のWebhookに送ります' if name == 'ID_CHANGE' else ''))
         elif not url.startswith('https://discord.com/api/webhooks/'):
             lines.append(f'・{name}: ❌ URLの形式が違います(https://discord.com/api/webhooks/… で始まる必要があります)')
         else:
@@ -443,6 +449,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         ALTER TABLE users ADD COLUMN IF NOT EXISTS titles JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS equipped_title TEXT;
     """)
+    db_execute("""
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS id_changed_at TIMESTAMP;
+    """)
     print('✅ users テーブル準備完了')
 
     db_execute("""
@@ -532,7 +542,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
 
     # 🗳 投票 / 🎁 ギフト / ✏️ チャット・DMの編集・取り消し用の列
     social.init_tables(db_execute)
-    engage.init_tables(db_execute)          # 📆 毎日ログインボーナス
+    halloween.eng_init_tables(db_execute)          # 📆 毎日ログインボーナス
+    migrate_admin_id()                             # 👑 旧管理者IDを新しい管理者IDへ(1回だけ。済んでいれば何もしない)
 
     # ⚡ 読み込みを速くするための索引(無くても動くが、データが増えるほど遅くなる)
     db_execute('''
@@ -578,7 +589,6 @@ GACHA_SKIN_IDS = [
 import halloween  # 🎃 期間限定イベント(別ファイル)
 import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
 import titles  # 🏷 称号(別ファイル)
-import engage  # 🎁 毎日ログインボーナス・ウェルカムギフト(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.004  # 1スキンあたり0.4%(8種で合計3.2%) ← 一般的なソシャゲの最高レア帯
@@ -652,6 +662,190 @@ def handle_api_error(err):
     return jsonify({'error': err.message}), err.status
 
 
+# ===================== 🪪 表示名 / ID変更 / 管理者IDの引っ越し (v3.7) =====================
+# ・ID = ログインに使う名前(半角英数字とアンダースコア3〜20文字)。7日に1回だけ変更できる。変えると通知がDiscordに届く
+# ・表示名 = ランキング・チャット・フレンドなどに出る名前(日本語OK・16文字まで・何度でも変更OK・同じ名前の人がいてもOK)
+ID_CHANGE_DAYS = 7
+DISPLAY_NAME_MAX = 16
+RESERVED_IDS = {ADMIN_USER_ID.lower(), LEGACY_ADMIN_ID.lower(), 'admin', 'administrator', 'nexus', 'system', 'owner', 'staff', 'moderator'}
+RESERVED_NAME_EXACT = {'nexus', 'admin', 'system', 'spirit', 'owner'}
+RESERVED_NAME_WORDS = ('vortx', '運営', '管理者', '管理人', 'ゲスト')       # 運営のなりすまし防止(管理者本人は使える)
+_DN_SYMBOLS = set('・ー〜～★☆♪♡♥!?！？._-＿')
+_DN_FORBIDDEN = set('<>&"\'`\\')
+
+# ユーザーIDが入っている列の一覧(ID変更・管理者IDの引っ越しで、全部まとめて書き換える)
+USER_ID_COLUMNS = [
+    ('chat_messages', 'user_id'), ('friend_requests', 'from_id'), ('friend_requests', 'to_id'),
+    ('friends', 'user_id'), ('friends', 'friend_id'), ('dm_messages', 'from_id'), ('dm_messages', 'to_id'),
+    ('duels', 'challenger_id'), ('duels', 'opponent_id'), ('weekly_challenge_scores', 'user_id'),
+    ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('polls', 'created_by'),
+    ('gifts', 'to_user'), ('gifts', 'from_user'), ('daily_bonus', 'user_id'),
+]
+# 新しいIDに「持ち主のいない古いデータ」(アカウント削除の残り)があると重複エラーになる表は、先に片付ける
+ORPHAN_PURGE = [('friend_requests', 'from_id'), ('friend_requests', 'to_id'), ('friends', 'user_id'), ('friends', 'friend_id'),
+                ('weekly_challenge_scores', 'user_id'), ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('daily_bonus', 'user_id')]
+
+
+def rename_user(cur, old_id, new_id):
+    """同じトランザクションの中で、全テーブルのIDを old_id → new_id に書き換える"""
+    for tbl, col in ORPHAN_PURGE:
+        cur.execute(f'DELETE FROM {tbl} WHERE {col} = %s', [new_id])
+    cur.execute('UPDATE users SET id = %s WHERE id = %s', [new_id, old_id])
+    for tbl, col in USER_ID_COLUMNS:
+        cur.execute(f'UPDATE {tbl} SET {col} = %s WHERE {col} = %s', [new_id, old_id])
+
+
+def migrate_admin_id():
+    """旧管理者(LEGACY_ADMIN_ID)のアカウントを ADMIN_USER_ID に引っ越す。パスワード・スキン・フレンド等は全てそのまま。
+    新IDを既に誰かが使っているときは何もしない(ログに警告だけ出す)。"""
+    if LEGACY_ADMIN_ID == ADMIN_USER_ID:
+        return
+    try:
+        with db_transaction() as cur:
+            cur.execute('SELECT id FROM users WHERE id IN (%s, %s) FOR UPDATE', [LEGACY_ADMIN_ID, ADMIN_USER_ID])
+            ids = {r['id'] for r in cur.fetchall()}
+            if LEGACY_ADMIN_ID in ids and ADMIN_USER_ID not in ids:
+                rename_user(cur, LEGACY_ADMIN_ID, ADMIN_USER_ID)
+                print(f'👑 管理者IDを引っ越しました: {LEGACY_ADMIN_ID} → {ADMIN_USER_ID}')
+            elif LEGACY_ADMIN_ID in ids and ADMIN_USER_ID in ids:
+                print(f'⚠️ 管理者IDの引っ越しをスキップ: {ADMIN_USER_ID} は既に別のアカウントで使われています')
+    except Exception as err:
+        print(f'管理者IDの引っ越しに失敗: {err}')
+
+
+def id_is_reserved(user_id):
+    return str(user_id or '').lower() in RESERVED_IDS
+
+
+def clean_display_name(raw, is_admin=False):
+    """表示名を検査して整える。空文字なら「IDをそのまま表示」に戻す。不正なら ApiError"""
+    name = unicodedata.normalize('NFC', str(raw or '')).strip()
+    name = re.sub(r'[\s\u3000]+', ' ', name)
+    if not name:
+        return ''
+    if len(name) > DISPLAY_NAME_MAX:
+        raise ApiError(f'表示名は{DISPLAY_NAME_MAX}文字以内にしてください', 400)
+    marks = 0
+    for ch in name:
+        cat = unicodedata.category(ch)
+        marks = marks + 1 if cat[0] == 'M' else 0
+        ok = (ch == ' ' or cat[0] in 'LN' or cat[0] == 'M' or ch in _DN_SYMBOLS or cat in ('So', 'Sk') or ch in '\u200d\ufe0f')
+        if ch in _DN_FORBIDDEN or not ok or marks > 2:
+            raise ApiError('表示名に使えない文字が含まれています(日本語・英数字・一部の記号・絵文字が使えます)', 400)
+    if re.search(r'https?:|www\.|\.(com|net|jp|gg|io)\b', name, re.I):
+        raise ApiError('表示名にURLは使えません', 400)
+    if not is_admin:
+        norm = unicodedata.normalize('NFKC', name).casefold().replace(' ', '')
+        norm = norm.translate(str.maketrans('01345@$', 'oleasas'))        # 0→o 1→l 3→e 4→a 5→s など、似た文字での言い換えも見破る
+        if norm in RESERVED_NAME_EXACT or any(w in norm for w in RESERVED_NAME_WORDS):
+            raise ApiError('その表示名は使えません', 400)
+    return name
+
+
+def name_map(ids):
+    """{ID: 表示名(未設定ならID)} をまとめて取る"""
+    ids = list({i for i in ids if i})
+    if not ids:
+        return {}
+    rows = db_query('SELECT id, display_name FROM users WHERE id = ANY(%s)', [ids])
+    out = {r['id']: (r.get('display_name') or r['id']) for r in rows}
+    return {i: out.get(i, i) for i in ids}
+
+
+def _wait_text(sec):
+    sec = int(sec)
+    d, h, m = sec // 86400, (sec % 86400) // 3600, (sec % 3600) // 60
+    return f'{d}日{h}時間' if d else (f'{h}時間{m}分' if h else f'{max(1, m)}分')
+
+
+@app.get('/api/account/info')
+def account_info():
+    try:
+        user_id = require_auth()
+        rows = db_query("SELECT display_name, id_changed_at, "
+                        "GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ((id_changed_at + make_interval(days => %s))::timestamptz - NOW())), 0))::bigint AS wait_sec "
+                        "FROM users WHERE id = %s", [ID_CHANGE_DAYS, user_id])
+        if not rows:
+            raise ApiError('ユーザーが見つかりません', 404)
+        r = rows[0]
+        return jsonify({'id': user_id, 'displayName': r.get('display_name') or '', 'idChangeDays': ID_CHANGE_DAYS,
+                        'waitSec': int(r['wait_sec'] or 0), 'canChangeId': int(r['wait_sec'] or 0) == 0 and user_id != ADMIN_USER_ID,
+                        'isAdmin': user_id == ADMIN_USER_ID, 'nameMax': DISPLAY_NAME_MAX})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.post('/api/account/display-name')
+def account_display_name():
+    try:
+        user_id = require_auth()
+        body = request.get_json(silent=True) or {}
+        name = clean_display_name(body.get('name'), is_admin=(user_id == ADMIN_USER_ID))
+        db_execute('UPDATE users SET display_name = %s WHERE id = %s', [name or None, user_id])
+        cache_drop('chat:', 'rank:')
+        return jsonify({'ok': True, 'displayName': name, 'name': name or user_id})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        print(f'display name error: {err}')
+        return jsonify({'error': 'サーバーエラー'}), 500
+
+
+@app.post('/api/account/change-id')
+def account_change_id():
+    try:
+        user_id = require_auth()
+        body = request.get_json(silent=True) or {}
+        new_id = str(body.get('newId') or '').strip()
+        password = body.get('password')
+        if user_id == ADMIN_USER_ID:
+            raise ApiError('管理者アカウントのIDは変更できません', 403)
+        if not password:
+            raise ApiError('確認のため、パスワードを入力してください', 400)
+        if not re.match(r'^[a-zA-Z0-9_]{3,20}$', new_id):
+            raise ApiError('IDは半角英数字とアンダースコアで3〜20文字です', 400)
+        if new_id == user_id:
+            raise ApiError('今のIDと同じです', 400)
+        if id_is_reserved(new_id):
+            raise ApiError('このIDは使えません', 400)
+        with db_transaction() as cur:
+            cur.execute("SELECT password_hash, banned, display_name, "
+                        "GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ((id_changed_at + make_interval(days => %s))::timestamptz - NOW())), 0))::bigint AS wait_sec "
+                        "FROM users WHERE id = %s FOR UPDATE", [ID_CHANGE_DAYS, user_id])
+            row = cur.fetchone()
+            if not row:
+                raise ApiError('ユーザーが見つかりません', 404)
+            if row.get('banned'):
+                raise ApiError('このアカウントはBANされています', 403)
+            if not check_password(password, row['password_hash']):
+                raise ApiError('パスワードが違います', 401)
+            if int(row['wait_sec'] or 0) > 0:
+                raise ApiError(f'IDは{ID_CHANGE_DAYS}日に1回だけ変更できます。あと{_wait_text(row["wait_sec"])}で変更できます', 429)
+            cur.execute('SELECT 1 FROM users WHERE id = %s', [new_id])
+            if cur.fetchone():
+                raise ApiError('このIDは既に使われています', 400)
+            rename_user(cur, user_id, new_id)
+            cur.execute('UPDATE users SET id_changed_at = NOW() WHERE id = %s', [new_id])
+            display = row.get('display_name') or ''
+        cache_drop('chat:', 'rank:')
+        token = make_token(new_id)
+        send_discord_notification(
+            DISCORD_WEBHOOK_ID_CHANGE or DISCORD_WEBHOOK_AUTH, '🪪 IDが変更されました', f'**{user_id}** → **{new_id}**', 0xFFA500,
+            [{'name': '旧ID', 'value': f'`{user_id}`', 'inline': True}, {'name': '新ID', 'value': f'`{new_id}`', 'inline': True},
+             {'name': '表示名', 'value': display or '(未設定)', 'inline': True},
+             {'name': '📅 変更日時', 'value': datetime.now().strftime('%Y/%m/%d %H:%M:%S'), 'inline': True},
+             {'name': '⏳ 次に変更できるのは', 'value': f'{ID_CHANGE_DAYS}日後', 'inline': True}]
+        )
+        return jsonify({'ok': True, 'id': new_id, 'token': token, 'waitSec': ID_CHANGE_DAYS * 86400})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        if 'unique' in str(err).lower() or 'duplicate' in str(err).lower():
+            return jsonify({'error': 'このIDは既に使われています'}), 400
+        print(f'change id error: {err}')
+        return jsonify({'error': 'サーバーエラー'}), 500
+
+
 # ===================== ユーザー登録 =====================
 @app.post('/api/register')
 def register():
@@ -662,23 +856,28 @@ def register():
         return jsonify({'error': 'IDとパスワード(6文字以上)が必要です'}), 400
     if not re.match(r'^[a-zA-Z0-9_]{3,20}$', user_id):
         return jsonify({'error': 'IDは半角英数字とアンダースコアで3〜20文字です'}), 400
+    if id_is_reserved(user_id):
+        return jsonify({'error': 'このIDは使えません'}), 400
     try:
+        display_name = clean_display_name(body.get('displayName'))          # 任意(日本語OK)。空ならIDがそのまま表示名
         if db_query('SELECT * FROM users WHERE id = %s', [user_id]):
             return jsonify({'error': 'このIDは既に使われています'}), 400
         pw_hash = hash_password(password)
         recovery_code = generate_recovery_code()
         db_execute(
-            'INSERT INTO users (id, password_hash, recovery_code, recovery_code_used) VALUES (%s, %s, %s, %s)',
-            [user_id, pw_hash, recovery_code, False]
+            'INSERT INTO users (id, password_hash, recovery_code, recovery_code_used, display_name) VALUES (%s, %s, %s, %s, %s)',
+            [user_id, pw_hash, recovery_code, False, display_name or None]
         )
         token = make_token(user_id)
-        engage.send_welcome_gift(db_query, user_id)      # 🎁 ウェルカムギフト(ログイン後に開封できる)
+        halloween.eng_send_welcome_gift(db_query, user_id)      # 🎁 ウェルカムギフト(ログイン後に開封できる)
         send_discord_notification(
             DISCORD_WEBHOOK_AUTH, '📝 新規ユーザー登録', f'ユーザー **{user_id}** が新規登録しました！', 0x00FF00,
             [{'name': '🔑 復元コード', 'value': f'`{recovery_code}`', 'inline': False},
              {'name': '📅 登録日時', 'value': datetime.now().strftime('%Y/%m/%d %H:%M:%S'), 'inline': True}]
         )
-        return jsonify({'token': token, 'id': user_id, 'recoveryCode': recovery_code})
+        return jsonify({'token': token, 'id': user_id, 'displayName': display_name, 'recoveryCode': recovery_code})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
     except Exception as err:
         print(err)
         return jsonify({'error': 'サーバーエラー'}), 500
@@ -707,7 +906,7 @@ def login():
              {'name': '🏆 現在のベストスコア', 'value': f"{user.get('best_score') or 0}点", 'inline': True}]
         )
         return jsonify({
-            'token': token, 'id': user_id,
+            'token': token, 'id': user_id, 'displayName': user.get('display_name') or '',
             'bestScore': user.get('best_score'), 'bestScores': user.get('best_scores') or {},
             'coins': int(user.get('coins') or 0), 'playTime': user.get('play_time') or 0,
             'lastLogin': user.get('last_login').isoformat() if user.get('last_login') else None
@@ -875,7 +1074,7 @@ def sync_get():
                 UPDATE users SET last_active = NOW()
                 WHERE id = %s AND (last_active IS NULL OR last_active < NOW() - INTERVAL '8 seconds') RETURNING 1
             )
-            SELECT best_score, best_scores, coins, play_time, skins, equipped_skin, quests FROM users WHERE id = %s
+            SELECT best_score, best_scores, coins, play_time, skins, equipped_skin, quests, display_name FROM users WHERE id = %s
         """, [user_id, user_id])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
@@ -885,7 +1084,8 @@ def sync_get():
             'coins': int(user.get('coins') or 0), 'playTime': user.get('play_time') or 0,
             'skins': json.loads(user.get('skins') or '["default"]'),
             'equippedSkin': user.get('equipped_skin') or 'default',
-            'quests': json.loads(user.get('quests') or '[]')
+            'quests': json.loads(user.get('quests') or '[]'),
+            'displayName': user.get('display_name') or ''
         })
     except Exception:
         return jsonify({'error': '認証エラー'}), 401
@@ -904,10 +1104,10 @@ def _rank_build(mode, rtype):
         val = f"(best_scores->>'{mode}')::bigint"
         where = f"best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'"
         order = val
-    rows = db_query(f"SELECT id, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
+    rows = db_query(f"SELECT id, display_name, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
                     f"WHERE {where} ORDER BY {order} DESC LIMIT 50")
     total = int(rows[0]['total']) if rows else 0
-    top = [{'id': r['id'], 'value': int(r['value']), 'title': titles.view_of(r.get('equipped_title'), r['id'], ADMIN_USER_ID)}
+    top = [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'value': int(r['value']), 'title': titles.view_of(r.get('equipped_title'), r['id'], ADMIN_USER_ID)}
            for r in rows]
     return {'top': top, 'totalUsers': total}
 
@@ -1377,6 +1577,7 @@ def weekly_challenge_get():
             'SELECT user_id, score FROM weekly_challenge_scores WHERE week_key=%s ORDER BY score DESC LIMIT 10',
             [week_key]
         )
+        _names = name_map([r['user_id'] for r in ranking_rows])
         my_score = None
         token = get_token_from_request()
         if token:
@@ -1394,7 +1595,7 @@ def weekly_challenge_get():
             'challenge': {'weekKey': week_key, 'mode': challenge['mode'], 'size': challenge['size'],
                          'reward': WEEKLY_CHALLENGE_REWARD,
                          'secondsUntilReset': round((next_reset - now).total_seconds())},
-            'ranking': [{'id': r['user_id'], 'score': r['score']} for r in ranking_rows],
+            'ranking': [{'id': r['user_id'], 'name': _names.get(r['user_id'], r['user_id']), 'score': r['score']} for r in ranking_rows],
             'myScore': my_score, 'hasPlayed': my_score is not None
         })
     except Exception as err:
@@ -1639,13 +1840,13 @@ def friends_remove():
 FRIENDS_SQL = """
 SELECT
  (SELECT COALESCE(json_agg(t ORDER BY t.id), '[]'::json) FROM (
-    SELECT u.id, u.best_score, u.coins, u.equipped_title,
+    SELECT u.id, u.display_name AS name, u.best_score, u.coins, u.equipped_title,
            (u.last_active IS NOT NULL AND u.last_active > NOW() - INTERVAL '20 seconds') AS online
     FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = %s) t) AS friends,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT from_id AS id, created_at FROM friend_requests WHERE to_id = %s AND status = 'pending' ORDER BY created_at DESC) t) AS incoming,
+    SELECT fr.from_id AS id, u.display_name AS name, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.from_id WHERE fr.to_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS incoming,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT to_id AS id, created_at FROM friend_requests WHERE from_id = %s AND status = 'pending' ORDER BY created_at DESC) t) AS outgoing
+    SELECT fr.to_id AS id, u.display_name AS name, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.to_id WHERE fr.from_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS outgoing
 """
 
 
@@ -1734,7 +1935,7 @@ def duels_list():
         user_id = require_auth()
         rows = db_query('SELECT * FROM duels WHERE challenger_id=%s OR opponent_id=%s ORDER BY created_at DESC LIMIT 30',
                         [user_id, user_id])
-        return jsonify({'duels': rows})
+        return jsonify({'duels': rows, 'names': name_map([i for r in rows for i in (r['challenger_id'], r['opponent_id'])])})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
 
@@ -2199,10 +2400,11 @@ CHAT_CACHE_SEC = 1.5
 
 def _chat_load():
     rows = db_query("SELECT c.id, c.user_id, CASE WHEN COALESCE(c.deleted, FALSE) THEN '' ELSE c.message END AS message, c.timestamp, "
-                    "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title "
+                    "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title, u.display_name AS name "
                     "FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT 50) c LEFT JOIN users u ON u.id = c.user_id ORDER BY c.id")
     for r in rows:
         r['title'] = titles.view_of(r.pop('equipped_title', None), r['user_id'], ADMIN_USER_ID)
+        r['name'] = r.get('name') or r['user_id']
     return rows
 
 
@@ -2248,7 +2450,9 @@ def chat_send():
                 db_execute("DELETE FROM chat_messages WHERE id < (SELECT id FROM chat_messages ORDER BY id DESC OFFSET 49 LIMIT 1)")
             except Exception as err:
                 print(f'chat prune error: {err}')
-        return jsonify(rows[0])
+        out = dict(rows[0])
+        out['name'] = name_map([user_id]).get(user_id, user_id)
+        return jsonify(out)
     except Exception as err:
         print(err)
         return jsonify({'error': '送信に失敗しました'}), 500
@@ -2258,12 +2462,12 @@ def chat_send():
 @app.get('/api/user/profile/<user_id_param>')
 def user_profile(user_id_param):
     try:
-        rows = db_query('SELECT id, best_score, coins, play_time, created_at, equipped_title FROM users WHERE id = %s', [user_id_param])
+        rows = db_query('SELECT id, display_name, best_score, coins, play_time, created_at, equipped_title FROM users WHERE id = %s', [user_id_param])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
         user = rows[0]
         return jsonify({
-            'userId': user['id'], 'bestScore': user['best_score'], 'coins': int(user['coins'] or 0),
+            'userId': user['id'], 'name': user.get('display_name') or user['id'], 'bestScore': user['best_score'], 'coins': int(user['coins'] or 0),
             'playTime': user.get('play_time') or 0,
             'title': titles.view_of(user.get('equipped_title'), user['id'], ADMIN_USER_ID),
             'joinedAt': user['created_at'].isoformat() if user.get('created_at') else None
@@ -2280,7 +2484,7 @@ minigames.register(app, db_query, require_auth, ApiError)
 social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID,
                 on_chat_change=lambda: cache_drop('chat:'))
 titles.register(app, db_query, require_auth, ApiError, ADMIN_USER_ID)
-engage.register(app, db_query, db_transaction, require_auth, ApiError)
+halloween.eng_register(app, db_query, db_transaction, require_auth, ApiError)
 
 
 # ===================== ヘルスチェック / スリープ対策 =====================
