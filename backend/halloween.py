@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 
 from flask import request, jsonify
 
-import minigames as _minigames    # スタンプラリーの対象(ミニゲームの一覧)を自動で取る
 
 JST = ZoneInfo('Asia/Tokyo')
 EVENT_ID = 'halloween2026'
@@ -57,6 +56,8 @@ class C:
         ('halloween_king', '👑', 'ハロウィンキング',  'legendary', 0.5),
     ]
     DEX_IDS = [d[0] for d in DEX]
+    # 🎪 スタンプラリーの対象になるミニゲームのID(minigames.py の GAMES と同じ並び。他のファイルに頼らず起動できるよう、ここにも持つ)
+    MINI_GAME_IDS = ['g2048', 'snake', 'memory', 'whack', 'mines', 'flight', 'dino', 'breakout', 'simon', 'reflex', 'catch', 'math', 'maze', 'slide', 'lights', 'numtouch', 'stroop', 'stack']
     DEX_DROP_CHANCE = 0.30          # ゲーム1回ごとに、図鑑に新しい(または重複の)おばけが出会える確率
     DEX_DUP_CANDIES = {'common': 3, 'rare': 8, 'epic': 20, 'legendary': 60}   # すでに出会っていたら、キャンディに変わる
 
@@ -482,7 +483,7 @@ def time_info():
 
 
 # ===================== v3.6 パート2: ボーナス・図鑑・スタンプ・畑など =====================
-MINI_IDS = list(_minigames.GAMES.keys())
+MINI_IDS = list(C.MINI_GAME_IDS)          # スタンプラリーの対象(ミニゲームを足したら C.MINI_GAME_IDS と minigames.py の GAMES の両方に足す)
 
 
 def candy_boost(now=None):
