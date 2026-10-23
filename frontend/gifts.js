@@ -64,14 +64,14 @@
       <div class="gx-bg"></div><div class="gx-rays"></div><div class="gx-flash"></div>
       <button class="gx-mini" id="gxMini" type="button" aria-label="手紙をもう一度読む">💌</button>
       <div class="gx-stage">
-        <div class="gx-head" id="gxHead">🎁 ギフトが届いています！<small>${esc(gift.from === 'spirit' ? '運営' : gift.from)} より</small></div>
+        <div class="gx-head" id="gxHead">🎁 ギフトが届いています！<small>${esc((gift.from === 'vortx' || gift.from === 'spirit') ? '運営' : gift.from)} より</small></div>
         <div class="gx-box" id="gxBox"><div class="gb-glow"></div><div class="gb-body"></div><div class="gb-lid"><i class="gb-bow"></i></div></div>
         <div class="gx-letter" id="gxLetter">
           <div class="gl-paper">
             <div class="gl-seal">💌</div>
             <div class="gl-title">メッセージが届いています</div>
             <div class="gl-msg">${esc(gift.message).replace(/\n/g, '<br>')}</div>
-            <div class="gl-from">— ${esc(gift.from === 'spirit' ? '運営' : gift.from)} より</div>
+            <div class="gl-from">— ${esc((gift.from === 'vortx' || gift.from === 'spirit') ? '運営' : gift.from)} より</div>
           </div>
         </div>
         <div class="gx-items" id="gxItems"></div>
