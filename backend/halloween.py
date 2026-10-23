@@ -637,6 +637,7 @@ def fortune_roll(user_seed, date):
 
 
 # ===================== 🎁 毎日ログインボーナス・ウェルカムギフト・ゲスト向け情報(旧 engage.py) =====================
+ENG_GIFT_FROM = 'vortx'          # ギフトの送り主(画面では「運営」と表示される)。管理者IDと同じにしておく
 ENG_CYCLE = 7
 
 # 1〜7日目(7日目でひと回り。続けるほど、後半が豪華)
@@ -653,7 +654,7 @@ ENG_DAILY_REWARDS = [
 ENG_STREAK_BONUS = {3: {'coins': 1000}, 14: {'coins': 5000, 'bpxp': 3000}, 30: {'coins': 20000, 'bpxp': 10000}, 60: {'coins': 40000}, 100: {'coins': 100000, 'bpxp': 30000}}
 
 ENG_WELCOME_GIFT = {'coins': 3000, 'candies': 100, 'bp_xp': 2000, 'event_xp': 0,
-                'message': 'ようこそ CandyBlast へ！🎃 アカウント作成ありがとう。ウェルカムギフトです。毎日ログインすると、もっといいものがもらえるよ！'}
+                'message': 'ようこそ NEXUS へ！🎃 アカウント作成ありがとう。ウェルカムギフトです。毎日ログインすると、もっといいものがもらえるよ！'}
 
 # ゲストに見せる「アカウントを作るメリット」(画面の通知や一覧に使う)
 ENG_GUEST_PERKS = [
@@ -713,7 +714,7 @@ def eng_send_welcome_gift(db_query, user_id):
         g = ENG_WELCOME_GIFT
         db_query("INSERT INTO gifts (batch_id, to_user, from_user, message, coins, candies, bp_xp, event_xp) "
                  "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                 ['welcome-' + user_id, user_id, 'spirit', g['message'], g['coins'], g['candies'], g['bp_xp'], g['event_xp']])
+                 ['welcome-' + user_id, user_id, ENG_GIFT_FROM, g['message'], g['coins'], g['candies'], g['bp_xp'], g['event_xp']])
     except Exception as err:
         print(f'welcome gift error: {err}')
 
@@ -1066,7 +1067,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
     def hw_ranking():
         user_id = require_auth()
         rows = db_query(
-            "SELECT id, (event_state->>'totalCandies')::bigint AS total FROM users "
+            "SELECT id, display_name, (event_state->>'totalCandies')::bigint AS total FROM users "
             "WHERE event_state->>'id' = %s AND COALESCE((event_state->>'totalCandies')::bigint, 0) > 0 "
             "ORDER BY total DESC, id ASC LIMIT 20", [EVENT_ID])
         mine = db_query("SELECT (event_state->>'totalCandies')::bigint AS total FROM users "
@@ -1077,7 +1078,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             r = db_query("SELECT COUNT(*) AS n FROM users WHERE event_state->>'id' = %s "
                          "AND (event_state->>'totalCandies')::bigint > %s", [EVENT_ID, my_total])
             my_rank = int(r[0]['n']) + 1
-        return jsonify({'ranking': [{'id': r['id'], 'total': int(r['total'])} for r in rows],
+        return jsonify({'ranking': [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'total': int(r['total'])} for r in rows],
                         'me': {'id': user_id, 'total': my_total, 'rank': my_rank}})
 
 
