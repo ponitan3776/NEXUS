@@ -63,8 +63,9 @@ def db_upsert(db_query, game, user, score, better):
 
 def db_top(db_query, game, better, limit=20):
     order = 'DESC' if better == 'high' else 'ASC'
-    rows = db_query(f"SELECT user_id, best FROM mini_scores WHERE game = %s ORDER BY best {order}, updated_at ASC LIMIT %s", [game, limit])
-    return [{'id': r['user_id'], 'score': int(r['best'])} for r in rows]
+    rows = db_query(f"SELECT m.user_id, m.best, u.display_name FROM mini_scores m LEFT JOIN users u ON u.id = m.user_id "
+                    f"WHERE m.game = %s ORDER BY m.best {order}, m.updated_at ASC LIMIT %s", [game, limit])
+    return [{'id': r['user_id'], 'name': r.get('display_name') or r['user_id'], 'score': int(r['best'])} for r in rows]
 
 
 def db_mine(db_query, game, user, better):
