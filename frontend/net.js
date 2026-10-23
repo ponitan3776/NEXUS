@@ -10,7 +10,7 @@
    ===================================================================== */
 (function(){
   'use strict';
-  const BASE = String((window.CANDYBLAST_CONFIG && window.CANDYBLAST_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
+  const BASE = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
   const orig = window.fetch.bind(window);
   const TIMEOUT_MS = 60000;
   const RETRY_STATUS = { 502:1, 503:1, 504:1 };
