@@ -573,7 +573,7 @@
     CB().api('/api/mini/ranking?game=' + encodeURIComponent(g.id)).then(d=>{
       if(!rankView) return;
       const me = d.me, meId = me && me.id;
-      let html = d.ranking.map((r,i)=>`<div class="mg-rankrow ${r.id===meId?'me':''} ${i<3?'top':''}"><span class="rk">${['🥇','🥈','🥉'][i] || (i+1)}</span><span class="nm">${String(r.name || r.id).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}</span><span class="sc">${fmtScore(g, r.score)}</span></div>`).join('');
+      let html = d.ranking.map((r,i)=>`<div class="mg-rankrow ${r.id===meId?'me':''} ${i<3?'top':''}"><span class="rk">${['🥇','🥈','🥉'][i] || (i+1)}</span><span class="nm">${CB().who ? CB().who(r) : String(r.name || r.id).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}</span><span class="sc">${fmtScore(g, r.score)}</span></div>`).join('');
       if(!d.ranking.length) html = '<div class="empty-hint">まだ記録がありません。一番乗りを目指そう！</div>';
       html += me ? `<div class="mg-rankme">あなた: ${me.rank ? `${me.rank}位 / ${fmtScore(g, me.best)}` : 'まだ記録なし'}</div>`
                  : `<div class="mg-rankme">ログインすると、あなたの記録がランキングに載ります</div>`;
