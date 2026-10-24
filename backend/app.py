@@ -452,6 +452,36 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     db_execute("""
         ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS id_changed_at TIMESTAMP;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS icon TEXT;
+        ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS image_id TEXT;
+    """)
+    # 🖼 アイコン・チャット画像(小さく圧縮した画像だけを入れる。容量の上限と保存期限は下の IMG_* で管理)
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS images (
+            id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL,
+            size INTEGER NOT NULL, data BYTEA NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_images_kind_created ON images(kind, created_at);
+        CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner, kind);
+        ALTER TABLE images ENABLE ROW LEVEL SECURITY;
+    """)
+    # 📮 サポートチャット(ご要望・不具合報告ごとの、運営との専用チャット)
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS support_threads (
+            id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+            title TEXT, reopened_from INTEGER, review TEXT, created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            closed_at TIMESTAMP, last_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            user_unread INTEGER NOT NULL DEFAULT 0, admin_unread INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_support_threads_user ON support_threads(user_id, last_at);
+        CREATE INDEX IF NOT EXISTS idx_support_threads_status ON support_threads(status, last_at);
+        CREATE TABLE IF NOT EXISTS support_messages (
+            id SERIAL PRIMARY KEY, thread_id INTEGER NOT NULL, sender TEXT NOT NULL, message TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_support_messages_thread ON support_messages(thread_id, id);
+        ALTER TABLE support_threads ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE support_messages ENABLE ROW LEVEL SECURITY;
     """)
     print('✅ users テーブル準備完了')
 
@@ -543,6 +573,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     # 🗳 投票 / 🎁 ギフト / ✏️ チャット・DMの編集・取り消し用の列
     social.init_tables(db_execute)
     halloween.eng_init_tables(db_execute)          # 📆 毎日ログインボーナス
+    purge_images()                                 # 🖼 期限切れ・持ち主のいない画像を片付ける
     migrate_admin_id()                             # 👑 旧管理者IDを新しい管理者IDへ(1回だけ。済んでいれば何もしない)
 
     # ⚡ 読み込みを速くするための索引(無くても動くが、データが増えるほど遅くなる)
@@ -662,6 +693,342 @@ def handle_api_error(err):
     return jsonify({'error': err.message}), err.status
 
 
+# ===================== 🖼 アイコン / チャット画像 (v3.8) =====================
+# 容量を使いすぎないための工夫:
+#   ① アプリ側で、送る前に小さく圧縮する(アイコン=128px・約10KB / チャット画像=長辺800px・約60KB。WebP、非対応なら JPEG)
+#   ② サーバー側でも上限を確認(ICON_MAX_BYTES / CHAT_IMG_MAX_BYTES を超えたら受け付けない)
+#   ③ チャット画像は IMG_CHAT_TTL_HOURS 時間たつと自動で消える。全体でも 件数・合計サイズ の上限があり、超えると古い順に消える
+#   ④ アイコンは1人1枚(新しく設定すると古いのは消える)。プリセット(絵文字)のアイコンは画像を使わない=容量ゼロ
+ICON_MAX_BYTES = 24_000
+CHAT_IMG_MAX_BYTES = 150_000
+IMG_CHAT_ENABLED = True                    # False にすると、チャットへの画像送信を止められる(荒れたとき用)
+IMG_CHAT_TTL_HOURS = 72
+IMG_CHAT_MAX_COUNT = 300
+IMG_CHAT_MAX_TOTAL_BYTES = 30_000_000
+IMG_RATE = {'icon': (6, 3600), 'chat': (15, 3600)}      # (回数, 秒) 1人あたり
+ICON_COLOR_COUNT = 8
+ICON_EMOJIS = ['🎃', '👻', '🦇', '🕷', '💀', '🧙', '🧛', '🧟', '🕯', '🍬', '🍭', '🐈‍⬛', '🐶', '🐱', '🐰', '🦊', '🐻', '🐼', '🐸', '🐵',
+               '🦁', '🐯', '🐧', '🦉', '🐙', '🦄', '🐲', '🦖', '🐢', '🦋', '🌙', '⭐', '🌈', '🔥', '⚡', '❄️', '🌸', '🍀', '🍎', '🍕',
+               '🍩', '🎮', '🎯', '🎲', '🧩', '🎧', '🎸', '🚀', '👑', '💎', '🏆', '⚔️', '🛡', '🤖', '👽', '😎', '🥳', '🤩', '😺', '🎭']
+_img_hits = {}
+
+
+def _sniff_image(data):
+    if len(data) > 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    return None
+
+
+def _img_rate_check(user_id, kind):
+    limit, window = IMG_RATE[kind]
+    now = time.time()
+    hits = [t for t in _img_hits.get((user_id, kind), []) if now - t < window]
+    if len(hits) >= limit:
+        raise ApiError(f'画像のアップロードが多すぎます。しばらく待ってからお試しください', 429)
+    hits.append(now)
+    _img_hits[(user_id, kind)] = hits
+
+
+def purge_images():
+    """期限切れ・送られなかった・持ち主のいない・上限超えの画像を消す(アップロードのたびと、起動時に呼ぶ)"""
+    now = datetime.utcnow()
+    try:
+        db_query("DELETE FROM images WHERE kind = 'chat' AND created_at < %s RETURNING id", [now - timedelta(hours=IMG_CHAT_TTL_HOURS)])
+        db_query("DELETE FROM images WHERE kind = 'chat' AND created_at < %s AND id NOT IN "
+                 "(SELECT image_id FROM chat_messages WHERE image_id IS NOT NULL AND COALESCE(deleted, FALSE) = FALSE) RETURNING id",
+                 [now - timedelta(hours=1)])
+        db_query("DELETE FROM images WHERE kind = 'icon' AND owner NOT IN (SELECT id FROM users) RETURNING id")
+        for _ in range(20):
+            r = db_query("SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM images WHERE kind = 'chat'")[0]
+            if int(r['c']) <= IMG_CHAT_MAX_COUNT and int(r['s']) <= IMG_CHAT_MAX_TOTAL_BYTES:
+                break
+            db_query("DELETE FROM images WHERE id IN (SELECT id FROM images WHERE kind = 'chat' ORDER BY created_at ASC LIMIT 20) RETURNING id")
+    except Exception as err:
+        print(f'purge images error: {err}')
+
+
+@app.post('/api/img/upload')
+def img_upload():
+    try:
+        user_id = require_auth()
+        kind = request.args.get('kind')
+        if kind not in ('icon', 'chat'):
+            raise ApiError('画像の種類が不正です', 400)
+        if kind == 'chat' and not IMG_CHAT_ENABLED:
+            raise ApiError('チャットへの画像送信は現在オフです', 403)
+        limit = ICON_MAX_BYTES if kind == 'icon' else CHAT_IMG_MAX_BYTES
+        if request.content_length and request.content_length > limit + 4096:
+            raise ApiError(f'画像が大きすぎます({limit // 1000}KBまで)', 413)
+        data = request.get_data(cache=False)
+        if not data:
+            raise ApiError('画像が空です', 400)
+        if len(data) > limit:
+            raise ApiError(f'画像が大きすぎます({limit // 1000}KBまで)', 413)
+        mime = _sniff_image(data)
+        if not mime:
+            raise ApiError('この形式の画像は使えません(WebP / JPEG のみ)', 400)
+        _img_rate_check(user_id, kind)
+        img_id = secrets.token_hex(8)
+        db_execute('INSERT INTO images (id, owner, kind, mime, size, data, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                   [img_id, user_id, kind, mime, len(data), psycopg2.Binary(data), datetime.utcnow()])
+        if kind == 'icon':
+            db_execute('UPDATE users SET icon = %s WHERE id = %s', [f'i:{img_id}', user_id])
+            db_execute("DELETE FROM images WHERE owner = %s AND kind = 'icon' AND id <> %s", [user_id, img_id])     # 古いアイコンは消す
+            cache_drop('chat:', 'rank:')
+        else:
+            purge_images()
+        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data)})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        print(f'img upload error: {err}')
+        return jsonify({'error': 'アップロードに失敗しました'}), 500
+
+
+@app.get('/api/img/<img_id>')
+def img_get(img_id):
+    if not re.match(r'^[0-9a-f]{16}$', img_id or ''):
+        return jsonify({'error': 'not found'}), 404
+    try:
+        rows = db_query('SELECT mime, data FROM images WHERE id = %s', [img_id])
+        if not rows:
+            return jsonify({'error': 'not found'}), 404
+        resp = app.response_class(bytes(rows[0]['data']), mimetype=rows[0]['mime'])
+        resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'      # 画像のIDは作り直すたびに変わるので、ずっと使い回してOK
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        resp.headers['Cross-Origin-Resource-Policy'] = 'cross-origin'
+        return resp
+    except Exception as err:
+        print(f'img get error: {err}')
+        return jsonify({'error': 'error'}), 500
+
+
+@app.post('/api/account/icon')
+def account_icon():
+    """プリセット(絵文字+色)のアイコンに切り替える/アイコンを初期状態に戻す(画像のアップロードは /api/img/upload?kind=icon)"""
+    try:
+        user_id = require_auth()
+        raw = str((request.get_json(silent=True) or {}).get('icon') or '')
+        value = None
+        if raw:
+            parts = raw.split(':')
+            if len(parts) != 3 or parts[0] != 'e' or parts[1] not in ICON_EMOJIS or not parts[2].isdigit() or int(parts[2]) >= ICON_COLOR_COUNT:
+                raise ApiError('アイコンが不正です', 400)
+            value = raw
+        db_execute('UPDATE users SET icon = %s WHERE id = %s', [value, user_id])
+        db_execute("DELETE FROM images WHERE owner = %s AND kind = 'icon'", [user_id])          # 使わなくなった画像は消して容量を空ける
+        cache_drop('chat:', 'rank:')
+        return jsonify({'ok': True, 'icon': value or ''})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+# ===================== 📮 サポートチャット (v3.8) =====================
+# ご要望・不具合報告を送ると、運営(管理者)との専用チャットが開く。
+#   ・普通のチャットのように、運営が1つずつ返信する
+#   ・運営が「終了」すると、どちらからも送れなくなる → 送った人に 👍/👎 の評価が出る
+#   ・👍 → 「問題は解決しました / リクエストありがとうございました」で完了
+#   ・👎 → 別のチャットが新しく開く(元の内容つき)
+SUPPORT_MAX_MSG = 500
+SUPPORT_MAX_OPEN = 5
+SUPPORT_LABEL = {'feature': '💡 ご要望', 'bug': '🐞 不具合報告'}
+SUPPORT_RESULT_TEXT = {'feature': '👍 リクエストありがとうございました！ ご要望は大切に検討します。',
+                       'bug': '👍 問題は解決しました。ご報告ありがとうございました！'}
+_support_last = {}
+
+
+def _iso(dt):
+    return (dt.isoformat() + 'Z') if dt else None
+
+
+def support_add_message(tid, sender, message, now=None):
+    db_execute('INSERT INTO support_messages (thread_id, sender, message, created_at) VALUES (%s, %s, %s, %s)',
+               [tid, sender, message, now or datetime.utcnow()])
+
+
+def support_notify(kind, title, text, fields):
+    send_discord_notification(DISCORD_WEBHOOK_BUG_REPORT if kind == 'bug' else DISCORD_WEBHOOK_FEATURE_REQUEST,
+                              title, to_copy_block(text), 0xFF5555 if kind == 'bug' else 0xFFD93D, fields)
+
+
+def support_create_thread(user_id, kind, first_message, title=None, reopened_from=None, system_note=None):
+    """新しいチャットを作る。戻り値=チャットID(開いているチャットが多すぎるときは None)"""
+    if db_query("SELECT COUNT(*) AS c FROM support_threads WHERE user_id = %s AND status = 'open'", [user_id])[0]['c'] >= SUPPORT_MAX_OPEN:
+        return None
+    now = datetime.utcnow()
+    first = (first_message or '').strip()
+    rows = db_query('INSERT INTO support_threads (user_id, kind, status, title, reopened_from, created_at, last_at, admin_unread, user_unread) '
+                    'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
+                    [user_id, kind, 'open', (title or first.replace('\n', ' '))[:30], reopened_from, now, now, 1, 0])
+    tid = rows[0]['id']
+    if system_note:
+        support_add_message(tid, 'system', system_note, now)
+    if first:
+        support_add_message(tid, 'user', first[:SUPPORT_MAX_MSG * 3], now)
+    return tid
+
+
+def _support_thread_for(user_id, tid):
+    rows = db_query('SELECT t.*, u.display_name FROM support_threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = %s', [tid])
+    if not rows:
+        raise ApiError('チャットが見つかりません', 404)
+    t = rows[0]
+    if t['user_id'] != user_id and user_id != ADMIN_USER_ID:
+        raise ApiError('このチャットは見られません', 403)
+    return t
+
+
+def _thread_view(t, viewer):
+    is_admin = viewer == ADMIN_USER_ID and t['user_id'] != viewer
+    return {'id': t['id'], 'kind': t['kind'], 'title': t.get('title') or '', 'status': t['status'], 'review': t.get('review'),
+            'reopenedFrom': t.get('reopened_from'), 'userId': t['user_id'], 'userName': t.get('display_name') or t['user_id'],
+            'lastAt': _iso(t.get('last_at')), 'createdAt': _iso(t.get('created_at')), 'closedAt': _iso(t.get('closed_at')),
+            'unread': int(t['admin_unread'] if is_admin else t['user_unread'] or 0)}
+
+
+@app.get('/api/support/threads')
+def support_threads():
+    try:
+        user_id = require_auth()
+        scope = request.args.get('scope')
+        if scope == 'admin':
+            if user_id != ADMIN_USER_ID:
+                raise ApiError('管理者のみ', 403)
+            rows = db_query("SELECT t.*, u.display_name, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
+                            "FROM support_threads t LEFT JOIN users u ON u.id = t.user_id ORDER BY CASE WHEN t.status = 'open' THEN 0 ELSE 1 END, t.last_at DESC LIMIT 100")
+        else:
+            rows = db_query("SELECT t.*, u.display_name, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
+                            "FROM support_threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.user_id = %s ORDER BY t.last_at DESC LIMIT 60", [user_id])
+        out = []
+        for t in rows:
+            v = _thread_view(t, user_id if scope == 'admin' else t['user_id'])
+            v['preview'] = (t.get('preview') or '')[:60]
+            out.append(v)
+        return jsonify({'threads': out})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.get('/api/support/thread/<int:tid>')
+def support_thread(tid):
+    try:
+        user_id = require_auth()
+        t = _support_thread_for(user_id, tid)
+        msgs = db_query('SELECT id, sender, message, created_at FROM support_messages WHERE thread_id = %s ORDER BY id ASC LIMIT 300', [tid])
+        mine_is_owner = (t['user_id'] == user_id)
+        # 開いた側の「未読」を0にする(運営が他人のチャットを開いたときは運営側の未読だけ0)
+        db_execute('UPDATE support_threads SET ' + ('user_unread' if mine_is_owner else 'admin_unread') + ' = 0 WHERE id = %s', [tid])
+        v = _thread_view(t, user_id if not mine_is_owner else t['user_id'])
+        v['unread'] = 0
+        return jsonify({'thread': v, 'canReview': mine_is_owner and t['status'] == 'closed' and not t.get('review'),
+                        'isAdminView': (not mine_is_owner) and user_id == ADMIN_USER_ID,
+                        'messages': [{'id': m['id'], 'sender': m['sender'], 'message': m['message'], 'at': _iso(m['created_at'])} for m in msgs]})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.post('/api/support/thread/<int:tid>/send')
+def support_send(tid):
+    try:
+        user_id = require_auth()
+        t = _support_thread_for(user_id, tid)
+        message = str((request.get_json(silent=True) or {}).get('message') or '').strip()
+        if not message:
+            raise ApiError('メッセージを入力してください', 400)
+        if len(message) > SUPPORT_MAX_MSG:
+            raise ApiError(f'メッセージは{SUPPORT_MAX_MSG}文字以内にしてください', 400)
+        if t['status'] != 'open':
+            raise ApiError('このチャットは終了しました', 400)
+        now_t = time.time()
+        if now_t - _support_last.get(user_id, 0) < 1.0:
+            raise ApiError('送信が早すぎます。少し待ってください', 429)
+        _support_last[user_id] = now_t
+        from_owner = (t['user_id'] == user_id)
+        support_add_message(tid, 'user' if from_owner else 'admin', message)
+        # 相手側の「未読」を増やす
+        col = 'admin_unread' if from_owner else 'user_unread'
+        db_execute(f'UPDATE support_threads SET last_at = %s, {col} = {col} + 1 WHERE id = %s', [datetime.utcnow(), tid])
+        if from_owner and user_id != ADMIN_USER_ID:
+            support_notify(t['kind'], f'💬 サポートチャットに新しいメッセージ #{tid}', message,
+                           [{'name': '送信者', 'value': user_id, 'inline': True}, {'name': '種類', 'value': SUPPORT_LABEL.get(t['kind'], t['kind']), 'inline': True}])
+        return jsonify({'ok': True})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.post('/api/support/thread/<int:tid>/close')
+def support_close(tid):
+    """管理者だけ。終了すると、どちらからも送れなくなり、相手に評価(👍/👎)が出る"""
+    try:
+        user_id = require_auth()
+        if user_id != ADMIN_USER_ID:
+            raise ApiError('管理者のみ', 403)
+        t = _support_thread_for(user_id, tid)
+        if t['status'] != 'open':
+            raise ApiError('このチャットはもう終了しています', 400)
+        now = datetime.utcnow()
+        support_add_message(tid, 'system', '🔒 運営がこのチャットを終了しました。', now)
+        db_execute("UPDATE support_threads SET status = 'closed', closed_at = %s, last_at = %s, user_unread = user_unread + 1, admin_unread = 0 WHERE id = %s", [now, now, tid])
+        return jsonify({'ok': True})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.post('/api/support/thread/<int:tid>/review')
+def support_review(tid):
+    """終了したチャットの持ち主が 👍/👎 を選ぶ。👍=完了 / 👎=新しいチャットが開く"""
+    try:
+        user_id = require_auth()
+        t = _support_thread_for(user_id, tid)
+        if t['user_id'] != user_id:
+            raise ApiError('評価できるのは、チャットを始めた本人だけです', 403)
+        result = str((request.get_json(silent=True) or {}).get('result') or '')
+        if result not in ('up', 'down'):
+            raise ApiError('評価が不正です', 400)
+        if t['status'] != 'closed':
+            raise ApiError('チャットが終了してから評価できます', 400)
+        if t.get('review'):
+            raise ApiError('もう評価済みです', 400)
+        now = datetime.utcnow()
+        db_execute('UPDATE support_threads SET review = %s, user_unread = 0 WHERE id = %s', [result, tid])
+        if result == 'up':
+            text = SUPPORT_RESULT_TEXT.get(t['kind'], '👍 ありがとうございました！')
+            support_add_message(tid, 'system', text, now)
+            return jsonify({'ok': True, 'result': 'up', 'text': text})
+        # 👎: 元の内容を引き継いだ新しいチャットを開く
+        first = db_query("SELECT message FROM support_messages WHERE thread_id = %s AND sender = 'user' ORDER BY id ASC LIMIT 1", [tid])
+        original = first[0]['message'] if first else ''
+        new_id = support_create_thread(user_id, t['kind'], '【元の内容】' + original, title='(再)' + (t.get('title') or ''), reopened_from=tid,
+                                       system_note=f'👎 前回のチャット #{tid} は未解決として再オープンされました。')
+        if new_id is None:                                     # 開いているチャットが多すぎて作れなかったとき
+            db_execute("UPDATE support_threads SET review = NULL WHERE id = %s", [tid])
+            raise ApiError(f'開いているチャットが{SUPPORT_MAX_OPEN}件あります。終わってから評価してください', 400)
+        support_add_message(tid, 'system', '👎 未解決として、新しいチャットを開きました。', now)
+        support_notify(t['kind'], f'👎 未解決で再オープン #{new_id}(元 #{tid})', original,
+                       [{'name': '送信者', 'value': user_id, 'inline': True}, {'name': '種類', 'value': SUPPORT_LABEL.get(t['kind'], t['kind']), 'inline': True}])
+        return jsonify({'ok': True, 'result': 'down', 'newThreadId': new_id, 'text': '👎 ご不便をおかけしました。新しいチャットを開きました。'})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
+@app.get('/api/support/summary')
+def support_summary():
+    """通知バッジ用: 運営からの未読 / 評価待ち / (管理者なら)未対応のチャット数"""
+    try:
+        user_id = require_auth()
+        unread = db_query('SELECT COUNT(*) AS c FROM support_threads WHERE user_id = %s AND user_unread > 0', [user_id])[0]['c']
+        review = db_query("SELECT COUNT(*) AS c FROM support_threads WHERE user_id = %s AND status = 'closed' AND review IS NULL", [user_id])[0]['c']
+        out = {'unread': int(unread), 'pendingReview': int(review), 'adminUnread': 0, 'adminOpen': 0}
+        if user_id == ADMIN_USER_ID:
+            out['adminUnread'] = int(db_query("SELECT COUNT(*) AS c FROM support_threads WHERE status = 'open' AND admin_unread > 0")[0]['c'])
+            out['adminOpen'] = int(db_query("SELECT COUNT(*) AS c FROM support_threads WHERE status = 'open'")[0]['c'])
+        return jsonify(out)
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+
+
 # ===================== 🪪 表示名 / ID変更 / 管理者IDの引っ越し (v3.7) =====================
 # ・ID = ログインに使う名前(半角英数字とアンダースコア3〜20文字)。7日に1回だけ変更できる。変えると通知がDiscordに届く
 # ・表示名 = ランキング・チャット・フレンドなどに出る名前(日本語OK・16文字まで・何度でも変更OK・同じ名前の人がいてもOK)
@@ -680,6 +1047,7 @@ USER_ID_COLUMNS = [
     ('duels', 'challenger_id'), ('duels', 'opponent_id'), ('weekly_challenge_scores', 'user_id'),
     ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('polls', 'created_by'),
     ('gifts', 'to_user'), ('gifts', 'from_user'), ('daily_bonus', 'user_id'),
+    ('images', 'owner'), ('support_threads', 'user_id'),
 ]
 # 新しいIDに「持ち主のいない古いデータ」(アカウント削除の残り)があると重複エラーになる表は、先に片付ける
 ORPHAN_PURGE = [('friend_requests', 'from_id'), ('friend_requests', 'to_id'), ('friends', 'user_id'), ('friends', 'friend_id'),
@@ -742,14 +1110,19 @@ def clean_display_name(raw, is_admin=False):
     return name
 
 
-def name_map(ids):
-    """{ID: 表示名(未設定ならID)} をまとめて取る"""
+def card_map(ids):
+    """{ID: {'name': 表示名(未設定ならID), 'icon': アイコン, 'lv': バトルパスLv}} をまとめて取る"""
     ids = list({i for i in ids if i})
     if not ids:
         return {}
-    rows = db_query('SELECT id, display_name FROM users WHERE id = ANY(%s)', [ids])
-    out = {r['id']: (r.get('display_name') or r['id']) for r in rows}
-    return {i: out.get(i, i) for i in ids}
+    rows = db_query('SELECT id, display_name, icon, battlepass_xp FROM users WHERE id = ANY(%s)', [ids])
+    out = {r['id']: {'name': r.get('display_name') or r['id'], 'icon': r.get('icon') or '', 'lv': bp_level_of(r.get('battlepass_xp'))} for r in rows}
+    return {i: out.get(i, {'name': i, 'icon': '', 'lv': None}) for i in ids}
+
+
+def name_map(ids):
+    """{ID: 表示名(未設定ならID)} をまとめて取る"""
+    return {i: c['name'] for i, c in card_map(ids).items()}
 
 
 def _wait_text(sec):
@@ -762,15 +1135,18 @@ def _wait_text(sec):
 def account_info():
     try:
         user_id = require_auth()
-        rows = db_query("SELECT display_name, id_changed_at, "
+        rows = db_query("SELECT display_name, icon, id_changed_at, "
                         "GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ((id_changed_at + make_interval(days => %s))::timestamptz - NOW())), 0))::bigint AS wait_sec "
                         "FROM users WHERE id = %s", [ID_CHANGE_DAYS, user_id])
         if not rows:
             raise ApiError('ユーザーが見つかりません', 404)
         r = rows[0]
+        icon_now = r.get('icon') or ''
         return jsonify({'id': user_id, 'displayName': r.get('display_name') or '', 'idChangeDays': ID_CHANGE_DAYS,
                         'waitSec': int(r['wait_sec'] or 0), 'canChangeId': int(r['wait_sec'] or 0) == 0 and user_id != ADMIN_USER_ID,
-                        'isAdmin': user_id == ADMIN_USER_ID, 'nameMax': DISPLAY_NAME_MAX})
+                        'isAdmin': user_id == ADMIN_USER_ID, 'nameMax': DISPLAY_NAME_MAX,
+                        'icon': icon_now, 'iconEmojis': ICON_EMOJIS, 'iconColors': ICON_COLOR_COUNT, 'iconMaxBytes': ICON_MAX_BYTES,
+                        'chatImages': IMG_CHAT_ENABLED, 'chatImageMaxBytes': CHAT_IMG_MAX_BYTES, 'chatImageTtlHours': IMG_CHAT_TTL_HOURS})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
 
@@ -875,7 +1251,7 @@ def register():
             [{'name': '🔑 復元コード', 'value': f'`{recovery_code}`', 'inline': False},
              {'name': '📅 登録日時', 'value': datetime.now().strftime('%Y/%m/%d %H:%M:%S'), 'inline': True}]
         )
-        return jsonify({'token': token, 'id': user_id, 'displayName': display_name, 'recoveryCode': recovery_code})
+        return jsonify({'token': token, 'id': user_id, 'displayName': display_name, 'icon': '', 'lv': 1, 'recoveryCode': recovery_code})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
@@ -906,7 +1282,7 @@ def login():
              {'name': '🏆 現在のベストスコア', 'value': f"{user.get('best_score') or 0}点", 'inline': True}]
         )
         return jsonify({
-            'token': token, 'id': user_id, 'displayName': user.get('display_name') or '',
+            'token': token, 'id': user_id, 'displayName': user.get('display_name') or '', 'icon': user.get('icon') or '', 'lv': bp_level_of(user.get('battlepass_xp')),
             'bestScore': user.get('best_score'), 'bestScores': user.get('best_scores') or {},
             'coins': int(user.get('coins') or 0), 'playTime': user.get('play_time') or 0,
             'lastLogin': user.get('last_login').isoformat() if user.get('last_login') else None
@@ -1074,7 +1450,7 @@ def sync_get():
                 UPDATE users SET last_active = NOW()
                 WHERE id = %s AND (last_active IS NULL OR last_active < NOW() - INTERVAL '8 seconds') RETURNING 1
             )
-            SELECT best_score, best_scores, coins, play_time, skins, equipped_skin, quests, display_name FROM users WHERE id = %s
+            SELECT best_score, best_scores, coins, play_time, skins, equipped_skin, quests, display_name, icon, battlepass_xp FROM users WHERE id = %s
         """, [user_id, user_id])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
@@ -1085,7 +1461,7 @@ def sync_get():
             'skins': json.loads(user.get('skins') or '["default"]'),
             'equippedSkin': user.get('equipped_skin') or 'default',
             'quests': json.loads(user.get('quests') or '[]'),
-            'displayName': user.get('display_name') or ''
+            'displayName': user.get('display_name') or '', 'icon': user.get('icon') or '', 'lv': bp_level_of(user.get('battlepass_xp'))
         })
     except Exception:
         return jsonify({'error': '認証エラー'}), 401
@@ -1104,10 +1480,10 @@ def _rank_build(mode, rtype):
         val = f"(best_scores->>'{mode}')::bigint"
         where = f"best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'"
         order = val
-    rows = db_query(f"SELECT id, display_name, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
+    rows = db_query(f"SELECT id, display_name, icon, battlepass_xp, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
                     f"WHERE {where} ORDER BY {order} DESC LIMIT 50")
     total = int(rows[0]['total']) if rows else 0
-    top = [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'value': int(r['value']), 'title': titles.view_of(r.get('equipped_title'), r['id'], ADMIN_USER_ID)}
+    top = [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'icon': r.get('icon') or '', 'lv': bp_level_of(r.get('battlepass_xp')), 'value': int(r['value']), 'title': titles.view_of(r.get('equipped_title'), r['id'], ADMIN_USER_ID)}
            for r in rows]
     return {'top': top, 'totalUsers': total}
 
@@ -1577,7 +1953,7 @@ def weekly_challenge_get():
             'SELECT user_id, score FROM weekly_challenge_scores WHERE week_key=%s ORDER BY score DESC LIMIT 10',
             [week_key]
         )
-        _names = name_map([r['user_id'] for r in ranking_rows])
+        _cards = card_map([r['user_id'] for r in ranking_rows])
         my_score = None
         token = get_token_from_request()
         if token:
@@ -1595,7 +1971,7 @@ def weekly_challenge_get():
             'challenge': {'weekKey': week_key, 'mode': challenge['mode'], 'size': challenge['size'],
                          'reward': WEEKLY_CHALLENGE_REWARD,
                          'secondsUntilReset': round((next_reset - now).total_seconds())},
-            'ranking': [{'id': r['user_id'], 'name': _names.get(r['user_id'], r['user_id']), 'score': r['score']} for r in ranking_rows],
+            'ranking': [{'id': r['user_id'], **_cards.get(r['user_id'], {}), 'score': r['score']} for r in ranking_rows],
             'myScore': my_score, 'hasPlayed': my_score is not None
         })
     except Exception as err:
@@ -1641,6 +2017,17 @@ def announcements_latest():
 
 
 # ===================== 🆕 ご要望・不具合報告(Discordへ転送) =====================
+def _open_support_for(user_id, kind, message):
+    """ログイン中なら、運営との専用チャットを開く(ゲストは Discord への送信だけ)。失敗しても報告そのものは成功扱い"""
+    if not user_id or user_id == 'ゲスト':
+        return None
+    try:
+        return support_create_thread(user_id, kind, message)
+    except Exception as err:
+        print(f'support thread error: {err}')
+        return None
+
+
 @app.post('/api/feedback/request')
 def feedback_request():
     body = request.get_json(silent=True) or {}
@@ -1655,7 +2042,7 @@ def feedback_request():
         )
         if not sent:
             return jsonify({'error': 'Discordへの送信に失敗しました。時間をおいて再度お試しください。'}), 502
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'threadId': _open_support_for(user_id, 'feature', message)})
     except Exception as err:
         print('要望送信エラー:', err)
         return jsonify({'error': '送信に失敗しました'}), 500
@@ -1691,7 +2078,7 @@ def feedback_report():
         )
         if not sent:
             return jsonify({'error': 'Discordへの送信に失敗しました。時間をおいて再度お試しください。'}), 502
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'threadId': _open_support_for(user_id, 'bug', message + ('\n(画像つき)' if image_bytes else ''))})
     except Exception as err:
         print('報告送信エラー:', err)
         return jsonify({'error': '送信に失敗しました'}), 500
@@ -1750,6 +2137,12 @@ def account_delete():
     try:
         user_id = require_auth()
         db_execute('DELETE FROM users WHERE id = %s', [user_id])
+        try:                                                    # 画像・サポートチャットも一緒に消す
+            db_execute('DELETE FROM images WHERE owner = %s', [user_id])
+            db_execute('DELETE FROM support_messages WHERE thread_id IN (SELECT id FROM support_threads WHERE user_id = %s)', [user_id])
+            db_execute('DELETE FROM support_threads WHERE user_id = %s', [user_id])
+        except Exception as err:
+            print(f'account cleanup error: {err}')
         return jsonify({'success': True})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
@@ -1840,14 +2233,16 @@ def friends_remove():
 FRIENDS_SQL = """
 SELECT
  (SELECT COALESCE(json_agg(t ORDER BY t.id), '[]'::json) FROM (
-    SELECT u.id, u.display_name AS name, u.best_score, u.coins, u.equipped_title,
+    SELECT u.id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, u.best_score, u.coins, u.equipped_title,
            (u.last_active IS NOT NULL AND u.last_active > NOW() - INTERVAL '20 seconds') AS online
     FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = %s) t) AS friends,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT fr.from_id AS id, u.display_name AS name, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.from_id WHERE fr.to_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS incoming,
+    SELECT fr.from_id AS id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.from_id WHERE fr.to_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS incoming,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT fr.to_id AS id, u.display_name AS name, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.to_id WHERE fr.from_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS outgoing
+    SELECT fr.to_id AS id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.to_id WHERE fr.from_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS outgoing
 """
+
+FRIENDS_SQL = FRIENDS_SQL.replace('__BPL__', str(BATTLEPASS_XP_PER_LEVEL))
 
 
 def _friends_payload(user_id):
@@ -2400,11 +2795,13 @@ CHAT_CACHE_SEC = 1.5
 
 def _chat_load():
     rows = db_query("SELECT c.id, c.user_id, CASE WHEN COALESCE(c.deleted, FALSE) THEN '' ELSE c.message END AS message, c.timestamp, "
-                    "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title, u.display_name AS name "
+                    "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title, u.display_name AS name, u.icon, "
+                    f"(COALESCE(u.battlepass_xp, 0) / {BATTLEPASS_XP_PER_LEVEL} + 1) AS lv, CASE WHEN COALESCE(c.deleted, FALSE) THEN NULL ELSE c.image_id END AS image_id "
                     "FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT 50) c LEFT JOIN users u ON u.id = c.user_id ORDER BY c.id")
     for r in rows:
         r['title'] = titles.view_of(r.pop('equipped_title', None), r['user_id'], ADMIN_USER_ID)
         r['name'] = r.get('name') or r['user_id']
+        r['icon'] = r.get('icon') or ''
     return rows
 
 
@@ -2433,14 +2830,23 @@ def chat_send():
         return jsonify({'error': '認証エラー'}), 401
     try:
         body = request.get_json(silent=True) or {}
-        message = body.get('message')
-        if not message or len(message.strip()) == 0:
+        message = body.get('message') or ''
+        image_id = (body.get('imageId') or '').strip() or None
+        if not message.strip() and not image_id:
             return jsonify({'error': 'メッセージを入力してください'}), 400
         if len(message) > 200:
             return jsonify({'error': 'メッセージは200文字以内にしてください'}), 400
+        if image_id:
+            if not IMG_CHAT_ENABLED:
+                return jsonify({'error': 'チャットへの画像送信は現在オフです'}), 403
+            img = db_query("SELECT owner FROM images WHERE id = %s AND kind = 'chat'", [image_id])
+            if not img or img[0]['owner'] != user_id:
+                return jsonify({'error': '画像が見つかりません(アップロードからやり直してください)'}), 400
+            if db_query('SELECT 1 FROM chat_messages WHERE image_id = %s', [image_id]):
+                return jsonify({'error': 'この画像はもう送信されています'}), 400
         rows = db_query(
-            'INSERT INTO chat_messages (user_id, message) VALUES (%s, %s) RETURNING id, user_id, message, timestamp',
-            [user_id, message.strip()]
+            'INSERT INTO chat_messages (user_id, message, image_id) VALUES (%s, %s, %s) RETURNING id, user_id, message, timestamp, image_id',
+            [user_id, message.strip(), image_id]
         )
         cache_drop('chat:')
         # 古いメッセージの掃除は、毎回ではなく20回に1回だけ(以前は送信のたびに全件を並べ替えていて遅かった)
@@ -2451,7 +2857,7 @@ def chat_send():
             except Exception as err:
                 print(f'chat prune error: {err}')
         out = dict(rows[0])
-        out['name'] = name_map([user_id]).get(user_id, user_id)
+        out.update(card_map([user_id]).get(user_id, {}))
         return jsonify(out)
     except Exception as err:
         print(err)
@@ -2462,12 +2868,12 @@ def chat_send():
 @app.get('/api/user/profile/<user_id_param>')
 def user_profile(user_id_param):
     try:
-        rows = db_query('SELECT id, display_name, best_score, coins, play_time, created_at, equipped_title FROM users WHERE id = %s', [user_id_param])
+        rows = db_query('SELECT id, display_name, icon, battlepass_xp, best_score, coins, play_time, created_at, equipped_title FROM users WHERE id = %s', [user_id_param])
         if not rows:
             return jsonify({'error': 'ユーザーが見つかりません'}), 404
         user = rows[0]
         return jsonify({
-            'userId': user['id'], 'name': user.get('display_name') or user['id'], 'bestScore': user['best_score'], 'coins': int(user['coins'] or 0),
+            'userId': user['id'], 'name': user.get('display_name') or user['id'], 'icon': user.get('icon') or '', 'lv': bp_level_of(user.get('battlepass_xp')), 'bestScore': user['best_score'], 'coins': int(user['coins'] or 0),
             'playTime': user.get('play_time') or 0,
             'title': titles.view_of(user.get('equipped_title'), user['id'], ADMIN_USER_ID),
             'joinedAt': user['created_at'].isoformat() if user.get('created_at') else None
@@ -2478,8 +2884,10 @@ def user_profile(user_id_param):
 
 
 # ===================== 🎃 ハロウィンイベントのAPIを登録 =====================
+halloween.BP_XP_PER_LEVEL = BATTLEPASS_XP_PER_LEVEL        # ランキングに出すバトルパスLvの計算用
 halloween.register(app, db_query, db_transaction, require_auth, ApiError)
 import minigames  # 🕹 ミニゲームのランキング(別ファイル)
+minigames.BP_XP_PER_LEVEL = BATTLEPASS_XP_PER_LEVEL
 minigames.register(app, db_query, require_auth, ApiError)
 social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID,
                 on_chat_change=lambda: cache_drop('chat:'))
