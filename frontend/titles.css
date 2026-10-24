@@ -231,3 +231,81 @@ body.reduce-motion .ttl.r-admin{ animation:none; }
 /* フレンド一覧: 表示名の下にIDを小さく出す(名前が縦に潰れないように) */
 .friend-item .fname{ flex-wrap:wrap; min-width:96px; word-break:break-word; }
 .friend-item .fname .fid{ flex-basis:100%; margin:0 0 0 16px; }
+
+/* =====================================================================
+   🖼 アイコン / 🏅 バトルパスLv / 📷 チャット画像 (v3.8)
+   ===================================================================== */
+.av{ --s:28px; display:inline-flex; align-items:center; justify-content:center; width:var(--s); height:var(--s); border-radius:50%; flex:0 0 auto; vertical-align:middle;
+  margin-right:6px; font-size:calc(var(--s) * .56); line-height:1; font-weight:800; color:#fff; object-fit:cover; overflow:hidden;
+  box-shadow:0 0 0 2px rgba(255,255,255,.18), 0 3px 8px rgba(0,0,0,.35); text-shadow:0 1px 2px rgba(0,0,0,.4); user-select:none; }
+.lc-ic .av{ margin:0; }
+.who-name{ vertical-align:middle; }
+.bplv{ display:inline-block; margin-left:5px; padding:0 6px; border-radius:6px; vertical-align:middle; font:900 10px/16px var(--sans); letter-spacing:.02em;
+  color:#2a1200; background:linear-gradient(135deg,#ffd23d,#ff8a1f); box-shadow:0 1px 4px rgba(255,138,31,.5); white-space:nowrap; }
+.acct-card .av{ margin:0 auto 6px; display:flex; }
+.acct-card .bplv{ font-size:11px; }
+
+.chat-img-wrap{ margin-top:4px; }
+.chat-img{ display:block; max-width:min(220px, 62vw); max-height:200px; border-radius:12px; cursor:zoom-in; border:1px solid rgba(255,255,255,.15); background:#120a22; }
+.chat-img-gone{ display:inline-block; margin-top:4px; padding:8px 12px; border-radius:10px; font-size:11px; color:var(--text-dim); background:rgba(255,255,255,.06); border:1px dashed rgba(255,255,255,.2); }
+.lightbox{ position:fixed; inset:0; z-index:700; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(5,2,12,.9); cursor:zoom-out; animation:fadeIn .2s ease-out both; }
+.lightbox img{ max-width:100%; max-height:100%; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+.lightbox button{ position:absolute; right:14px; top:max(14px, env(safe-area-inset-top)); width:40px; height:40px; border-radius:50%; font-size:18px; color:#fff; background:rgba(255,255,255,.18); border:0; }
+.chat-attach{ flex:0 0 auto; width:44px; border-radius:12px; font-size:20px; cursor:pointer; color:var(--text); background:var(--panel-light); border:1px solid rgba(255,255,255,.14); }
+.chat-img-preview{ display:flex; align-items:center; gap:8px; margin:0 0 6px; padding:6px 8px; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); font-size:11px; color:var(--text-dim); }
+.chat-img-preview img{ width:44px; height:44px; object-fit:cover; border-radius:8px; background:#120a22; }
+.chat-img-preview span{ flex:1; text-align:left; }
+.chat-img-preview button{ width:30px; height:30px; border-radius:50%; border:0; color:var(--text); background:rgba(255,255,255,.12); cursor:pointer; }
+
+/* アイコン選択(アカウント画面) */
+.icon-colors{ display:flex; gap:8px; justify-content:center; margin:8px 0; }
+.icon-color{ width:28px; height:28px; border-radius:50%; cursor:pointer; border:2px solid rgba(255,255,255,.25); }
+.icon-color.on{ border-color:#fff; box-shadow:0 0 0 3px var(--gold); }
+.icon-grid{ display:grid; grid-template-columns:repeat(6, 1fr); gap:6px; max-height:180px; overflow-y:auto; padding:2px; margin-bottom:8px; }
+.icon-pick{ aspect-ratio:1; font-size:22px; border-radius:12px; cursor:pointer; background:rgba(255,255,255,.06); border:2px solid transparent; }
+.icon-pick.on{ border-color:var(--gold); background:rgba(255,210,60,.16); }
+.acct-row2{ display:flex; gap:8px; } .acct-row2 .ghost-btn{ flex:1; margin:0; }
+
+/* =====================================================================
+   📮 サポートチャット (v3.8)
+   ===================================================================== */
+.support-open-btn{ position:relative; width:100%; margin-bottom:10px; }
+.support-open-btn .lt-badge{ position:absolute; right:10px; top:-6px; }
+.sup-item{ display:block; width:100%; margin:0 0 8px; padding:10px 12px; border-radius:14px; text-align:left; cursor:pointer; color:var(--text); background:var(--panel); border:1px solid rgba(255,255,255,.1); border-left:5px solid rgba(255,255,255,.25); }
+.sup-item.unread{ border-color:#ff3b5c; border-left-color:#ff3b5c; background:rgba(255,59,92,.1); }
+.sup-top{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:3px; } .sup-kind{ font:800 12px var(--sans); }
+.sup-title{ font:700 14px var(--sans); word-break:break-word; } .sup-title small{ color:var(--text-dim); font-weight:600; }
+.sup-prev{ margin-top:2px; font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .sup-time{ margin-top:2px; font-size:10.5px; color:var(--text-dim); }
+.sup-chip{ padding:1px 8px; border-radius:999px; font:800 10.5px/18px var(--sans); background:rgba(255,255,255,.12); }
+.sup-chip.on{ background:#1f9d57; color:#fff; } .sup-chip.off{ background:#555a70; color:#fff; } .sup-chip.done{ background:#2b7de0; color:#fff; } .sup-chip.bad{ background:#a02a3a; color:#fff; }
+.sup-chip.warn{ background:#ffd23d; color:#2a1200; animation:egPulse 1.6s ease-in-out infinite; }
+.sup-new, .sup-dot{ padding:1px 7px; border-radius:999px; font:900 10px/18px var(--sans); color:#fff; background:#ff3b5c; }
+.sup-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; } .sup-back{ width:auto; margin:0; padding:0 12px; min-height:38px; flex:0 0 auto; }
+.sup-ht{ flex:1; min-width:0; text-align:left; display:flex; flex-direction:column; } .sup-ht b{ font-size:14px; word-break:break-word; } .sup-ht small{ font-size:10.5px; color:var(--text-dim); }
+.sup-msgs{ height:min(340px, 46vh); overflow-y:auto; padding:10px; border-radius:14px; background:var(--bg-deep2); border:1px solid rgba(255,255,255,.06); text-align:left; }
+.sup-msg{ display:flex; flex-direction:column; margin-bottom:10px; max-width:86%; } .sup-msg.mine{ margin-left:auto; align-items:flex-end; } .sup-msg.theirs{ margin-right:auto; align-items:flex-start; }
+.sup-who{ font:700 11px var(--sans); color:var(--text-dim); margin-bottom:2px; } .sup-who small{ margin-left:4px; font-weight:500; }
+.sup-bub{ padding:8px 12px; border-radius:16px; font-size:13.5px; line-height:1.55; word-break:break-word; background:#3a2a5c; border:1px solid rgba(255,255,255,.1); }
+.sup-msg.mine .sup-bub{ background:linear-gradient(135deg,#c46a12,#ff8a1f); color:#2a1200; border-color:transparent; border-bottom-right-radius:4px; } .sup-msg.theirs .sup-bub{ border-bottom-left-radius:4px; }
+.sup-sys{ margin:8px auto; padding:4px 12px; width:fit-content; max-width:92%; border-radius:999px; font-size:11.5px; color:var(--text-dim); background:rgba(255,255,255,.07); text-align:center; }
+.sup-input{ display:flex; gap:8px; margin-top:8px; align-items:flex-end; } .sup-input textarea{ flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:var(--bg-deep2); color:var(--text); font:inherit; resize:none; }
+.sup-input .primary-btn{ width:auto; margin:0; padding:10px 18px; flex:0 0 auto; }
+.sup-close{ margin-top:8px; border-color:rgba(255,138,31,.6) !important; }
+.sup-ended{ margin-top:10px; padding:10px; text-align:center; border-radius:12px; font:700 13px var(--sans); background:rgba(255,255,255,.07); }
+.sup-review{ margin-top:10px; padding:12px; border-radius:14px; text-align:center; background:rgba(255,210,60,.1); border:2px solid rgba(255,210,60,.6); }
+.sup-rq{ font:800 14px var(--sans); margin-bottom:8px; } .sup-rbtns{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.sup-rb{ padding:12px 6px; border-radius:16px; cursor:pointer; font-size:30px; color:#fff; border:3px solid rgba(255,255,255,.4); display:flex; flex-direction:column; align-items:center; gap:2px; } .sup-rb small{ font:800 12px var(--sans); }
+.sup-rb.up{ background:linear-gradient(160deg,#18c46a,#0b7a3e); } .sup-rb.down{ background:linear-gradient(160deg,#d23a4a,#7a1426); } .sup-rb:active{ transform:scale(.96); }
+.sup-result{ margin-top:10px; padding:12px; border-radius:12px; text-align:center; font:800 14px/1.6 var(--sans); } .sup-result.up{ background:rgba(61,220,132,.15); color:#3ddc84; } .sup-result.down{ background:rgba(255,93,115,.15); color:#ff8f9e; }
+
+/* =====================================================================
+   🔔 ロビーのお知らせバー (v3.8)
+   ===================================================================== */
+.lobby-notify{ width:100%; margin:8px 0 2px; padding:10px; border-radius:14px; background:linear-gradient(135deg, rgba(255,59,92,.16), rgba(255,138,31,.12)); border:2px solid rgba(255,59,92,.7); box-shadow:0 6px 20px rgba(0,0,0,.28); }
+.lobby-notify[hidden]{ display:none; }
+.nt-h{ font:900 13px var(--sans); margin-bottom:6px; text-align:left; } .nt-h small{ font-weight:600; color:var(--text-dim); margin-left:6px; }
+.nt-row{ display:flex; flex-wrap:wrap; gap:6px; }
+.nt-chip{ display:inline-flex; align-items:center; gap:6px; min-height:40px; padding:0 8px 0 10px; border-radius:999px; cursor:pointer; color:var(--text); font:800 12px var(--sans); background:var(--panel-light); border:2px solid rgba(255,255,255,.22); }
+.nt-chip.hot{ border-color:#ff3b5c; animation:egPulse 1.8s ease-in-out infinite; }
+.nt-ic{ font-size:16px; } .nt-n{ min-width:22px; padding:0 6px; border-radius:11px; font:900 11px/22px var(--sans); text-align:center; color:#fff; background:#ff3b5c; }
+.sup-head{ padding-right:44px; }     /* 右上の「×」ボタンと重ならないように */
