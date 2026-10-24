@@ -483,6 +483,7 @@ def time_info():
 
 
 # ===================== v3.6 パート2: ボーナス・図鑑・スタンプ・畑など =====================
+BP_XP_PER_LEVEL = 1000                      # app.py が正しい値を入れてくれる(バトルパス1レベルに必要なXP)
 MINI_IDS = list(C.MINI_GAME_IDS)          # スタンプラリーの対象(ミニゲームを足したら C.MINI_GAME_IDS と minigames.py の GAMES の両方に足す)
 
 
@@ -1068,7 +1069,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
     def hw_ranking():
         user_id = require_auth()
         rows = db_query(
-            "SELECT id, display_name, (event_state->>'totalCandies')::bigint AS total FROM users "
+            "SELECT id, display_name, icon, battlepass_xp, (event_state->>'totalCandies')::bigint AS total FROM users "
             "WHERE event_state->>'id' = %s AND COALESCE((event_state->>'totalCandies')::bigint, 0) > 0 "
             "ORDER BY total DESC, id ASC LIMIT 20", [EVENT_ID])
         mine = db_query("SELECT (event_state->>'totalCandies')::bigint AS total FROM users "
@@ -1079,7 +1080,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             r = db_query("SELECT COUNT(*) AS n FROM users WHERE event_state->>'id' = %s "
                          "AND (event_state->>'totalCandies')::bigint > %s", [EVENT_ID, my_total])
             my_rank = int(r[0]['n']) + 1
-        return jsonify({'ranking': [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'total': int(r['total'])} for r in rows],
+        return jsonify({'ranking': [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'icon': r.get('icon') or '', 'lv': int(r.get('battlepass_xp') or 0) // BP_XP_PER_LEVEL + 1, 'total': int(r['total'])} for r in rows],
                         'me': {'id': user_id, 'total': my_total, 'rank': my_rank}})
 
 
