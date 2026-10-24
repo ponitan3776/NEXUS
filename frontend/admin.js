@@ -915,3 +915,188 @@
   window.CBEngage = { guestPlayed, guestCandyLine, perksHtml, decorateAccount, nudge, showBonus,
     signupLine(){ return isGuest() ? `<button class="mg-linkbtn eg-cta" id="mgSignup" type="button">🎁 アカウントを作ると、記録がランキングに載って 🪙3,000 ももらえる！</button>` : ''; } };
 })();
+
+/* =====================================================================
+   📮 サポートチャット(運営とのやりとり) (v3.8)
+   ・ご要望/不具合報告を送ると、運営との専用チャットが開く。運営が1つずつ返信し、終了すると 👍/👎 の評価が出る
+   ・サーバー: /api/support/*  (backend/app.py)
+   ===================================================================== */
+(function(){
+  'use strict';
+  const CB = ()=> window.CB || {};
+  const esc = (s)=> String(s == null ? '' : s).replace(/[&<>"']/g, c=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  const mc = ()=> document.getElementById('modalContent'), mo = ()=> document.getElementById('modalOverlay');
+  const KIND = { feature:'💡 ご要望', bug:'🐞 不具合報告' };
+  const ZERO = { unread:0, pendingReview:0, adminUnread:0, adminOpen:0 };
+  let summary = { ...ZERO }, listTab = 'mine', curId = null, pollTimer = null, lastSig = '', lastUnread = 0;
+  const logged = ()=> !!(CB().isLoggedIn && CB().isLoggedIn());
+  const isAdmin = ()=> !!(CB().isAdmin && CB().isAdmin());
+  const fmtTime = (iso)=>{ if(!iso) return ''; const d = new Date(iso), n = new Date(); const same = d.toDateString() === n.toDateString();
+    return same ? d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : d.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }); };
+  const inMode = (m)=> mo().classList.contains('show') && mc().dataset.mode === m;
+
+  async function refresh(){
+    if(!logged()){ summary = { ...ZERO }; return summary; }
+    try{
+      summary = await CB().api('/api/support/summary');
+      if(summary.unread > lastUnread && CB().toast) CB().toast('📮 運営から返信が届きました');
+      lastUnread = summary.unread;
+    }catch(e){}
+    return summary;
+  }
+  const badgeCount = ()=> (summary.unread || 0) + (summary.pendingReview || 0) + (isAdmin() ? (summary.adminUnread || 0) : 0);
+
+  // ---------- 一覧 ----------
+  async function open(tab){
+    if(!logged()){ alert('ログインすると、運営との専用チャットが使えます'); return; }
+    clearInterval(pollTimer); pollTimer = null; curId = null;
+    listTab = (tab === 'admin' && isAdmin()) ? 'admin' : 'mine';
+    const body = mc(); body.dataset.mode = 'support'; mo().classList.add('show');
+    body.innerHTML = `<h2 style="color:var(--gold);">💬 運営とのやりとり</h2><div class="empty-hint">読み込み中...</div>`;
+    await renderList();
+    pollTimer = setInterval(()=>{ if(document.hidden) return; if(inMode('support') && !curId) renderList(true); else if(!inMode('support')){ clearInterval(pollTimer); pollTimer = null; } }, 8000);
+  }
+  async function renderList(quiet){
+    const body = mc(); if(!inMode('support') || curId) return;
+    let threads = [];
+    try{ threads = (await CB().api(listTab === 'admin' ? '/api/support/threads?scope=admin' : '/api/support/threads')).threads || []; }
+    catch(err){ if(!quiet) body.innerHTML = `<h2 style="color:var(--gold);">💬 運営とのやりとり</h2><div class="empty-hint">${esc(err.message)}</div>`; return; }
+    refresh();
+    const tabs = isAdmin() ? `<div class="tab-row" style="margin-bottom:10px;"><button class="tab-btn ${listTab === 'mine' ? 'active' : ''}" data-st="mine">自分のやりとり</button><button class="tab-btn ${listTab === 'admin' ? 'active' : ''}" data-st="admin">🛠 受信箱${summary.adminUnread ? ` <span class="sup-dot">${summary.adminUnread}</span>` : ''}</button></div>` : '';
+    const items = threads.map(t=>{
+      const review = (t.status === 'closed' && !t.review && listTab === 'mine') ? '<span class="sup-chip warn">👍👎 評価をお願いします</span>' : '';
+      const st = t.status === 'open' ? '<span class="sup-chip on">対応中</span>' : (t.review === 'up' ? '<span class="sup-chip done">👍 解決</span>' : (t.review === 'down' ? '<span class="sup-chip bad">👎 未解決</span>' : '<span class="sup-chip off">終了</span>'));
+      return `<button type="button" class="sup-item ${t.unread ? 'unread' : ''}" data-tid="${t.id}">
+        <div class="sup-top"><span class="sup-kind">${KIND[t.kind] || t.kind}</span>${st}${review}${t.unread ? `<span class="sup-new">NEW ${t.unread}</span>` : ''}</div>
+        <div class="sup-title">${listTab === 'admin' ? `<b>${esc(t.userName)}</b> ` : ''}${esc(t.title || '(無題)')}${t.reopenedFrom ? ` <small>(#${t.reopenedFrom}の再オープン)</small>` : ''}</div>
+        <div class="sup-prev">${esc(t.preview)}</div><div class="sup-time">#${t.id} ・ ${fmtTime(t.lastAt)}</div></button>`;
+    }).join('');
+    body.innerHTML = `<h2 style="color:var(--gold);">💬 運営とのやりとり</h2>${tabs}
+      <div class="sub" style="margin-bottom:8px;">${listTab === 'admin' ? '届いているご要望・不具合報告のチャットです。' : 'ご要望・不具合報告を送ると、ここに専用チャットができます。運営がひとつずつ返信します。'}</div>
+      ${items || '<div class="empty-hint">まだやりとりはありません。<br>「📮 ご要望・不具合報告」から送ると、ここにチャットができます。</div>'}
+      <button class="ghost-btn" id="supBack" type="button" style="margin-top:10px;">📮 ご要望・不具合報告にもどる</button>`;
+    body.querySelectorAll('[data-st]').forEach(b=> b.addEventListener('click', ()=>{ listTab = b.dataset.st; renderList(); }));
+    body.querySelectorAll('.sup-item').forEach(b=> b.addEventListener('click', ()=> openThread(+b.dataset.tid)));
+    document.getElementById('supBack').addEventListener('click', ()=>{ if(CB().openFeedback) CB().openFeedback(); else if(CB().closeModal) CB().closeModal(); });
+  }
+
+  // ---------- チャット画面 ----------
+  async function openThread(id){
+    if(!logged()) return;
+    curId = id; lastSig = '';
+    const body = mc(); body.dataset.mode = 'support'; mo().classList.add('show');
+    body.innerHTML = `<div class="empty-hint">読み込み中...</div>`;
+    await renderThread(id);
+    clearInterval(pollTimer);
+    pollTimer = setInterval(()=>{ if(document.hidden) return; if(inMode('support') && curId === id) renderThread(id, true); else if(!inMode('support')){ clearInterval(pollTimer); pollTimer = null; } }, 4000);
+  }
+  async function renderThread(id, quiet){
+    const body = mc(); if(!inMode('support') || curId !== id) return;
+    let d;
+    try{ d = await CB().api(`/api/support/thread/${id}`); }
+    catch(err){ if(!quiet) body.innerHTML = `<div class="empty-hint">${esc(err.message)}</div><button class="ghost-btn" id="supBack" type="button">← 一覧へ</button>`; const b = document.getElementById('supBack'); if(b) b.addEventListener('click', ()=>open(listTab)); return; }
+    const t = d.thread, adminView = d.isAdminView, open = t.status === 'open';
+    const sig = `${t.status}|${t.review}|${d.messages.length}|${d.messages.length ? d.messages[d.messages.length-1].id : 0}|${d.canReview}`;
+    if(quiet && sig === lastSig) return;
+    const prevInput = document.getElementById('supInput'), draft = prevInput ? prevInput.value : '';
+    lastSig = sig;
+    const mineSender = adminView ? 'admin' : 'user';
+    const msgs = d.messages.map(m=> m.sender === 'system'
+      ? `<div class="sup-sys">${esc(m.message)}</div>`
+      : `<div class="sup-msg ${m.sender === mineSender ? 'mine' : 'theirs'}"><div class="sup-who">${m.sender === 'admin' ? '👑 運営' : (adminView ? esc(t.userName) : 'あなた')} <small>${fmtTime(m.at)}</small></div><div class="sup-bub">${esc(m.message).replace(/\n/g, '<br>')}</div></div>`).join('');
+    let foot = '';
+    if(open){
+      foot = `<div class="sup-input"><textarea id="supInput" rows="2" maxlength="500" placeholder="${adminView ? '返信を入力…' : 'メッセージを入力…'}"></textarea><button class="primary-btn" id="supSend" type="button">送信</button></div>
+        ${adminView ? '<button class="ghost-btn sup-close" id="supClose" type="button">✅ このチャットを終了する(送信できなくなり、相手に評価が出ます)</button>' : ''}`;
+    } else {
+      foot = `<div class="sup-ended">🔒 このチャットは終了しました。メッセージは送れません。</div>`;
+      if(d.canReview) foot += `<div class="sup-review"><div class="sup-rq">${t.kind === 'bug' ? '問題は解決しましたか？' : 'ご要望はいかがでしたか？'}</div>
+        <div class="sup-rbtns"><button class="sup-rb up" id="supUp" type="button">👍<small>${t.kind === 'bug' ? '解決した！' : 'ありがとう'}</small></button><button class="sup-rb down" id="supDown" type="button">👎<small>まだ困っている</small></button></div></div>`;
+      else if(t.review === 'up') foot += `<div class="sup-result up">${t.kind === 'bug' ? '👍 問題は解決しました。ご報告ありがとうございました！' : '👍 リクエストありがとうございました！'}</div>`;
+      else if(t.review === 'down') foot += `<div class="sup-result down">👎 未解決として、新しいチャットを開きました。</div>`;
+    }
+    body.innerHTML = `<div class="sup-head"><button class="ghost-btn sup-back" id="supBack" type="button">← 一覧</button><div class="sup-ht"><b>${esc(t.title || '(無題)')}</b><small>${KIND[t.kind] || ''} ・ #${t.id}${adminView ? ` ・ ${esc(t.userName)} (${esc(t.userId)})` : ''}</small></div><span class="sup-chip ${open ? 'on' : 'off'}">${open ? '対応中' : '終了'}</span></div>
+      <div class="sup-msgs" id="supMsgs">${msgs}</div>${foot}`;
+    const box = document.getElementById('supMsgs'); box.scrollTop = box.scrollHeight;
+    const inp = document.getElementById('supInput'); if(inp && draft) inp.value = draft;
+    document.getElementById('supBack').addEventListener('click', ()=>{ curId = null; open_list(); });
+    const send = document.getElementById('supSend');
+    if(send){
+      const go = async ()=>{
+        const text = inp.value.trim(); if(!text) return; send.disabled = true;
+        try{ await CB().api(`/api/support/thread/${id}/send`, 'POST', { message: text }); inp.value = ''; lastSig = ''; await renderThread(id); if(CB().sound) CB().sound('tick'); }
+        catch(err){ alert(err.message); }
+        const s2 = document.getElementById('supSend'); if(s2) s2.disabled = false;
+      };
+      send.addEventListener('click', go);
+      inp.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); go(); } });
+    }
+    const close = document.getElementById('supClose');
+    if(close) close.addEventListener('click', async ()=>{
+      if(!confirm('このチャットを終了しますか？\n終了すると、どちらからも送信できなくなります。')) return;
+      try{ await CB().api(`/api/support/thread/${id}/close`, 'POST'); lastSig = ''; await renderThread(id); refresh(); }catch(err){ alert(err.message); }
+    });
+    const review = async (result)=>{
+      try{
+        const r = await CB().api(`/api/support/thread/${id}/review`, 'POST', { result });
+        if(CB().sound) CB().sound(result === 'up' ? 'win' : 'tick');
+        refresh();
+        if(result === 'down' && r.newThreadId){ alert(r.text); await openThread(r.newThreadId); } else { lastSig = ''; await renderThread(id); }
+      }catch(err){ alert(err.message); }
+    };
+    const up = document.getElementById('supUp'), down = document.getElementById('supDown');
+    if(up) up.addEventListener('click', ()=> review('up'));
+    if(down) down.addEventListener('click', ()=> review('down'));
+    refresh();
+  }
+  const open_list = ()=> open(listTab);
+
+  refresh();
+  setInterval(()=>{ if(!document.hidden && logged()) refresh(); }, 30000);
+  window.CBSupport = { open, openThread, refresh, badgeCount, summary: ()=> summary };
+})();
+
+/* =====================================================================
+   🔔 ロビーの「お知らせバー」 (v3.8)
+   ・未読のチャット / 未投票の投票 / 運営からの返信 / 評価待ち / フレンドの通知 / 届いているギフト を、ひと目でわかるように並べる
+   ・タップすると、その画面へ飛べる。何もなければバーごと隠れる
+   ===================================================================== */
+(function(){
+  'use strict';
+  const CB = ()=> window.CB || {};
+  const bar = ()=> document.getElementById('lobbyNotify');
+  const lobbyVisible = ()=>{ const t = document.getElementById('titleScreen'); return !!t && !t.classList.contains('hidden'); };
+  const go = (id, fn)=>{ if(CB().hideTitle) CB().hideTitle(); setTimeout(()=>{ if(fn) fn(); else { const el = document.getElementById(id); if(el) el.click(); } }, 70); };
+  let lastSig = '';
+  function items(){
+    const c = CB().counts ? CB().counts() : { chat:0, chatMention:0, friends:0 };
+    const polls = (window.CBSocial && window.CBSocial.unvotedCount) ? window.CBSocial.unvotedCount() : 0;
+    const gifts = (window.GiftFx && window.GiftFx.pendingCount) ? window.GiftFx.pendingCount() : 0;
+    const sup = window.CBSupport ? window.CBSupport.summary() : { unread:0, pendingReview:0, adminUnread:0 };
+    const admin = !!(CB().isAdmin && CB().isAdmin());
+    const out = [];
+    if(admin && sup.adminUnread) out.push({ k:'adm', ic:'🛠', t:'未対応のサポートチャット', n:sup.adminUnread, hot:true, run:()=> go(null, ()=> window.CBSupport.open('admin')) });
+    if(sup.unread) out.push({ k:'sup', ic:'📮', t:'運営からの返信', n:sup.unread, hot:true, run:()=> go(null, ()=> window.CBSupport.open()) });
+    if(sup.pendingReview) out.push({ k:'rev', ic:'👍', t:'解決したか教えてください', n:sup.pendingReview, hot:true, run:()=> go(null, ()=> window.CBSupport.open()) });
+    if(c.chatMention) out.push({ k:'men', ic:'💬', t:'あなた宛のメンション', n:c.chatMention, hot:true, run:()=> go('chatBtn') });
+    else if(c.chat) out.push({ k:'chat', ic:'💬', t:'未読のチャット', n:c.chat, run:()=> go('chatBtn') });
+    if(polls) out.push({ k:'poll', ic:'🗳', t:'まだ投票していない質問', n:polls, hot:true, run:()=> go('titlePollBtn') });
+    if(c.friends) out.push({ k:'fr', ic:'👥', t:'フレンドからの通知', n:c.friends, run:()=> go('friendsBtn') });
+    if(gifts) out.push({ k:'gift', ic:'🎁', t:'受け取れるギフト', n:gifts, hot:true, run:()=>{ if(window.GiftFx) window.GiftFx.check('manual'); } });
+    return out;
+  }
+  function render(){
+    const el = bar(); if(!el) return;
+    if(!lobbyVisible() || document.body.classList.contains('mg-open')) return;
+    const list = items();
+    const sig = list.map(i=> `${i.k}:${i.n}`).join(',');
+    if(sig === lastSig) return;
+    lastSig = sig;
+    if(!list.length){ el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `<div class="nt-h">📣 お知らせ <small>タップで開きます</small></div><div class="nt-row">${list.map(i=>`<button type="button" class="nt-chip ${i.hot ? 'hot' : ''}" data-k="${i.k}"><span class="nt-ic">${i.ic}</span><span class="nt-t">${i.t}</span><b class="nt-n">${i.n > 99 ? '99+' : i.n}</b></button>`).join('')}</div>`;
+    el.querySelectorAll('.nt-chip').forEach(b=> b.addEventListener('click', ()=>{ const it = list.find(x=> x.k === b.dataset.k); if(it) it.run(); }));
+  }
+  setInterval(render, 1500);
+  setTimeout(render, 1200);
+})();
