@@ -695,12 +695,12 @@ def handle_api_error(err):
 
 # ===================== 🖼 アイコン / チャット画像 (v3.8) =====================
 # 容量を使いすぎないための工夫:
-#   ① アプリ側で、送る前に小さく圧縮する(アイコン=128px・約10KB / チャット画像=長辺640〜1600px(小/中/大を選べる)・約45〜240KB。WebP、非対応なら JPEG)
+#   ① アプリ側で、送る前に小さく圧縮する(アイコン=128px・約10KB / チャット画像=長辺800px・約60KB。WebP、非対応なら JPEG)
 #   ② サーバー側でも上限を確認(ICON_MAX_BYTES / CHAT_IMG_MAX_BYTES を超えたら受け付けない)
 #   ③ チャット画像は IMG_CHAT_TTL_HOURS 時間たつと自動で消える。全体でも 件数・合計サイズ の上限があり、超えると古い順に消える
 #   ④ アイコンは1人1枚(新しく設定すると古いのは消える)。プリセット(絵文字)のアイコンは画像を使わない=容量ゼロ
 ICON_MAX_BYTES = 24_000
-CHAT_IMG_MAX_BYTES = 260_000
+CHAT_IMG_MAX_BYTES = 150_000
 IMG_CHAT_ENABLED = True                    # False にすると、チャットへの画像送信を止められる(荒れたとき用)
 IMG_CHAT_TTL_HOURS = 72
 IMG_CHAT_MAX_COUNT = 300
@@ -812,21 +812,7 @@ def account_icon():
         user_id = require_auth()
         raw = str((request.get_json(silent=True) or {}).get('icon') or '')
         value = None
-        if raw.startswith('u:'):         # 外部の画像サービス(imgbb)のアイコン。決まった形のURLだけ受け付ける
-            if not re.match(r'^u:i\.ibb\.co(\.com)?/[A-Za-z0-9]{4,16}/[A-Za-z0-9._-]{1,120}$', raw):
-                raise ApiError('アイコンが不正です', 400)
-            value = raw
-        elif raw.startswith('d:'):       # 画像そのものを入れる形(約2KBの小さな画像だけ)
-            if not re.match(r'^d:[A-Za-z0-9+/]{20,4600}={0,2}$', raw):
-                raise ApiError('アイコンが不正です', 400)
-            try:
-                _bin = base64.b64decode(raw[2:], validate=True)
-            except Exception:
-                raise ApiError('アイコンが不正です', 400)
-            if len(_bin) > 3500 or (_sniff_image(_bin) is None and _bin[:4] != b'\x89PNG'):
-                raise ApiError('アイコンの画像が大きすぎるか、形式が違います', 400)
-            value = raw
-        elif raw:
+        if raw:
             parts = raw.split(':')
             if len(parts) != 3 or parts[0] != 'e' or parts[1] not in ICON_EMOJIS or not parts[2].isdigit() or int(parts[2]) >= ICON_COLOR_COUNT:
                 raise ApiError('アイコンが不正です', 400)
