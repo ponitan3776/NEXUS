@@ -1300,6 +1300,7 @@ const PATTERN_LABELS = {
     timeattack: '⏱ タイムアタック'
   };
   let currentRankingMode = 'soft';
+  const STORAGE_RANK_TAB = 'nexus-rank-tab-v1';   // 最後に見たランキングのタブを覚えておく(開き直しても、いつも「柔らかい」に戻らないように)
   const rankingCache = {};   // 前回のランキング(開いた瞬間に表示するため)
 
   const RANKING_TYPES = ['score', 'coins', 'playtime'];
@@ -1309,6 +1310,7 @@ const PATTERN_LABELS = {
     playtime: '⏱️ プレイ時間'
   };
   let currentRankingType = 'score';
+  try{ const t = JSON.parse(localStorage.getItem(STORAGE_RANK_TAB) || '{}'); if(RANKING_MODES.includes(t.mode)) currentRankingMode = t.mode; if(RANKING_TYPES.includes(t.type)) currentRankingType = t.type; }catch(e){}
   let rankingPollInterval = null;
   let userSyncInterval = null;
 
@@ -3517,7 +3519,7 @@ restartBtn.addEventListener('click', ()=>{
       if(!grid) return;
       const m = /^e:(.+):([0-7])$/.exec(currentIcon || '');
       let pickEmoji = m ? m[1] : null, pickColor = m ? +m[2] : 0;
-      const show = (text, ok)=>{ msg.textContent = text; msg.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
+      const show = (text, ok)=>{ msg.textContent = text; msg.className = 'auth-msg ' + (ok ? 'ok' : 'error'); msg.style.whiteSpace = 'pre-wrap'; try{ msg.scrollIntoView({ block:'nearest', behavior:'smooth' }); }catch(e){} };
       const applied = (icon)=>{ currentIcon = icon || ''; av.innerHTML = avatarHtml(currentIcon, myName(), currentUserId, 72); updateAccountButton(); };
       const paint = ()=>{
         colors.innerHTML = Array.from({ length: info.iconColors }, (_, i)=> `<button type="button" class="icon-color ${i === pickColor ? 'on' : ''}" data-c="${i}" style="background:linear-gradient(135deg,${AV_GRAD[i]})" aria-label="色${i+1}"></button>`).join('');
@@ -3555,6 +3557,27 @@ restartBtn.addEventListener('click', ()=>{
         if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
         return { icon: d.icon, size: blob.size };
       }
+      // 🔍 診断: どこでつまずいているかを、1回のタップで調べて表示する
+      const diagBtn = document.getElementById('iconDiagBtn');
+      if(diagBtn) diagBtn.addEventListener('click', async ()=>{
+        const lines = []; const out = ()=> show(lines.join('\n'), !lines.some(l=> l.startsWith('❌')));
+        lines.push(`画面の版: ${document.querySelector('meta[name="app-version"]')?.content || '?'} / ログイン: ${authToken ? 'OK' : '❌未ログイン'}`);
+        lines.push(`imgbbのキー: ${IMGBB_KEY ? '設定あり' : '❌未設定(config.js)'}`); out();
+        if(IMGBB_KEY){
+          try{
+            const fd = new FormData(); fd.append('image', 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+            const r = await fetch(`https://api.imgbb.com/1/upload?expiration=60&key=${encodeURIComponent(IMGBB_KEY)}`, { method:'POST', body: fd });
+            const d = await r.json().catch(()=>({}));
+            lines.push(r.ok && d.success ? '✅ imgbbにつながりました' : `❌ imgbb: ${r.status} ${(d.error && d.error.message) || ''}`);
+          }catch(err){ lines.push(`❌ imgbbにつながりません(${err.message})。広告ブロッカー・VPN・学校/会社のネットワークで止まっている可能性があります`); }
+          out();
+        }
+        try{
+          const r = await postJson('/api/account/icon', { icon: currentIcon || '' });
+          lines.push('✅ サーバーへのアイコン保存: OK');
+        }catch(err){ lines.push(`❌ サーバーへのアイコン保存: ${err.message}`); }
+        out();
+      });
       file.addEventListener('change', async ()=>{
         const f = file.files[0]; if(!f) return;
         show('圧縮してアップロード中…', true);
@@ -3614,6 +3637,7 @@ restartBtn.addEventListener('click', ()=>{
           <div class="acct-row2"><button class="ghost-btn" id="iconUploadBtn" type="button">📷 画像をアップロード</button><button class="ghost-btn" id="iconResetBtn" type="button">初期に戻す</button></div>
           <input type="file" id="iconFile" accept="image/*" hidden>
           <div class="auth-msg" id="iconMsg"></div>
+          <button type="button" id="iconDiagBtn" style="background:none;border:none;color:var(--text-dim);font-size:11.5px;text-decoration:underline;padding:6px 0;cursor:pointer;">🔍 うまくいかないとき(診断)</button>
         </div>
         <div class="acct-sec">
           <div class="acct-h">🏷 表示名</div>
@@ -4049,6 +4073,8 @@ restartBtn.addEventListener('click', ()=>{
   // ===================== ランキング =====================
   async function renderRankingModal() {
     modalContent.dataset.mode = 'ranking';
+    try{ localStorage.setItem(STORAGE_RANK_TAB, JSON.stringify({ mode: currentRankingMode, type: currentRankingType })); }catch(e){}
+    const oldTabs = document.getElementById('modeTabs'), oldTabsLeft = oldTabs ? oldTabs.scrollLeft : 0;   // タブを切り替えても、横にずらした位置を戻さない
     let html = `
       <h2 style="color:var(--gold);">🏆 ランキング</h2>
       <div class="sub">8×8サイズのスコアのみランキング対象です。</div>
@@ -4062,11 +4088,14 @@ restartBtn.addEventListener('click', ()=>{
           <button class="tab-btn ${currentRankingMode === m ? 'active' : ''}" data-rmode="${m}">${RANKING_MODE_LABELS[m]}</button>
         `).join('')}
       </div>
+      <div class="sub" style="margin-bottom:6px; color:var(--gold); font-weight:800;">▶ 表示中: ${currentRankingType === 'score' ? RANKING_MODE_LABELS[currentRankingMode] + ' のスコア' : RANKING_TYPE_LABELS[currentRankingType]}</div>
       <div id="rankingContent">
         <div class="sub">🔄 読み込み中...</div>
       </div>
     `;
     modalContent.innerHTML = html;
+    { const mt = document.getElementById('modeTabs'), on = mt && mt.querySelector('.active');
+      if(mt && on){ mt.scrollLeft = oldTabsLeft; const need = on.offsetLeft - mt.clientWidth/2 + on.offsetWidth/2; if(!oldTabs || Math.abs(mt.scrollLeft - need) > mt.clientWidth/2) mt.scrollLeft = Math.max(0, need); } }
 
     modalContent.querySelectorAll('.tab-btn[data-rtype]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -5155,7 +5184,7 @@ restartBtn.addEventListener('click', ()=>{
   // <SRS-PURE-END>
   const TSPIN_LINE_NAMES = { 1:'シングル', 2:'ダブル', 3:'トリプル' };
 
-  let tetrisActive = false, tetrisGameOver = false;
+  let tetrisActive = false, tetrisGameOver = false, tetrisGen = 0;   // tetrisGen: やり直すたびに増やす(前のゲームの予約処理を無効にする)
   let tetrisGrid = null, tetrisPiece = null, tetrisNextType = null, tetrisBag = [];
   let tetrisScore = 0, tetrisLevel = 1, tetrisLines = 0, tetrisCombo = 0, tetrisBackToBack = false;
   let tetrisTimer = null, tetrisCellEls = [];
@@ -5414,6 +5443,7 @@ restartBtn.addEventListener('click', ()=>{
       renderTetris();
     } else {
       tetrisLockPiece();
+      return 'locked';        // 置いた合図(押し続けても、次のピースを勝手に落とさないために使う)
     }
   }
 
@@ -5482,7 +5512,8 @@ restartBtn.addEventListener('click', ()=>{
         if(cell) cell.classList.add('clearing');
       }
     });
-    setTimeout(cb, 320);
+    const gen = tetrisGen;
+    setTimeout(()=>{ if(gen !== tetrisGen || tetrisGameOver || !tetrisActive) return; cb(); }, 320);
   }
 
   function tetrisCollapseRows(rows){
@@ -5749,6 +5780,7 @@ function tetrisTriggerGameOver(){
   }
 
   function restartTetris(){
+    tetrisGen++;
     tetrisStopLoop();
     tetrisGrid = Array.from({length:TETRIS_ROWS}, ()=>new Array(TETRIS_COLS).fill(-1));
     tetrisScore = 0; tetrisLevel = 1; tetrisLines = 0; tetrisCombo = 0; tetrisBackToBack = false;
@@ -6366,6 +6398,8 @@ function enterTetrisMode(){
   }
 
   // ===================== テトリス操作(キーボード) =====================
+  let tetrisSoftKeyBlock = false;     // ↓を押しっぱなしでピースを置いたあと、キーを離すまで次のピースを落とさない
+  document.addEventListener('keyup', (e)=>{ const k = e.key.toLowerCase(); if(k==='arrowdown' || k==='s') tetrisSoftKeyBlock = false; });
   document.addEventListener('keydown', (e)=>{
     if(currentMode!=='tetris' || !tetrisActive || tetrisGameOver) return;
     const key = e.key.toLowerCase();
@@ -6375,29 +6409,38 @@ function enterTetrisMode(){
     if(key==='arrowleft' || key==='a') tetrisMove(-1);
     else if(key==='arrowright' || key==='d') tetrisMove(1);
     else if(key==='arrowup' || key==='w') tetrisRotate();
-    else if(key==='arrowdown' || key==='s') tetrisSoftDrop();
-    else if(isSpace) tetrisHardDrop();
-    else if(key==='q') tetrisHoldSwap();
+    else if(key==='arrowdown' || key==='s'){ if(!tetrisSoftKeyBlock && tetrisSoftDrop() === 'locked') tetrisSoftKeyBlock = true; }
+    else if(isSpace){ if(!e.repeat) tetrisHardDrop(); }
+    else if(key==='q'){ if(!e.repeat) tetrisHoldSwap(); }
   });
 
   // ===================== テトリス操作(タッチ/タップ・iPad対応) =====================
+  const tetrisHoldStops = [];
   function bindTetrisHoldButton(el, fn, repeatMs, initialDelay){
     repeatMs = repeatMs || 100; initialDelay = initialDelay || 220;
-    let holdTimer = null, startTimer = null;
-    const start = (e)=>{
-      e.preventDefault();
-      fn();
-      startTimer = setTimeout(()=>{ holdTimer = setInterval(fn, repeatMs); }, initialDelay);
-    };
+    let holdTimer = null, startTimer = null, pid = null;
     const stop = ()=>{
       clearTimeout(startTimer); clearInterval(holdTimer);
-      startTimer = null; holdTimer = null;
+      startTimer = null; holdTimer = null; pid = null;
+    };
+    tetrisHoldStops.push(stop);
+    const start = (e)=>{
+      e.preventDefault();
+      stop(); pid = e.pointerId;
+      // ピースを置いた直後は、押し続けていても次のピースを勝手に落とさない(いったん指を離して、押し直すまで待つ)
+      if(fn() === 'locked') return;
+      startTimer = setTimeout(()=>{ holdTimer = setInterval(()=>{ if(fn() === 'locked') stop(); }, repeatMs); }, initialDelay);
     };
     el.addEventListener('pointerdown', start);
-    el.addEventListener('pointerup', stop);
     el.addEventListener('pointerleave', stop);
-    el.addEventListener('pointercancel', stop);
+    // 指を離したのを、ボタンの外で離しても取り逃がさない(取り逃がすと、止まらずに落とし続けてしまう)
+    const end = (e)=>{ if(e.pointerId === pid) stop(); };
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
   }
+  const stopAllTetrisHolds = ()=> tetrisHoldStops.forEach(f=> f());
+  window.addEventListener('blur', stopAllTetrisHolds);
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stopAllTetrisHolds(); });
   bindTetrisHoldButton(tBtnLeftEl, ()=>tetrisMove(-1));
   bindTetrisHoldButton(tBtnRightEl, ()=>tetrisMove(1));
   bindTetrisHoldButton(tBtnSoftEl, ()=>tetrisSoftDrop());
@@ -6719,6 +6762,12 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.5', date:'2026-10-25', items:[
+      '🧱 テトリス: ▼(ソフトドロップ)を押し続けると、置いたあとも次のピースを勝手に落として、そのままゲームオーバーになってしまう問題を修正(押し直すまで待つように)',
+      '🧱 テトリス: 指を離したのを取り逃がして、ボタンが押しっぱなし扱いになることがある問題を修正',
+      '🏆 ランキング: いまどのランキングを見ているか表示。最後に見たタブを覚え、タブを切り替えても横の位置が戻らないように',
+      '🖼 アイコン: うまくいかないとき用の「診断」ボタンを追加'
+    ]},
     { version:'3.8.4', date:'2026-10-25', items:[
       '🖼 アイコンの画像設定で、いまの状態(選択待ち・アップロード中・失敗の理由)が画面に出るように'
     ]},
