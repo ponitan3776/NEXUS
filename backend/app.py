@@ -871,7 +871,7 @@ def support_create_thread(user_id, kind, first_message, title=None, reopened_fro
 
 
 def _support_thread_for(user_id, tid):
-    rows = db_query('SELECT t.*, u.display_name FROM support_threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = %s', [tid])
+    rows = db_query('SELECT t.*, u.display_name, u.icon, u.battlepass_xp FROM support_threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = %s', [tid])
     if not rows:
         raise ApiError('チャットが見つかりません', 404)
     t = rows[0]
@@ -884,6 +884,7 @@ def _thread_view(t, viewer):
     is_admin = viewer == ADMIN_USER_ID and t['user_id'] != viewer
     return {'id': t['id'], 'kind': t['kind'], 'title': t.get('title') or '', 'status': t['status'], 'review': t.get('review'),
             'reopenedFrom': t.get('reopened_from'), 'userId': t['user_id'], 'userName': t.get('display_name') or t['user_id'],
+            'userIcon': t.get('icon') or '', 'userLv': bp_level_of(t.get('battlepass_xp')),
             'lastAt': _iso(t.get('last_at')), 'createdAt': _iso(t.get('created_at')), 'closedAt': _iso(t.get('closed_at')),
             'unread': int(t['admin_unread'] if is_admin else t['user_unread'] or 0)}
 
@@ -896,10 +897,10 @@ def support_threads():
         if scope == 'admin':
             if user_id != ADMIN_USER_ID:
                 raise ApiError('管理者のみ', 403)
-            rows = db_query("SELECT t.*, u.display_name, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
+            rows = db_query("SELECT t.*, u.display_name, u.icon, u.battlepass_xp, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
                             "FROM support_threads t LEFT JOIN users u ON u.id = t.user_id ORDER BY CASE WHEN t.status = 'open' THEN 0 ELSE 1 END, t.last_at DESC LIMIT 100")
         else:
-            rows = db_query("SELECT t.*, u.display_name, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
+            rows = db_query("SELECT t.*, u.display_name, u.icon, u.battlepass_xp, (SELECT message FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS preview "
                             "FROM support_threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.user_id = %s ORDER BY t.last_at DESC LIMIT 60", [user_id])
         out = []
         for t in rows:
@@ -2330,7 +2331,9 @@ def duels_list():
         user_id = require_auth()
         rows = db_query('SELECT * FROM duels WHERE challenger_id=%s OR opponent_id=%s ORDER BY created_at DESC LIMIT 30',
                         [user_id, user_id])
-        return jsonify({'duels': rows, 'names': name_map([i for r in rows for i in (r['challenger_id'], r['opponent_id'])])})
+        _ids = list({i for r in rows for i in (r['challenger_id'], r['opponent_id'])})
+        _cards = card_map(_ids)
+        return jsonify({'duels': rows, 'names': {i: c['name'] for i, c in _cards.items()}, 'cards': _cards})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
 
