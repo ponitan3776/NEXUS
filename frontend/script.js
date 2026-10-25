@@ -1219,16 +1219,17 @@ const PATTERN_LABELS = {
   const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id) nameCache[x.id] = x.name || x.id; }); };
   const cachedName = (id)=> escapeHtml(nameCache[id] || id || '');
   let iconHold = null;                               // アップロード直後だけ、古い同期の結果でアイコンが戻らないようにする
-  let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / '')とバトルパスLv
+  let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / 'u:i.ibb.co/…' / '')とバトルパスLv
 
   // ----- 🖼 アイコン(アバター)・バトルパスLvの表示部品 -----
   const AV_GRAD = ['#ff8a1f,#ff4d6d', '#b14dff,#5c9dff', '#3ddc84,#2bb3a0', '#ffd23d,#ff8a1f', '#ff4fa8,#b14dff', '#5c9dff,#3dd8c8', '#9a8cff,#ff8fb8', '#8a98c0,#3a48a0'];
   const hashStr = (str)=>{ let h = 0; for(const c of String(str || '')) h = (h*31 + c.codePointAt(0)) >>> 0; return h; };
   function avatarHtml(icon, name, id, size){
-    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || '');
+    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || ''), um = /^u:(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(icon || '');
     if(e) return `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})">${escapeHtml(e[1])}</span>`;
     const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
     const fb = `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})">${letter}</span>`;
+    if(um) return `<img class="av av-img" style="${sty}" src="https://${um[1]}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     if(im) return `<img class="av av-img" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     return fb;
   }
@@ -3531,20 +3532,41 @@ restartBtn.addEventListener('click', ()=>{
       document.getElementById('iconResetBtn').addEventListener('click', async ()=>{ pickEmoji = null; paint(); await save(); });
       const file = document.getElementById('iconFile');
       document.getElementById('iconUploadBtn').addEventListener('click', ()=> file.click());
+      const IMGBB_KEY = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.IMGBB_API_KEY) || '').trim();
+      const iconSrc = (icon)=> String(icon).startsWith('u:') ? 'https://' + String(icon).slice(2) : `${API_BASE_URL}/api/img/${String(icon).slice(2)}`;
+      // ① imgbb(外部の画像サービス)に直接アップロード → そのURLだけをサーバーに保存(サーバーの容量・通信を使わない)
+      async function uploadIconImgbb(f){
+        const blob = await compressImage(f, { maxEdge:256, maxBytes:40000, square:true });
+        const fd = new FormData(); fd.append('image', blob, blob.type === 'image/webp' ? 'icon.webp' : 'icon.jpg');
+        const r = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(IMGBB_KEY)}`, { method:'POST', body: fd });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok || !d.success || !d.data || !d.data.url) throw new Error((d.error && d.error.message) || `imgbb ${r.status}`);
+        const m = /^https:\/\/(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(d.data.url);
+        if(!m) throw new Error('imgbb: 画像のURLが想定外でした');
+        const dd = await postJson('/api/account/icon', { icon: 'u:' + m[1] });
+        return { icon: dd.icon, size: blob.size };
+      }
+      // ② サーバー(DB)に保存(今までの方法)
+      async function uploadIconServer(f){
+        const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
+        const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
+        return { icon: d.icon, size: blob.size };
+      }
       file.addEventListener('change', async ()=>{
         const f = file.files[0]; if(!f) return;
         show('圧縮してアップロード中…', true);
         try{
-          const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
-          const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
-          const d = await r.json().catch(()=>({}));
-          if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
-          const loaded = await new Promise(res=>{ const im = new Image(); im.onload = ()=> res(true); im.onerror = ()=> res(false); im.src = `${API_BASE_URL}/api/img/${String(d.icon).slice(2)}`; });
-          iconHold = { icon: d.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
-          pickEmoji = null; paint(); applied(d.icon);
-          if(loaded) show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
-          else show('アップロードはできましたが、画像を表示できませんでした。ページを再読み込みしてからもう一度お試しください', false);
-        }catch(err){ show(/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'サーバーにつながりませんでした。少し待ってからもう一度お試しください' : err.message, false); }
+          let res = null, why = '';
+          if(IMGBB_KEY){ try{ res = await uploadIconImgbb(f); }catch(e1){ why = e1.message; console.warn('imgbb失敗:', e1); show('別の方法でもう一度試しています…', true); } }
+          if(!res) res = await uploadIconServer(f).catch(e2=>{ throw new Error(why ? `${e2.message}(imgbb: ${why})` : e2.message); });
+          const loaded = await new Promise(ok=>{ const im = new Image(); im.onload = ()=> ok(true); im.onerror = ()=> ok(false); im.src = iconSrc(res.icon); });
+          iconHold = { icon: res.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
+          pickEmoji = null; paint(); applied(res.icon);
+          if(loaded) show(`アイコンを設定しました(${Math.ceil(res.size/1000)}KB)`, true);
+          else show('保存はできましたが、画像を表示できませんでした。ページを再読み込みしてからもう一度お試しください', false);
+        }catch(err){ show(/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'つながりませんでした。少し待ってからもう一度お試しください' : err.message, false); }
         file.value = '';
       });
     }
@@ -6696,6 +6718,9 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.3', date:'2026-10-25', items:[
+      '🖼 アイコン画像の設定方法を改善。以前より、設定できる確率が上がります'
+    ]},
     { version:'3.8.2', date:'2026-10-25', items:[
       '📷 チャットの画像を送るとき、「小・中・大」から大きさを選べるように。選ぶ前に、できあがる大きさと容量が見えます',
       '📷 どんなに大きな写真でも、自動で小さくして送れるように',
