@@ -1226,17 +1226,18 @@ const PATTERN_LABELS = {
   // ----- 🖼 アイコン(アバター)・バトルパスLvの表示部品 -----
   const AV_GRAD = ['#ff8a1f,#ff4d6d', '#b14dff,#5c9dff', '#3ddc84,#2bb3a0', '#ffd23d,#ff8a1f', '#ff4fa8,#b14dff', '#5c9dff,#3dd8c8', '#9a8cff,#ff8fb8', '#8a98c0,#3a48a0'];
   const hashStr = (str)=>{ let h = 0; for(const c of String(str || '')) h = (h*31 + c.codePointAt(0)) >>> 0; return h; };
-  function avatarHtml(icon, name, id, size){
+  function avatarHtml(icon, name, id, size, zoom){
     const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || '');
-    if(e) return `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})">${escapeHtml(e[1])}</span>`;
+    const zc = zoom ? ' av-zoom' : '', za = zoom ? ` data-zi="${escapeHtml(icon || '')}" data-zn="${escapeHtml(name || '')}" data-zid="${escapeHtml(id || '')}"` : '';   // zoom=true のアイコンは、押すと大きく見られる
+    if(e) return `<span class="av${zc}" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})"${za}>${escapeHtml(e[1])}</span>`;
     const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
-    const fb = `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})">${letter}</span>`;
-    if(im) return `<img class="av av-img" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
+    const fb = `<span class="av${zc}" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})"${za}>${letter}</span>`;
+    if(im) return `<img class="av av-img${zc}" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}"${za}>`;
     return fb;
   }
   const lvTag = (lv)=> lv ? `<span class="bplv" title="バトルパスのレベル">Lv.${lv}</span>` : '';
   // アイコン + 表示名 + Lv をまとめて(o は { id, name, icon, lv } を持つオブジェクト。IDの項目名が違うときは idKey)
-  const whoHtml = (o, idKey, size)=> { const id = o[idKey || 'id']; return `${avatarHtml(o.icon, o.name, id, size)}<span class="who-name">${nameOf(o.name, id)}</span>${lvTag(o.lv)}`; };
+  const whoHtml = (o, idKey, size, zoom)=> { const id = o[idKey || 'id']; return `${avatarHtml(o.icon, o.name, id, size, zoom)}<span class="who-name">${nameOf(o.name, id)}</span>${lvTag(o.lv)}`; };
   document.addEventListener('error', (e)=>{                  // 画像が読めなかったら、頭文字のアイコンに差し替える / チャット画像は「期限切れ」の表示に
     const t = e.target;
     if(!t || !t.classList) return;
@@ -1276,6 +1277,20 @@ const PATTERN_LABELS = {
     const el = document.createElement('div'); el.className = 'lightbox'; el.innerHTML = `<img src="${escapeHtml(src)}" alt=""><button type="button" aria-label="とじる">✕</button>`;
     el.addEventListener('click', ()=> el.remove()); document.body.appendChild(el);
   }
+  // 🔍 アイコンを大きく見る(チャットの画像と同じ見かた:タップで開く・もう一度タップで閉じる)
+  function openIconZoom(icon, name, id){
+    const im = /^i:([0-9a-f]{16})$/.exec(icon || '');
+    const big = Math.max(160, Math.min(360, Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.78)));
+    const el = document.createElement('div'); el.className = 'lightbox';
+    el.innerHTML = `${im ? `<img class="lb-icon" src="${API_BASE_URL}/api/img/${im[1]}" alt="" style="width:${big}px;height:${big}px">` : `<div class="lb-av">${avatarHtml(icon, name, id, big)}</div>`}<div class="lb-cap">${nameOf(name, id)}</div><button type="button" aria-label="とじる">✕</button>`;
+    el.addEventListener('click', ()=> el.remove()); document.body.appendChild(el);
+  }
+  document.addEventListener('click', (e)=>{
+    const a = e.target.closest && e.target.closest('.av-zoom');
+    if(!a) return;
+    e.preventDefault(); e.stopPropagation();
+    openIconZoom(a.dataset.zi, a.dataset.zn, a.dataset.zid);
+  }, true);
   let playTime = 0;
   let playTimeInterval = null;
 
@@ -3388,6 +3403,22 @@ restartBtn.addEventListener('click', ()=>{
     }
   }
   modalClose.addEventListener('click', closeModal);
+  // 💬 チャット系の画面(グローバルチャット・DM・運営チャット)は、画面いっぱいに開く
+  const FULL_MODES = new Set(['chat', 'dmthread', 'support']);
+  let fullTimer = null;
+  function fitFullChat(){                                      // キーボードが出ても、入力欄が隠れないように高さを合わせる
+    const box = document.getElementById('modalBox'); if(!box) return;
+    const vv = window.visualViewport;
+    if(vv && modalOverlay.classList.contains('fullchat')){ box.style.height = vv.height + 'px'; box.style.top = vv.offsetTop + 'px'; }
+    else { box.style.height = ''; box.style.top = ''; }
+  }
+  function syncFullChat(){
+    clearTimeout(fullTimer);
+    if(FULL_MODES.has(modalContent.dataset.mode)){ modalOverlay.classList.add('fullchat'); fitFullChat(); }
+    else fullTimer = setTimeout(()=>{ if(!FULL_MODES.has(modalContent.dataset.mode)){ modalOverlay.classList.remove('fullchat'); fitFullChat(); } }, 260);
+  }
+  new MutationObserver(syncFullChat).observe(modalContent, { attributes:true, attributeFilter:['data-mode'] });
+  if(window.visualViewport){ window.visualViewport.addEventListener('resize', fitFullChat); window.visualViewport.addEventListener('scroll', fitFullChat); }
   modalOverlay.addEventListener('click', (e)=>{ if(e.target===modalOverlay) closeModal(); });
 
   questBtn.addEventListener('click', ()=>{
@@ -4267,8 +4298,8 @@ restartBtn.addEventListener('click', ()=>{
       if (sent && sent.id && !chatMessages.some(m => m.id === sent.id)) {
         chatMessages = [...chatMessages, { ...sent, edited:false, deleted:false, title: myTitle || null }].slice(-50);
         chatLastSeenId = Math.max(chatLastSeenId, sent.id);
+        const box = document.getElementById('chatMessages'); if (box) stickyScroll(box).on = true;      // 自分が送ったら、いちばん下へ
         renderChatMessages();
-        const box = document.getElementById('chatMessages'); if (box) box.scrollTop = box.scrollHeight;
       }
       fetchChatMessages();
       return true;
@@ -4287,7 +4318,7 @@ restartBtn.addEventListener('click', ()=>{
       const isFriend = friendsList.some(f => f.id === data.userId);
       const isSelf = data.userId === currentUserId;
       modalContent.innerHTML = `
-        <div style="text-align:center;">${avatarHtml(data.icon, data.name, data.userId, 72)}</div>
+        <div style="text-align:center;">${avatarHtml(data.icon, data.name, data.userId, 72, true)}</div>
         <h2 style="color:var(--gold); margin-top:6px;">${nameOf(data.name, data.userId)} ${lvTag(data.lv)}</h2>
         ${data.name && data.name !== data.userId ? `<div class="sub" style="text-align:center; margin:-6px 0 6px;">ID: ${escapeHtml(data.userId)}</div>` : ''}
         ${data.title ? `<div style="text-align:center; margin:-4px 0 6px;">${titleTag(data.title)}</div>` : ''}
@@ -4332,7 +4363,38 @@ restartBtn.addEventListener('click', ()=>{
     if(!res.ok) throw new Error(d.error || '失敗しました');
     return d;
   }
-  // 再描画(3秒ごとのポーリング)でも、スクロール位置を勝手に動かさない。いちばん下を見ているときだけ追従する
+  // ---------- 📜 チャット共通の部品 ----------
+  // 一覧を「変わったところだけ」差し替える(全部作り直さない → 画像が読み直されない・ちらつかない・スクロールが動かない)
+  function patchList(container, items, keyFn, sigFn, htmlFn){
+    const old = new Map();
+    Array.from(container.children).forEach(ch=>{ if(ch.dataset && ch.dataset.k !== undefined) old.set(ch.dataset.k, ch); else ch.remove(); });
+    let prev = null;
+    items.forEach(it=>{
+      const k = String(keyFn(it)), sig = sigFn(it);
+      let el = old.get(k);
+      if(el && el.dataset.sig === sig){ old.delete(k); }
+      else {
+        const t = document.createElement('div'); t.innerHTML = htmlFn(it).trim();
+        const n = t.firstElementChild; n.dataset.k = k; n.dataset.sig = sig;
+        if(el){ old.delete(k); el.replaceWith(n); }
+        el = n;
+      }
+      const want = prev ? prev.nextSibling : container.firstChild;
+      if(el !== want) container.insertBefore(el, want);
+      prev = el;
+    });
+    old.forEach(el=> el.remove());
+  }
+  // 「いちばん下を見ているか」を覚えておく。下を見ているときだけ、新着や画像の読み込みのあとも下に留まる(上を読んでいるときは動かさない)
+  function stickyScroll(container){
+    if(container._stick) return container._stick;
+    const st = { on:true, bottom(){ container.scrollTop = container.scrollHeight; } };
+    container.addEventListener('scroll', ()=>{ st.on = container.scrollHeight - container.scrollTop - container.clientHeight < 80; }, { passive:true });
+    container.addEventListener('load', ()=>{ if(st.on) st.bottom(); }, true);
+    container._stick = st; return st;
+  }
+  function afterPatch(container, wasOn){ if(!wasOn) return; const st = stickyScroll(container); st.bottom(); requestAnimationFrame(st.bottom); }
+  // 古い部品(他で使っていなければ使われません)
   function keepScroll(container, render){
     const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
     const prev = container.scrollTop;
@@ -4346,45 +4408,55 @@ restartBtn.addEventListener('click', ()=>{
   const msgActions = (kind, id)=> `<div class="msg-actions"><button type="button" data-${kind}act="edit" data-mid="${id}">✏️ 編集</button><button type="button" data-${kind}act="retract" data-mid="${id}">↩ 送信取り消し</button></div>`;
 
   let chatSelectedId = null, chatEditId = null;
+  const chatItemSig = (msg)=> `${msg.id}|${msg.message}|${msg.edited?1:0}|${msg.deleted?1:0}|${msg.name||''}|${msg.icon||''}|${msg.lv||''}|${msg.title?msg.title.id:''}|${msg.image_id||''}|${currentUserId === msg.user_id && chatSelectedId === msg.id ? 1 : 0}|${currentUserId||''}`;
+  function chatItemHtml(msg){
+    const canAct = msg.user_id === currentUserId && !msg.deleted;
+    const sel = canAct && chatSelectedId === msg.id;
+    const time = new Date(msg.timestamp).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+    return `
+    <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
+      <div class="chat-line" data-mid="${msg.id}">
+        ${avatarHtml(msg.icon, msg.name, msg.user_id, 40, true)}
+        <div class="chat-body">
+          <div class="chat-meta"><span class="chat-who" data-uid="${escapeHtml(msg.user_id)}">${nameOf(msg.name, msg.user_id)}</span>${lvTag(msg.lv)}${titleTag(msg.title)}<span class="chat-time">${time}</span></div>
+          <div class="chat-text">${msgText(msg)}${chatImageHtml(msg)}</div>
+        </div>
+      </div>
+      ${sel ? msgActions('chat', msg.id) : ''}
+    </div>`;
+  }
   function renderChatMessages() {
     const container = document.getElementById('chatMessages');
     if (!container) return;
     if (chatMessages.length === 0) {
-      container.innerHTML = `<div style="text-align:center; color:var(--text-dim);">まだメッセージがありません。</div>`;
+      container.innerHTML = `<div class="chat-empty">まだメッセージがありません。</div>`;
       return;
     }
-    keepScroll(container, ()=>{
-      container.innerHTML = chatMessages.map(msg => {
-        const canAct = msg.user_id === currentUserId && !msg.deleted;
-        const sel = canAct && chatSelectedId === msg.id;
-        return `
-        <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
-          <div class="chat-line" data-mid="${msg.id}" style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
-            <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); showProfile('${msg.user_id}')">
-              ${avatarHtml(msg.icon, msg.name, msg.user_id, 24)}[${nameOf(msg.name, msg.user_id)}${lvTag(msg.lv)}]${titleTag(msg.title)}
-            </span>
-            <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}${chatImageHtml(msg)}</span>
-            <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
-              ${new Date(msg.timestamp).toLocaleTimeString('ja-JP')}
-            </span>
-          </div>
-          ${sel ? msgActions('chat', msg.id) : ''}
-        </div>`;
-      }).join('');
-    });
-    container.querySelectorAll('img.chat-img').forEach(im=> im.addEventListener('click', (e)=>{ e.stopPropagation(); openLightbox(im.src); }));
-    container.querySelectorAll('.chat-item.mine .chat-line').forEach(el=>{
-      el.addEventListener('click', ()=>{ const id = parseInt(el.dataset.mid); chatSelectedId = (chatSelectedId === id) ? null : id; renderChatMessages(); });
-    });
-    container.querySelectorAll('[data-chatact]').forEach(btn=>{
-      btn.addEventListener('click', async (e)=>{
+    const sc = stickyScroll(container), wasOn = sc.on;
+    patchList(container, chatMessages, m=>m.id, chatItemSig, chatItemHtml);
+    afterPatch(container, wasOn);
+  }
+  // クリック類は、まとめて1か所で受ける(差し替えで作り直された要素でも動く)
+  function bindChatClicks(container){
+    container.addEventListener('click', async (e)=>{
+      const t = e.target;
+      const act = t.closest('[data-chatact]');
+      if(act){
         e.stopPropagation();
-        const id = parseInt(btn.dataset.mid), m = chatMessages.find(x=>x.id === id);
-        if(btn.dataset.chatact === 'edit'){ startChatEdit(m); return; }
+        const id = parseInt(act.dataset.mid), m = chatMessages.find(x=>x.id === id);
+        if(act.dataset.chatact === 'edit'){ startChatEdit(m); return; }
         if(!confirm('このメッセージの送信を取り消しますか？(全員の画面から消えます)')) return;
         try{ await authPost('/api/chat/retract', { id }); chatSelectedId = null; if(chatEditId === id) cancelChatEdit(); await fetchChatMessages(); }
         catch(err){ alert(err.message); }
-      });
+        return;
+      }
+      const img = t.closest('img.chat-img');
+      if(img){ e.stopPropagation(); openLightbox(img.src); return; }
+      if(t.closest('.av-zoom')) return;                                 // アイコンの拡大は別の処理
+      const who = t.closest('.chat-who');
+      if(who){ showProfile(who.dataset.uid); return; }
+      const line = t.closest('.chat-item.mine .chat-line');
+      if(line){ const id = parseInt(line.dataset.mid); chatSelectedId = (chatSelectedId === id) ? null : id; renderChatMessages(); }
     });
   }
   function startChatEdit(m){
@@ -4407,26 +4479,24 @@ restartBtn.addEventListener('click', ()=>{
   function renderChatModal() {
     modalContent.dataset.mode = 'chat';
     modalContent.innerHTML = `
-      <h2 style="color:var(--gold);">💬 グローバルチャット</h2>
-      <div class="sub">全ユーザーと会話できます。「@ユーザーID」でメンションできます。</div>
-      <div id="chatMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; text-align:left; border:1px solid rgba(255,255,255,0.05);">
-        <div style="text-align:center; color:var(--text-dim);">読み込み中...</div>
-      </div>
+      <h2 class="chat-title">💬 グローバルチャット</h2>
+      <div class="chat-sub">全ユーザーと会話できます。「@ユーザーID」でメンション ・ 最新50件</div>
+      <div id="chatMessages" class="chat-scroll"><div class="chat-empty">読み込み中...</div></div>
       <div id="chatEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="chatEditCancel">キャンセル</button></div>
       <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button></div>
-      <div style="display:flex; gap:6px;">
+      <div class="chat-inputrow">
         <button type="button" class="chat-attach" id="chatImgBtn" aria-label="画像を添付" title="画像を添付">📷</button>
         <input type="file" id="chatImgFile" accept="image/*" hidden>
-        <input type="text" id="chatInput" placeholder="メッセージを入力...(@IDでメンション)" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:var(--bg-deep2); color:var(--text); font-size:14px; font-family:'Nunito',sans-serif;">
-        <button class="primary-btn" id="chatSendBtn" style="flex-shrink:0; width:auto; padding:10px 20px; margin:0;">送信</button>
+        <input type="text" id="chatInput" class="chat-input" placeholder="メッセージを入力...(@IDでメンション)" enterkeyhint="send" autocomplete="off">
+        <button class="primary-btn chat-send" id="chatSendBtn" type="button">送信</button>
       </div>
-      <div style="margin-top:6px; text-align:right; font-size:10px; color:var(--text-dim);">最新50件を表示</div>
     `;
     modalOverlay.classList.add('show');
 
     // 開いたので未読・メンションバッジをリセット
     chatUnreadCount = 0; chatMentionCount = 0; updateChatBadge();
 
+    bindChatClicks(document.getElementById('chatMessages'));
     fetchChatMessages();
 
     chatEditId = null; chatSelectedId = null;
@@ -4473,7 +4543,7 @@ restartBtn.addEventListener('click', ()=>{
     });
 
     document.getElementById('chatInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
         document.getElementById('chatSendBtn').click();
       }
     });
@@ -4734,7 +4804,7 @@ restartBtn.addEventListener('click', ()=>{
       });
       if (!res.ok) throw new Error((await res.json()).error || '取得に失敗しました');
       return await res.json();
-    } catch (err) { return []; }
+    } catch (err) { return null; }      // 通信に失敗したときは null(今の表示を消さないため)
   }
 
   async function sendDM(toId, message){
@@ -4928,16 +4998,14 @@ restartBtn.addEventListener('click', ()=>{
     modalContent.innerHTML = `
       <div class="dm-thread-header">
         <button class="dm-thread-back" id="dmBackBtn">←</button>
-        ${avatarHtml(dmCard.icon, dmCard.name, friendId, 38)}
+        ${avatarHtml(dmCard.icon, dmCard.name, friendId, 40, true)}
         <div class="dm-thread-title"><b>${nameOf(dmCard.name, friendId)}${lvTag(dmCard.lv)}</b><span>💬 ダイレクトメッセージ</span></div>
       </div>
-      <div id="dmMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; border:1px solid rgba(255,255,255,0.05);">
-        <div class="empty-hint">読み込み中...</div>
-      </div>
+      <div id="dmMessages" class="chat-scroll"><div class="chat-empty">読み込み中...</div></div>
       <div id="dmEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="dmEditCancel">キャンセル</button></div>
-      <div style="display:flex; gap:6px;">
-        <input type="text" id="dmInput" placeholder="メッセージを入力...(@IDでメンション)" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:var(--bg-deep2); color:var(--text); font-size:14px; font-family:'Nunito',sans-serif;">
-        <button class="primary-btn" id="dmSendBtn" style="flex-shrink:0; width:auto; padding:10px 20px; margin:0;">送信</button>
+      <div class="chat-inputrow">
+        <input type="text" id="dmInput" class="chat-input" placeholder="メッセージを入力...(@IDでメンション)" enterkeyhint="send" autocomplete="off">
+        <button class="primary-btn chat-send" id="dmSendBtn" type="button">送信</button>
       </div>
     `;
 
@@ -4950,45 +5018,48 @@ restartBtn.addEventListener('click', ()=>{
     async function loadThread(){
       const msgs = await fetchDMMessages(friendId);
       const container = document.getElementById('dmMessages');
-      if (!container) return;
+      if (!container || msgs === null) return;                 // 通信に失敗したときは、今の表示をそのまま(空にしない)
+      dmMsgs = msgs;
       if (msgs.length === 0) {
-        container.innerHTML = `<div class="empty-hint">まだメッセージがありません。話しかけてみましょう！</div>`;
+        container.innerHTML = `<div class="chat-empty">まだメッセージがありません。話しかけてみましょう！</div>`;
       } else {
-        dmMsgs = msgs;
-        keepScroll(container, ()=>{
-          container.innerHTML = msgs.map(m => {
+        const sc = stickyScroll(container), wasOn = sc.on;
+        patchList(container, msgs, m=>m.id,
+          m=> `${m.id}|${m.message}|${m.edited?1:0}|${m.deleted?1:0}|${m.from_id === currentUserId && dmSelectedId === m.id ? 1 : 0}`,
+          m=> {
             const mine = m.from_id === currentUserId, canAct = mine && !m.deleted, sel = canAct && dmSelectedId === m.id;
             return `
             <div class="dm-bubble-row ${mine ? 'mine' : ''}">
               <div class="dm-bubble-col">
                 <div class="dm-bubble ${canAct ? 'actable' : ''} ${m.deleted ? 'retracted' : ''} ${sel ? 'sel' : ''}" data-mid="${m.id}">${msgText(m)}</div>
                 ${sel ? msgActions('dm', m.id) : ''}
-                <div class="dm-time" style="text-align:${mine ? 'right' : 'left'};">${new Date(m.timestamp).toLocaleTimeString('ja-JP')}</div>
+                <div class="dm-time" style="text-align:${mine ? 'right' : 'left'};">${new Date(m.timestamp).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' })}</div>
               </div>
             </div>`;
-          }).join('');
-        });
-        container.querySelectorAll('.dm-bubble.actable').forEach(el=>{
-          el.addEventListener('click', ()=>{ const id = parseInt(el.dataset.mid); dmSelectedId = (dmSelectedId === id) ? null : id; loadThread(); });
-        });
-        container.querySelectorAll('[data-dmact]').forEach(btn=>{
-          btn.addEventListener('click', async (e)=>{
-            e.stopPropagation();
-            const id = parseInt(btn.dataset.mid), m = dmMsgs.find(x=>x.id === id);
-            if(btn.dataset.dmact === 'edit'){
-              dmEditId = id; dmSelectedId = null;
-              const input = document.getElementById('dmInput'); input.value = m.message; input.focus();
-              document.getElementById('dmEditBar').style.display = 'flex'; document.getElementById('dmSendBtn').textContent = '保存';
-              loadThread(); return;
-            }
-            if(!confirm('このメッセージの送信を取り消しますか？(相手の画面からも消えます)')) return;
-            try{ await authPost('/api/dm/retract', { id }); dmSelectedId = null; if(dmEditId === id) cancelDmEdit(); await loadThread(); }
-            catch(err){ alert(err.message); }
           });
-        });
+        afterPatch(container, wasOn);
       }
       fetchDMUnreadSummary(); // 既読になったのでバッジを更新
     }
+    document.getElementById('dmMessages').addEventListener('click', async (e)=>{      // クリックは、まとめて1か所で受ける
+      const btn = e.target.closest('[data-dmact]');
+      if(btn){
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.mid), m = dmMsgs.find(x=>x.id === id);
+        if(btn.dataset.dmact === 'edit'){
+          dmEditId = id; dmSelectedId = null;
+          const input = document.getElementById('dmInput'); input.value = m.message; input.focus();
+          document.getElementById('dmEditBar').style.display = 'flex'; document.getElementById('dmSendBtn').textContent = '保存';
+          loadThread(); return;
+        }
+        if(!confirm('このメッセージの送信を取り消しますか？(相手の画面からも消えます)')) return;
+        try{ await authPost('/api/dm/retract', { id }); dmSelectedId = null; if(dmEditId === id) cancelDmEdit(); await loadThread(); }
+        catch(err){ alert(err.message); }
+        return;
+      }
+      const b = e.target.closest('.dm-bubble.actable');
+      if(b){ const id = parseInt(b.dataset.mid); dmSelectedId = (dmSelectedId === id) ? null : id; loadThread(); }
+    });
     await loadThread();
 
     document.getElementById('dmSendBtn').addEventListener('click', async () => {
@@ -5001,11 +5072,11 @@ restartBtn.addEventListener('click', ()=>{
         return;
       }
       const ok = await sendDM(friendId, msg);
-      if (ok) { input.value = ''; await loadThread(); }
+      if (ok) { input.value = ''; stickyScroll(document.getElementById('dmMessages')).on = true; await loadThread(); }
     });
     document.getElementById('dmEditCancel').addEventListener('click', cancelDmEdit);
     document.getElementById('dmInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') document.getElementById('dmSendBtn').click();
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) document.getElementById('dmSendBtn').click();
     });
     document.getElementById('dmBackBtn').addEventListener('click', () => {
       dmThreadWith = null;
