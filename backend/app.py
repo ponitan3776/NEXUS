@@ -816,6 +816,16 @@ def account_icon():
             if not re.match(r'^u:i\.ibb\.co(\.com)?/[A-Za-z0-9]{4,16}/[A-Za-z0-9._-]{1,120}$', raw):
                 raise ApiError('アイコンが不正です', 400)
             value = raw
+        elif raw.startswith('d:'):       # 画像そのものを入れる形(約2KBの小さな画像だけ)
+            if not re.match(r'^d:[A-Za-z0-9+/]{20,4600}={0,2}$', raw):
+                raise ApiError('アイコンが不正です', 400)
+            try:
+                _bin = base64.b64decode(raw[2:], validate=True)
+            except Exception:
+                raise ApiError('アイコンが不正です', 400)
+            if len(_bin) > 3500 or (_sniff_image(_bin) is None and _bin[:4] != b'\x89PNG'):
+                raise ApiError('アイコンの画像が大きすぎるか、形式が違います', 400)
+            value = raw
         elif raw:
             parts = raw.split(':')
             if len(parts) != 3 or parts[0] != 'e' or parts[1] not in ICON_EMOJIS or not parts[2].isdigit() or int(parts[2]) >= ICON_COLOR_COUNT:
