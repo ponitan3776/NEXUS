@@ -1198,7 +1198,7 @@ const PATTERN_LABELS = {
       if(r.status === 401 || r.status === 404){
         // 本当に無効(期限切れ・アカウント削除)なときだけログアウトする
         stopUserSync(); stopPlayTimeTracking();
-        authToken = null; currentUserId = null; currentDisplayName = '';
+        authToken = null; currentUserId = null; currentDisplayName = ''; currentIcon = ''; currentLv = null;
         await clearAuthSession();
         updateAccountButton();
         return false;
@@ -1218,6 +1218,61 @@ const PATTERN_LABELS = {
   const myName = ()=> currentDisplayName || currentUserId || 'ゲスト';
   const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id) nameCache[x.id] = x.name || x.id; }); };
   const cachedName = (id)=> escapeHtml(nameCache[id] || id || '');
+  let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / '')とバトルパスLv
+
+  // ----- 🖼 アイコン(アバター)・バトルパスLvの表示部品 -----
+  const AV_GRAD = ['#ff8a1f,#ff4d6d', '#b14dff,#5c9dff', '#3ddc84,#2bb3a0', '#ffd23d,#ff8a1f', '#ff4fa8,#b14dff', '#5c9dff,#3dd8c8', '#9a8cff,#ff8fb8', '#8a98c0,#3a48a0'];
+  const hashStr = (str)=>{ let h = 0; for(const c of String(str || '')) h = (h*31 + c.codePointAt(0)) >>> 0; return h; };
+  function avatarHtml(icon, name, id, size){
+    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || '');
+    if(e) return `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})">${escapeHtml(e[1])}</span>`;
+    const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
+    const fb = `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})">${letter}</span>`;
+    if(im) return `<img class="av av-img" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
+    return fb;
+  }
+  const lvTag = (lv)=> lv ? `<span class="bplv" title="バトルパスのレベル">Lv.${lv}</span>` : '';
+  // アイコン + 表示名 + Lv をまとめて(o は { id, name, icon, lv } を持つオブジェクト。IDの項目名が違うときは idKey)
+  const whoHtml = (o, idKey, size)=> { const id = o[idKey || 'id']; return `${avatarHtml(o.icon, o.name, id, size)}<span class="who-name">${nameOf(o.name, id)}</span>${lvTag(o.lv)}`; };
+  document.addEventListener('error', (e)=>{                  // 画像が読めなかったら、頭文字のアイコンに差し替える / チャット画像は「期限切れ」の表示に
+    const t = e.target;
+    if(!t || !t.classList) return;
+    if(t.classList.contains('av-img')){ const d = document.createElement('span'); d.innerHTML = decodeURIComponent(t.dataset.fb || ''); if(d.firstChild) t.replaceWith(d.firstChild); }
+    else if(t.classList.contains('chat-img')){ const d = document.createElement('div'); d.className = 'chat-img-gone'; d.textContent = '🕒 画像の保存期限が切れました'; t.replaceWith(d); }
+  }, true);
+
+  // ----- 📷 画像を小さく圧縮(送る前に。容量を使いすぎないための工夫) -----
+  function loadBitmap(file){
+    const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('画像を読み込めませんでした')); }; im.src = url; });
+    return window.createImageBitmap ? createImageBitmap(file).catch(viaImg) : viaImg();
+  }
+  const toBlob = (cv, type, q)=> new Promise(r=> cv.toBlob(b=> r(b), type, q));
+  async function compressImage(file, opt){
+    const o = Object.assign({ maxEdge:800, maxBytes:70000, square:false }, opt || {});
+    if(!file || !/^image\//.test(file.type || '')) throw new Error('画像ファイルを選んでください');
+    const src = await loadBitmap(file);
+    let w = src.width, h = src.height, sx = 0, sy = 0, sw = w, sh = h;
+    if(o.square){ const m = Math.min(w, h); sx = (w - m)/2; sy = (h - m)/2; sw = sh = w = h = m; }
+    const scale = Math.min(1, o.maxEdge / Math.max(w, h));
+    let cw = Math.max(1, Math.round(w*scale)), ch = Math.max(1, Math.round(h*scale));
+    for(let attempt = 0; attempt < 8; attempt++){
+      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+      const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);      // 透明な部分は白に(JPEGでも黒くならないように)
+      ctx.imageSmoothingQuality = 'high'; ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cw, ch);
+      for(const q of [0.82, 0.7, 0.58, 0.46, 0.36]){
+        let blob = await toBlob(cv, 'image/webp', q);
+        if(!blob || blob.type !== 'image/webp') blob = await toBlob(cv, 'image/jpeg', q);       // WebPが作れない端末(Safariなど)はJPEG
+        if(blob && blob.size <= o.maxBytes) return blob;
+      }
+      cw = Math.max(1, Math.round(cw*0.8)); ch = Math.max(1, Math.round(ch*0.8));
+    }
+    throw new Error('画像を小さくできませんでした。別の画像でお試しください');
+  }
+  // 画像を大きく見る(タップで開く・もう一度タップで閉じる)
+  function openLightbox(src){
+    const el = document.createElement('div'); el.className = 'lightbox'; el.innerHTML = `<img src="${escapeHtml(src)}" alt=""><button type="button" aria-label="とじる">✕</button>`;
+    el.addEventListener('click', ()=> el.remove()); document.body.appendChild(el);
+  }
   let playTime = 0;
   let playTimeInterval = null;
 
@@ -1400,7 +1455,7 @@ const PATTERN_LABELS = {
       html += `<div class="empty-hint">まだ挑戦者がいません。一番乗りを目指そう！</div>`;
     } else {
       data.ranking.forEach((r,i)=>{
-        html += `<div class="friend-item"><span class="fname">${i+1}. ${nameOf(r.name, r.id)}</span><span class="fsub">${r.score}点</span></div>`;
+        html += `<div class="friend-item"><span class="fname">${i+1}. ${whoHtml(r)}</span><span class="fsub">${r.score}点</span></div>`;
       });
     }
     modalContent.innerHTML = html;
@@ -2466,6 +2521,7 @@ function issueNewQuest(excludePoolIds){
     feedbackImageDataUrl = null;
     let html = `
       <h2 style="color:var(--gold);">📮 ご要望・不具合報告</h2>
+      ${authToken ? `<button class="ghost-btn support-open-btn" id="supportOpenBtn" type="button">💬 運営とのやりとり<span class="lt-badge" id="supportOpenBadge"></span></button>` : `<div class="sub" style="margin-bottom:8px;">💡 ログインして送ると、運営からの返信を「専用チャット」で受け取れます。</div>`}
       <div class="tab-row" style="margin-bottom:10px;">
         <button class="tab-btn ${tab==='request'?'active':''}" data-fbtab="request">💡 ご要望</button>
         <button class="tab-btn ${tab==='report'?'active':''}" data-fbtab="report">🐞 不具合報告</button>
@@ -2494,6 +2550,9 @@ function issueNewQuest(excludePoolIds){
     }
     modalContent.innerHTML = html;
 
+    const sob = document.getElementById('supportOpenBtn');
+    if(sob){ sob.addEventListener('click', ()=>{ if(window.CBSupport) window.CBSupport.open(); });
+      if(window.CBSupport){ const n = window.CBSupport.badgeCount(); const b = document.getElementById('supportOpenBadge'); if(b && n > 0){ b.textContent = n; b.classList.add('show'); } } }
     modalContent.querySelectorAll('.tab-btn[data-fbtab]').forEach(btn=>{
       btn.addEventListener('click', ()=> renderFeedbackModal(btn.dataset.fbtab));
     });
@@ -2541,6 +2600,11 @@ function issueNewQuest(excludePoolIds){
         if(!res.ok) throw new Error(data.error || '送信に失敗しました');
         statusEl.textContent = '✅ 送信しました。ありがとうございます！';
         statusEl.style.color = 'var(--mint)';
+        if(data.threadId && window.CBSupport){      // ログイン中なら、運営との専用チャットが開く
+          statusEl.insertAdjacentHTML('beforeend', `<div style="margin-top:8px;"><button class="primary-btn" id="openThreadBtn" type="button">💬 専用チャットを開く(運営が返信します)</button></div>`);
+          document.getElementById('openThreadBtn').addEventListener('click', ()=> window.CBSupport.openThread(data.threadId));
+          window.CBSupport.refresh();
+        }
         textEl.value = '';
         feedbackImageDataUrl = null;
         const previewWrap = document.getElementById('feedbackImagePreviewWrap');
@@ -3333,7 +3397,7 @@ restartBtn.addEventListener('click', ()=>{
     // ゲスト状態にリセット
     authToken = null;
     currentUserId = null;
-    currentDisplayName = '';
+    currentDisplayName = ''; currentIcon = ''; currentLv = null;
     clearAuthSession();
     // データ初期化
     bestScores = { soft:0, baked:0, hard:0, extreme:0 };
@@ -3419,6 +3483,12 @@ restartBtn.addEventListener('click', ()=>{
     }
   }
 
+  async function postJson(path, body){
+    const r = await fetch(`${API_BASE_URL}${path}`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` }, body: JSON.stringify(body) });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error || '失敗しました');
+    return d;
+  }
   // ---------- 🏷 表示名 / 🪪 ID変更(アカウント画面) ----------
   const fmtWait = (sec)=>{ sec = Math.max(0, Math.floor(sec)); const d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60); return d ? `${d}日${h}時間` : (h ? `${h}時間${m}分` : `${Math.max(1, m)}分`); };
   async function setupAccountSettings(){
@@ -3426,6 +3496,9 @@ restartBtn.addEventListener('click', ()=>{
     const dnBtn = document.getElementById('dnSave'), dnInput = document.getElementById('dnInput'), dnMsg = document.getElementById('dnMsg'), idMsg = document.getElementById('idMsg');
     if(!hint) return;
     const setMsg = (el, text, ok)=>{ el.textContent = text; el.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
+    // アイコンの部品は、サーバーの返事(/api/account/info)を待たずに、先に使えるようにしておく(返事が遅い・失敗でもボタンが効く)
+    const ICON_EMOJIS_LOCAL = ['🎃','👻','🦇','🕷','💀','🧙','🧛','🧟','🕯','🍬','🍭','🐈‍⬛','🐶','🐱','🐰','🦊','🐻','🐼','🐸','🐵','🦁','🐯','🐧','🦉','🐙','🦄','🐲','🦖','🐢','🦋','🌙','⭐','🌈','🔥','⚡','❄️','🌸','🍀','🍎','🍕','🍩','🎮','🎯','🎲','🧩','🎧','🎸','🚀','👑','💎','🏆','⚔️','🛡','🤖','👽','😎','🥳','🤩','😺','🎭'];
+    setupIconPicker({ iconEmojis: ICON_EMOJIS_LOCAL, iconColors: 8 });
     const lockId = (text)=>{ hint.textContent = text; idBtn.disabled = true; idNew.disabled = true; idPw.disabled = true; };
     try{
       const r = await fetch(`${API_BASE_URL}/api/account/info`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
@@ -3435,6 +3508,40 @@ restartBtn.addEventListener('click', ()=>{
       else if(!info.canChangeId) lockId(`IDは${info.idChangeDays}日に1回だけ変更できます。あと ${fmtWait(info.waitSec)} で変更できます。`);
       else hint.textContent = `IDはログインに使う名前です。${info.idChangeDays}日に1回だけ変更できます(変更すると運営に通知されます)。他の端末では、新しいIDでログインし直しが必要です。`;
     }catch(err){ hint.textContent = 'IDの情報を取得できませんでした。通信を確認してください。'; }
+    function setupIconPicker(info){
+      const grid = document.getElementById('iconGrid'), colors = document.getElementById('iconColors'), msg = document.getElementById('iconMsg'), av = document.getElementById('acctAv');
+      if(!grid) return;
+      const m = /^e:(.+):([0-7])$/.exec(currentIcon || '');
+      let pickEmoji = m ? m[1] : null, pickColor = m ? +m[2] : 0;
+      const show = (text, ok)=>{ msg.textContent = text; msg.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
+      const applied = (icon)=>{ currentIcon = icon || ''; av.innerHTML = avatarHtml(currentIcon, myName(), currentUserId, 72); updateAccountButton(); };
+      const paint = ()=>{
+        colors.innerHTML = Array.from({ length: info.iconColors }, (_, i)=> `<button type="button" class="icon-color ${i === pickColor ? 'on' : ''}" data-c="${i}" style="background:linear-gradient(135deg,${AV_GRAD[i]})" aria-label="色${i+1}"></button>`).join('');
+        grid.innerHTML = info.iconEmojis.map(e=> `<button type="button" class="icon-pick ${e === pickEmoji ? 'on' : ''}" data-e="${escapeHtml(e)}">${escapeHtml(e)}</button>`).join('');
+        colors.querySelectorAll('.icon-color').forEach(b=> b.addEventListener('click', ()=>{ pickColor = +b.dataset.c; paint(); if(pickEmoji) save(); }));
+        grid.querySelectorAll('.icon-pick').forEach(b=> b.addEventListener('click', ()=>{ pickEmoji = b.dataset.e; paint(); save(); }));
+      };
+      const save = async ()=>{
+        try{ const d = await postJson('/api/account/icon', { icon: pickEmoji ? `e:${pickEmoji}:${pickColor}` : '' }); applied(d.icon); show('アイコンを変更しました！', true); }
+        catch(err){ show(err.message, false); }
+      };
+      paint();
+      document.getElementById('iconResetBtn').addEventListener('click', async ()=>{ pickEmoji = null; paint(); await save(); });
+      const file = document.getElementById('iconFile');
+      document.getElementById('iconUploadBtn').addEventListener('click', ()=> file.click());
+      file.addEventListener('change', async ()=>{
+        const f = file.files[0]; if(!f) return;
+        show('圧縮してアップロード中…', true);
+        try{
+          const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
+          const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
+          const d = await r.json().catch(()=>({}));
+          if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
+          pickEmoji = null; paint(); applied(d.icon); show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
+        }catch(err){ show(/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'サーバーにつながりませんでした。少し待ってからもう一度お試しください' : err.message, false); }
+        file.value = '';
+      });
+    }
     dnBtn.addEventListener('click', async ()=>{
       dnBtn.disabled = true; setMsg(dnMsg, '保存中...', true);
       try{
@@ -3469,7 +3576,16 @@ restartBtn.addEventListener('click', ()=>{
     if(currentUserId){
       modalContent.innerHTML = `
         <h2 style="color:var(--gold);">👤 アカウント</h2>
-        <div class="acct-card"><div class="acct-name">${escapeHtml(myName())}</div><div class="sub">ID: <b>${escapeHtml(currentUserId)}</b></div></div>
+        <div class="acct-card"><div id="acctAv">${avatarHtml(currentIcon, myName(), currentUserId, 72)}</div><div class="acct-name">${escapeHtml(myName())} ${lvTag(currentLv)}</div><div class="sub">ID: <b>${escapeHtml(currentUserId)}</b></div></div>
+        <div class="acct-sec">
+          <div class="acct-h">🖼 アイコン</div>
+          <div class="sub">好きな絵と色を選ぶか、手持ちの画像をアップロードできます(アップロードした画像は自動で小さくします)。</div>
+          <div class="icon-colors" id="iconColors"></div>
+          <div class="icon-grid" id="iconGrid"></div>
+          <div class="acct-row2"><button class="ghost-btn" id="iconUploadBtn" type="button">📷 画像をアップロード</button><button class="ghost-btn" id="iconResetBtn" type="button">初期に戻す</button></div>
+          <input type="file" id="iconFile" accept="image/*" hidden>
+          <div class="auth-msg" id="iconMsg"></div>
+        </div>
         <div class="acct-sec">
           <div class="acct-h">🏷 表示名</div>
           <div class="sub">ランキング・チャット・フレンドに表示される名前です。日本語OK・16文字まで・何度でも変えられます。空にするとIDが表示されます。</div>
@@ -3550,7 +3666,7 @@ restartBtn.addEventListener('click', ()=>{
         if(!r.ok) throw new Error(data.error || 'ログインに失敗しました。');
         authToken = data.token;
         currentUserId = data.id;
-        currentDisplayName = data.displayName || '';
+        currentDisplayName = data.displayName || ''; currentIcon = data.icon || ''; currentLv = data.lv || null;
         await saveAuthSession(authToken, currentUserId);
         // ログイン後、サーバーからデータ取得
         await syncFromServer();
@@ -3583,7 +3699,7 @@ restartBtn.addEventListener('click', ()=>{
         const r = await fetch(`${API_BASE_URL}/api/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id,password,displayName}) });
         const data = await r.json();
         if(!r.ok) throw new Error(data.error || '登録に失敗しました。');
-        authToken = data.token; currentUserId = data.id; currentDisplayName = data.displayName || '';
+        authToken = data.token; currentUserId = data.id; currentDisplayName = data.displayName || ''; currentIcon = data.icon || ''; currentLv = data.lv || null;
         await saveAuthSession(authToken, currentUserId);
         // 新規登録時はデフォルトデータ
         bestScores = { soft:0, baked:0, hard:0, extreme:0 };
@@ -3695,6 +3811,8 @@ restartBtn.addEventListener('click', ()=>{
 
   function applySyncData(data){
     if (typeof data.displayName === 'string') currentDisplayName = data.displayName;
+    if (typeof data.icon === 'string') currentIcon = data.icon;
+    if (data.lv) currentLv = data.lv;
     // ベストスコア（モード別がある場合はそちらを優先）
     if (data.bestScores && typeof data.bestScores === 'object') {
       bestScores = { ...bestScores, ...data.bestScores };
@@ -3949,7 +4067,7 @@ restartBtn.addEventListener('click', ()=>{
                             `${user.value}点`;
           content += `
             <div style="display:flex; justify-content:space-between; gap:8px; padding:8px 4px; border-bottom:1px solid rgba(255,255,255,0.05); ${isMe ? 'background:rgba(255,217,61,0.15); border-radius:8px;' : ''}">
-              <span style="font-weight:700; min-width:0; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${nameOf(user.name, user.id)} ${isMe ? '👈' : ''}${titleTag(user.title)}</span>
+              <span style="font-weight:700; min-width:0; ${isMe ? 'color:var(--gold);' : ''}">${medal} ${whoHtml(user)} ${isMe ? '👈' : ''}${titleTag(user.title)}</span>
               <span style="color:var(--gold); font-weight:800; flex-shrink:0;">${valueLabel}</span>
             </div>
           `;
@@ -4109,7 +4227,7 @@ restartBtn.addEventListener('click', ()=>{
   }
 
   // 中身が変わっていないときは再描画しない(3秒ごとの無駄な描画を省く)
-  function chatSig(list){ return list.map(m => `${m.id}${m.edited?'e':''}${m.deleted?'d':''}${m.title?m.title.id:''}${m.name||''}`).join(','); }
+  function chatSig(list){ return list.map(m => `${m.id}${m.edited?'e':''}${m.deleted?'d':''}${m.title?m.title.id:''}${m.name||''}${m.icon||''}${m.lv||''}${m.image_id||''}`).join(','); }
   async function fetchChatMessages() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages`);
@@ -4125,7 +4243,7 @@ restartBtn.addEventListener('click', ()=>{
     }
   }
 
-  async function sendChatMessage(message) {
+  async function sendChatMessage(message, imageId) {
     if (!authToken) {
       alert('ログインが必要です');
       return false;
@@ -4137,7 +4255,7 @@ restartBtn.addEventListener('click', ()=>{
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, imageId: imageId || undefined })
       });
       if (!res.ok) {
         const err = await res.json();
@@ -4168,7 +4286,8 @@ restartBtn.addEventListener('click', ()=>{
       const isFriend = friendsList.some(f => f.id === data.userId);
       const isSelf = data.userId === currentUserId;
       modalContent.innerHTML = `
-        <h2 style="color:var(--gold);">👤 ${nameOf(data.name, data.userId)} のプロフィール</h2>
+        <div style="text-align:center;">${avatarHtml(data.icon, data.name, data.userId, 72)}</div>
+        <h2 style="color:var(--gold); margin-top:6px;">${nameOf(data.name, data.userId)} ${lvTag(data.lv)}</h2>
         ${data.name && data.name !== data.userId ? `<div class="sub" style="text-align:center; margin:-6px 0 6px;">ID: ${escapeHtml(data.userId)}</div>` : ''}
         ${data.title ? `<div style="text-align:center; margin:-4px 0 6px;">${titleTag(data.title)}</div>` : ''}
         <div style="text-align:left; padding:8px 0;">
@@ -4219,6 +4338,7 @@ restartBtn.addEventListener('click', ()=>{
     render();
     container.scrollTop = nearBottom ? container.scrollHeight : prev;
   }
+  const chatImageHtml = (m)=> (m.image_id && !m.deleted) ? `<div class="chat-img-wrap"><img class="chat-img" data-imgid="${escapeHtml(m.image_id)}" src="${API_BASE_URL}/api/img/${escapeHtml(m.image_id)}" alt="送られた画像" loading="lazy" decoding="async"></div>` : '';
   const msgText = (m)=> m.deleted
     ? `<span class="msg-retracted">🚫 メッセージが取り消されました</span>`
     : `${highlightMentions(m.message)}${m.edited ? '<span class="msg-edited">(編集済み)</span>' : ''}`;
@@ -4240,9 +4360,9 @@ restartBtn.addEventListener('click', ()=>{
         <div class="chat-item ${canAct ? 'mine' : ''} ${sel ? 'sel' : ''}">
           <div class="chat-line" data-mid="${msg.id}" style="display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
             <span style="color:var(--gold); font-weight:700; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); showProfile('${msg.user_id}')">
-              [${nameOf(msg.name, msg.user_id)}]${titleTag(msg.title)}
+              ${avatarHtml(msg.icon, msg.name, msg.user_id, 24)}[${nameOf(msg.name, msg.user_id)}${lvTag(msg.lv)}]${titleTag(msg.title)}
             </span>
-            <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}</span>
+            <span class="chat-text" style="color:var(--text); word-break:break-word;">${msgText(msg)}${chatImageHtml(msg)}</span>
             <span style="color:var(--text-dim); font-size:10px; margin-left:auto; flex-shrink:0;">
               ${new Date(msg.timestamp).toLocaleTimeString('ja-JP')}
             </span>
@@ -4251,6 +4371,7 @@ restartBtn.addEventListener('click', ()=>{
         </div>`;
       }).join('');
     });
+    container.querySelectorAll('img.chat-img').forEach(im=> im.addEventListener('click', (e)=>{ e.stopPropagation(); openLightbox(im.src); }));
     container.querySelectorAll('.chat-item.mine .chat-line').forEach(el=>{
       el.addEventListener('click', ()=>{ const id = parseInt(el.dataset.mid); chatSelectedId = (chatSelectedId === id) ? null : id; renderChatMessages(); });
     });
@@ -4291,7 +4412,10 @@ restartBtn.addEventListener('click', ()=>{
         <div style="text-align:center; color:var(--text-dim);">読み込み中...</div>
       </div>
       <div id="chatEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="chatEditCancel">キャンセル</button></div>
+      <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button></div>
       <div style="display:flex; gap:6px;">
+        <button type="button" class="chat-attach" id="chatImgBtn" aria-label="画像を添付" title="画像を添付">📷</button>
+        <input type="file" id="chatImgFile" accept="image/*" hidden>
         <input type="text" id="chatInput" placeholder="メッセージを入力...(@IDでメンション)" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:var(--bg-deep2); color:var(--text); font-size:14px; font-family:'Nunito',sans-serif;">
         <button class="primary-btn" id="chatSendBtn" style="flex-shrink:0; width:auto; padding:10px 20px; margin:0;">送信</button>
       </div>
@@ -4306,10 +4430,37 @@ restartBtn.addEventListener('click', ()=>{
 
     chatEditId = null; chatSelectedId = null;
     document.getElementById('chatEditCancel').addEventListener('click', cancelChatEdit);
+    // 📷 画像の添付(選んだ画像は、ここで小さく圧縮してから送る)
+    let chatImgBlob = null;
+    const prevBox = document.getElementById('chatImgPreview');
+    const clearChatImg = ()=>{ chatImgBlob = null; prevBox.style.display = 'none'; const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.removeAttribute('src'); document.getElementById('chatImgFile').value = ''; };
+    document.getElementById('chatImgBtn').addEventListener('click', ()=>{ if(!authToken){ alert('ログインが必要です'); return; } document.getElementById('chatImgFile').click(); });
+    document.getElementById('chatImgRemove').addEventListener('click', clearChatImg);
+    document.getElementById('chatImgFile').addEventListener('change', async (e)=>{
+      const f = e.target.files[0]; if(!f) return;
+      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '圧縮中…';
+      try{
+        chatImgBlob = await compressImage(f, { maxEdge:1100, maxBytes:100000 });
+        const im = prevBox.querySelector('img'); im.src = URL.createObjectURL(chatImgBlob);
+        prevBox.querySelector('span').textContent = `${Math.ceil(chatImgBlob.size/1000)}KB に圧縮しました(送信で3日間だけ保存されます)`;
+      }catch(err){ alert(err.message); clearChatImg(); }
+    });
     document.getElementById('chatSendBtn').addEventListener('click', async () => {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
-      if (!msg) return;
+      if (!msg && !chatImgBlob) return;
+      if (chatImgBlob && !chatEditId) {                    // 画像つき: 先にアップロードしてから、そのIDでメッセージを送る
+        const btn = document.getElementById('chatSendBtn'); btn.disabled = true;
+        try{
+          const up = await fetch(`${API_BASE_URL}/api/img/upload?kind=chat`, { method:'POST', headers:{ 'Content-Type': chatImgBlob.type, 'Authorization':`Bearer ${authToken}` }, body: chatImgBlob });
+          const ud = await up.json().catch(()=>({}));
+          if(!up.ok) throw new Error(ud.error || '画像のアップロードに失敗しました');
+          input.value = '';
+          const ok = await sendChatMessage(msg, ud.id);
+          if(ok) clearChatImg(); else if(!input.value) input.value = msg;
+        }catch(err){ alert(err.message); }
+        btn.disabled = false; return;
+      }
       if (chatEditId) {                                     // ✏️ 編集の保存
         try { await authPost('/api/chat/edit', { id: chatEditId, message: msg }); cancelChatEdit(); await fetchChatMessages(); }
         catch (err) { alert(err.message); }
@@ -4623,7 +4774,7 @@ restartBtn.addEventListener('click', ()=>{
           html += `
             <div class="friend-item">
               <span class="fname" data-showprofile="${f.id}">
-                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${nameOf(f.name, f.id)}${f.name && f.name !== f.id ? `<small class="fid">@${escapeHtml(f.id)}</small>` : ''}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}
+                <span class="online-dot ${f.online ? 'on' : 'off'}"></span>${whoHtml(f)}${f.name && f.name !== f.id ? `<small class="fid">@${escapeHtml(f.id)}</small>` : ''}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}
               </span>
               <span class="fsub">${f.online ? '🟢 オンライン' : 'オフライン'}</span>
               <button class="fbtn" data-challenge="${f.id}" data-game="candy">🍬 対決</button>
@@ -4677,7 +4828,7 @@ restartBtn.addEventListener('click', ()=>{
         incomingRequests.forEach(r => {
           html += `
             <div class="friend-item pending">
-              <span class="fname" data-showprofile="${r.id}">🔔 ${nameOf(r.name, r.id)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
+              <span class="fname" data-showprofile="${r.id}">🔔 ${whoHtml(r)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
               <button class="fbtn accept" data-accept="${r.id}">承認</button>
               <button class="fbtn decline" data-decline="${r.id}">拒否</button>
             </div>`;
@@ -4690,7 +4841,7 @@ restartBtn.addEventListener('click', ()=>{
         outgoingRequests.forEach(r => {
           html += `
             <div class="friend-item pending">
-              <span class="fname">📤 ${nameOf(r.name, r.id)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
+              <span class="fname">📤 ${whoHtml(r)}${r.name && r.name !== r.id ? `<small class="fid">@${escapeHtml(r.id)}</small>` : ''}</span>
               <span class="fsub">承認待ち</span>
               <button class="fbtn decline" data-cancel="${r.id}">取消</button>
             </div>`;
@@ -4704,7 +4855,7 @@ restartBtn.addEventListener('click', ()=>{
           const unread = dmPerFriendUnread[f.id] || 0;
           html += `
             <div class="friend-item chat" data-openthread="${f.id}" style="cursor:pointer;">
-              <span class="fname">💬 ${nameOf(f.name, f.id)}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
+              <span class="fname">💬 ${whoHtml(f)}${titleTag(f.title)}${unread ? `<span class="funread">${unread}</span>` : ''}</span>
               <span class="fsub">タップして会話を開く →</span>
             </div>`;
         });
@@ -6513,6 +6664,17 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.1', date:'2026-10-25', items:[
+      '🖼 アイコンの画像アップロードが、サーバーの反応が遅いときでも使えるように',
+      '📷 チャットの画像を大きく・きれいに表示。タップすると画面いっぱいに拡大します'
+    ]},
+    { version:'3.8.0', date:'2026-10-25', items:[
+      '🖼 アイコンを設定できるように。絵文字+色から選ぶか、手持ちの画像をアップロード(自動で小さくします)。ランキング・チャット・フレンドなどに表示されます',
+      '📷 チャットに画像を送れるように。送る前に自動で小さくし、画像は3日たつと自動で消えます(メッセージは残ります)',
+      '🏅 名前の横に、バトルパスのレベル(Lv.)が出るように',
+      '📮 ご要望・不具合報告を送ると、運営との専用チャットが開きます。運営が1つずつ返信し、終了すると 👍/👎 で評価できます(👎なら新しいチャットが開きます)',
+      '🔔 ロビーに「お知らせバー」を追加。未読のチャット・未投票・運営からの返信・フレンドの通知などが、ひと目でわかります'
+    ]},
     { version:'3.7.0', date:'2026-10-24', items:[
       '🏷 「表示名」を追加。IDとは別に、ランキング・チャット・フレンドなどに出る名前を決められます(日本語OK・16文字まで・何度でも変更OK)',
       '🪪 IDを変更できるように(7日に1回まで)。アカウント画面から、パスワードで確認して変更します。フレンド・記録・ギフトなどはそのまま引き継がれます',
@@ -7179,7 +7341,7 @@ function renderOtherGamesModal(){
       const me = d.me;
       let html = `<div class="sub" style="margin-bottom:8px;">累計キャンディのランキング(上位20人)。あなた: ${me.rank ? `${me.rank}位 / 🍬${formatNumber(me.total)}` : '圏外(まだ0)'}</div>`;
       html += d.ranking.length ? d.ranking.map((r,i)=>`
-        <div class="friend-item ${r.id===me.id?'pending':''}"><span class="fname">${['🥇','🥈','🥉'][i] || (i+1)+'位'} ${nameOf(r.name, r.id)}</span><span class="fsub">🍬 ${formatNumber(r.total)}</span></div>`).join('')
+        <div class="friend-item ${r.id===me.id?'pending':''}"><span class="fname">${['🥇','🥈','🥉'][i] || (i+1)+'位'} ${whoHtml(r)}</span><span class="fsub">🍬 ${formatNumber(r.total)}</span></div>`).join('')
         : `<div class="empty-hint">まだ誰もキャンディを集めていません。一番乗りを目指そう！</div>`;
       body.innerHTML = html;
     }catch(err){ if(body) body.innerHTML = `<div class="empty-hint">${err.message}</div>`; }
@@ -7294,7 +7456,9 @@ function renderOtherGamesModal(){
     let wasAuth = false;
     const update = ()=>{
       const nm = myName(), cn = formatNumber(coins);
-      if(lobbyName.textContent !== nm) lobbyName.textContent = nm;
+      { const key = authToken ? `${currentIcon}|${nm}|${currentLv}` : '';
+        if(lobbyName.dataset.k !== key){ lobbyName.dataset.k = key; lobbyName.innerHTML = authToken ? `${escapeHtml(nm)}${lvTag(currentLv)}` : escapeHtml(nm);
+          const ic = document.getElementById('lobbyAccount').querySelector('.lc-ic'); if(ic) ic.innerHTML = authToken ? avatarHtml(currentIcon, nm, currentUserId, 26) : '👤'; } }
       if(lobbyCoins.textContent !== cn) lobbyCoins.textContent = cn;   // 変わったときだけ書き換える(アニメが毎秒走らないように)
       const frOn = friendsDot.classList.contains('show'), chOn = chatDot.classList.contains('show');
       const frM = friendsMentionBadge.classList.contains('show') ? (parseInt(friendsMentionBadge.textContent) || 0) : 0;
@@ -7374,6 +7538,9 @@ function renderOtherGamesModal(){
     openRegister(){ renderAuthModal(); modalOverlay.classList.add('show'); const t = modalContent.querySelector('[data-tab="register"]'); if(t) t.click(); },
     userId(){ return currentUserId; },
     displayName(){ return myName(); },
+    openFeedback(){ renderFeedbackModal('request'); modalOverlay.classList.add('show'); },
+    who: whoHtml, avatar: avatarHtml, lvTag, compressImage, openLightbox, apiBase: API_BASE_URL,
+    counts(){ return { chat: chatMentionCount || chatUnreadCount, chatMention: chatMentionCount, friends: friendsMentionBadge.classList.contains('show') ? (parseInt(friendsMentionBadge.textContent) || 0) : (friendsDot.classList.contains('show') ? 1 : 0) }; },
     setMyTitle(t){ myTitle = t || null; },                    // 🏷 自分が付けている称号(チャットに送った直後の表示用)
     isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
     setCoins(n){ coins = Math.max(0, Number(n) || 0); updateCoinUI(); },
