@@ -246,10 +246,10 @@ body.reduce-motion .ttl.r-admin{ animation:none; }
 .acct-card .bplv{ font-size:11px; }
 
 .chat-img-wrap{ margin-top:4px; }
-.chat-img{ display:block; max-width:min(220px, 62vw); max-height:200px; border-radius:12px; cursor:zoom-in; border:1px solid rgba(255,255,255,.15); background:#120a22; }
+.chat-img{ display:block; width:auto; height:auto; max-width:min(300px, 80vw); max-height:260px; object-fit:contain; border-radius:12px; cursor:zoom-in; border:1px solid rgba(255,255,255,.15); background:#120a22; }
 .chat-img-gone{ display:inline-block; margin-top:4px; padding:8px 12px; border-radius:10px; font-size:11px; color:var(--text-dim); background:rgba(255,255,255,.06); border:1px dashed rgba(255,255,255,.2); }
 .lightbox{ position:fixed; inset:0; z-index:700; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(5,2,12,.9); cursor:zoom-out; animation:fadeIn .2s ease-out both; }
-.lightbox img{ max-width:100%; max-height:100%; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+.lightbox img{ width:min(96vw, 1100px); height:auto; max-height:92vh; object-fit:contain; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
 .lightbox button{ position:absolute; right:14px; top:max(14px, env(safe-area-inset-top)); width:40px; height:40px; border-radius:50%; font-size:18px; color:#fff; background:rgba(255,255,255,.18); border:0; }
 .chat-attach{ flex:0 0 auto; width:44px; border-radius:12px; font-size:20px; cursor:pointer; color:var(--text); background:var(--panel-light); border:1px solid rgba(255,255,255,.14); }
 .chat-img-preview{ display:flex; align-items:center; gap:8px; margin:0 0 6px; padding:6px 8px; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); font-size:11px; color:var(--text-dim); }
