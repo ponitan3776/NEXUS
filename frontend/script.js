@@ -3501,7 +3501,8 @@ restartBtn.addEventListener('click', ()=>{
     const setMsg = (el, text, ok)=>{ el.textContent = text; el.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
     // アイコンの部品は、サーバーの返事(/api/account/info)を待たずに、先に使えるようにしておく(返事が遅い・失敗でもボタンが効く)
     const ICON_EMOJIS_LOCAL = ['🎃','👻','🦇','🕷','💀','🧙','🧛','🧟','🕯','🍬','🍭','🐈‍⬛','🐶','🐱','🐰','🦊','🐻','🐼','🐸','🐵','🦁','🐯','🐧','🦉','🐙','🦄','🐲','🦖','🐢','🦋','🌙','⭐','🌈','🔥','⚡','❄️','🌸','🍀','🍎','🍕','🍩','🎮','🎯','🎲','🧩','🎧','🎸','🚀','👑','💎','🏆','⚔️','🛡','🤖','👽','😎','🥳','🤩','😺','🎭'];
-    setupIconPicker({ iconEmojis: ICON_EMOJIS_LOCAL, iconColors: 8 });
+    try{ setupIconPicker({ iconEmojis: ICON_EMOJIS_LOCAL, iconColors: 8 }); }
+    catch(err){ const m = document.getElementById('iconMsg'); if(m){ m.textContent = 'アイコンの準備でエラー: ' + err.message; m.className = 'auth-msg error'; } console.error(err); }
     const lockId = (text)=>{ hint.textContent = text; idBtn.disabled = true; idNew.disabled = true; idPw.disabled = true; };
     try{
       const r = await fetch(`${API_BASE_URL}/api/account/info`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
@@ -3531,7 +3532,7 @@ restartBtn.addEventListener('click', ()=>{
       paint();
       document.getElementById('iconResetBtn').addEventListener('click', async ()=>{ pickEmoji = null; paint(); await save(); });
       const file = document.getElementById('iconFile');
-      document.getElementById('iconUploadBtn').addEventListener('click', ()=> file.click());
+      document.getElementById('iconUploadBtn').addEventListener('click', ()=>{ show('画像を選んでください…', true); file.click(); });
       const IMGBB_KEY = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.IMGBB_API_KEY) || '').trim();
       const iconSrc = (icon)=> String(icon).startsWith('u:') ? 'https://' + String(icon).slice(2) : `${API_BASE_URL}/api/img/${String(icon).slice(2)}`;
       // ① imgbb(外部の画像サービス)に直接アップロード → そのURLだけをサーバーに保存(サーバーの容量・通信を使わない)
@@ -6718,6 +6719,9 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.4', date:'2026-10-25', items:[
+      '🖼 アイコンの画像設定で、いまの状態(選択待ち・アップロード中・失敗の理由)が画面に出るように'
+    ]},
     { version:'3.8.3', date:'2026-10-25', items:[
       '🖼 アイコン画像の設定方法を改善。以前より、設定できる確率が上がります'
     ]},
