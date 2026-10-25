@@ -622,7 +622,7 @@ import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別フ�
 import titles  # 🏷 称号(別ファイル)
 GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
-GACHA_RATE_PER_SKIN = 0.004  # 1スキンあたり0.4%(8種で合計3.2%) ← 一般的なソシャゲの最高レア帯
+GACHA_RATE_PER_SKIN = 0.0003  # 1スキンあたり0.03%(8種で合計0.24%) ← とても出にくい(天井1000回で必ず1つ)
 GACHA_PITY_THRESHOLD = 1000
 GACHA_DUPLICATE_COINS = 500
 GACHA_MISS_COINS = 30
