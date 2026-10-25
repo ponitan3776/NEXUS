@@ -1,0 +1,59 @@
+/* icon-uploader.css — アイコン画像の調整画面(色は theme.css の変数があれば使い、なければ既定色) */
+html.icu-lock, html.icu-lock body { overflow: hidden; }
+
+.icu-overlay {
+  position: fixed; inset: 0; z-index: 99999;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, .65);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  overflow-y: auto;
+}
+.icu-card {
+  width: 100%; max-width: 360px; margin: auto;
+  padding: 18px 16px 16px; border-radius: 18px;
+  background: var(--panel, #1c1a26); color: var(--text, #f2eefc);
+  border: 1px solid var(--line, rgba(255, 255, 255, .12));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+  text-align: center;
+}
+.icu-title { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+
+.icu-stagewrap { display: flex; justify-content: center; }
+.icu-stage {
+  width: min(256px, 100%); aspect-ratio: 1 / 1; height: auto;
+  border-radius: 14px; background: #000;
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
+.icu-stage:active { cursor: grabbing; }
+.icu-hint { margin: 8px 0 4px; font-size: 12px; opacity: .65; }
+
+.icu-zoomrow { display: flex; align-items: center; gap: 8px; margin: 6px 4px 12px; font-size: 12px; opacity: .85; }
+.icu-zoom { flex: 1; min-width: 0; accent-color: var(--accent, #ff8a2b); }
+
+.icu-prevrow {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 10px; margin-bottom: 12px; border-radius: 12px;
+  background: var(--panel2, rgba(255, 255, 255, .06));
+}
+.icu-prevlabel { font-size: 12px; opacity: .8; text-align: left; line-height: 1.4; }
+.icu-pv { border-radius: 50%; background: #000; flex: none; box-shadow: 0 0 0 2px rgba(255, 255, 255, .25); }
+.icu-pv-lg { width: 96px; height: 96px; }
+.icu-pv-sm { width: 40px; height: 40px; }
+
+.icu-err {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; font-size: 13px; text-align: left;
+  background: rgba(255, 80, 80, .16); color: #ffb3b3;
+}
+.icu-err[hidden] { display: none; }
+
+.icu-btns { display: flex; gap: 8px; }
+.icu-btn {
+  flex: 1; min-height: 44px; padding: 0 10px; border-radius: 12px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--line, rgba(255, 255, 255, .18));
+  background: transparent; color: inherit;
+}
+.icu-btn:disabled { opacity: .5; cursor: default; }
+.icu-done { flex: 1.4; border: 0; background: var(--accent, #ff8a2b); color: #1a1208; }
+.icu-btn:focus-visible { outline: 2px solid var(--accent, #ff8a2b); outline-offset: 2px; }
