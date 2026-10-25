@@ -1216,21 +1216,21 @@ const PATTERN_LABELS = {
   const nameCache = {};                              // {ID: 表示名} フレンド・対決・チャットで見かけた人
   const nameOf = (name, id)=> escapeHtml(name || id || '');          // 表示名(なければID)。HTMLに安全に埋め込める
   const myName = ()=> currentDisplayName || currentUserId || 'ゲスト';
-  const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id) nameCache[x.id] = x.name || x.id; }); };
+  const cardCache = {};                              // {ID: {name, icon, lv}} アイコンとLvも覚えておく(対決・DMなど、名前しか届かない画面でも同じ見た目にするため)
+  const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id){ nameCache[x.id] = x.name || x.id; if('icon' in x || 'lv' in x) cardCache[x.id] = { icon: x.icon || '', lv: x.lv || null }; } }); };
+  const cardOf = (id)=> { const c = cardCache[id] || {}; return { id, name: nameCache[id] || id, icon: c.icon || '', lv: c.lv || null }; };
+  const whoById = (id, size)=> whoHtml(cardOf(id), 'id', size);          // IDだけ分かっているとき用(アイコン+名前+Lv)
   const cachedName = (id)=> escapeHtml(nameCache[id] || id || '');
-  let iconHold = null;                               // アップロード直後だけ、古い同期の結果でアイコンが戻らないようにする
-  let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / 'u:i.ibb.co/…' / '')とバトルパスLv
+  let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / '')とバトルパスLv
 
   // ----- 🖼 アイコン(アバター)・バトルパスLvの表示部品 -----
   const AV_GRAD = ['#ff8a1f,#ff4d6d', '#b14dff,#5c9dff', '#3ddc84,#2bb3a0', '#ffd23d,#ff8a1f', '#ff4fa8,#b14dff', '#5c9dff,#3dd8c8', '#9a8cff,#ff8fb8', '#8a98c0,#3a48a0'];
   const hashStr = (str)=>{ let h = 0; for(const c of String(str || '')) h = (h*31 + c.codePointAt(0)) >>> 0; return h; };
   function avatarHtml(icon, name, id, size){
-    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || ''), um = /^u:(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(icon || ''), dm = /^d:([A-Za-z0-9+\/]{20,6000}={0,2})$/.exec(icon || '');
+    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || '');
     if(e) return `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})">${escapeHtml(e[1])}</span>`;
     const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
     const fb = `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})">${letter}</span>`;
-    if(dm){ const mime = dm[1].startsWith('/9j/') ? 'jpeg' : dm[1].startsWith('UklGR') ? 'webp' : dm[1].startsWith('iVBOR') ? 'png' : ''; if(mime) return `<img class="av av-img" style="${sty}" src="data:image/${mime};base64,${dm[1]}" alt="" data-fb="${encodeURIComponent(fb)}">`; }
-    if(um) return `<img class="av av-img" style="${sty}" src="https://${um[1]}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     if(im) return `<img class="av av-img" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     return fb;
   }
@@ -1246,15 +1246,14 @@ const PATTERN_LABELS = {
 
   // ----- 📷 画像を小さく圧縮(送る前に。容量を使いすぎないための工夫) -----
   function loadBitmap(file){
-    const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('この画像は読み込めませんでした(JPEG・PNG・WebP・HEICなどの写真を選んでください)')); }; im.src = url; });
+    const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('画像を読み込めませんでした')); }; im.src = url; });
     return window.createImageBitmap ? createImageBitmap(file).catch(viaImg) : viaImg();
   }
-  const loadBitmapPublic = loadBitmap;
   const toBlob = (cv, type, q)=> new Promise(r=> cv.toBlob(b=> r(b), type, q));
   async function compressImage(file, opt){
-    const o = Object.assign({ maxEdge:800, maxBytes:70000, square:false, bitmap:null }, opt || {});
+    const o = Object.assign({ maxEdge:800, maxBytes:70000, square:false }, opt || {});
     if(!file || !/^image\//.test(file.type || '')) throw new Error('画像ファイルを選んでください');
-    const src = o.bitmap || await loadBitmap(file);          // 大きな元画像は、1回だけ読み込んで使い回せる
+    const src = await loadBitmap(file);
     let w = src.width, h = src.height, sx = 0, sy = 0, sw = w, sh = h;
     if(o.square){ const m = Math.min(w, h); sx = (w - m)/2; sy = (h - m)/2; sw = sh = w = h = m; }
     const scale = Math.min(1, o.maxEdge / Math.max(w, h));
@@ -1266,7 +1265,7 @@ const PATTERN_LABELS = {
       for(const q of [0.82, 0.7, 0.58, 0.46, 0.36]){
         let blob = await toBlob(cv, 'image/webp', q);
         if(!blob || blob.type !== 'image/webp') blob = await toBlob(cv, 'image/jpeg', q);       // WebPが作れない端末(Safariなど)はJPEG
-        if(blob && blob.size <= o.maxBytes){ blob.cw = cw; blob.ch = ch; return blob; }
+        if(blob && blob.size <= o.maxBytes) return blob;
       }
       cw = Math.max(1, Math.round(cw*0.8)); ch = Math.max(1, Math.round(ch*0.8));
     }
@@ -1301,7 +1300,6 @@ const PATTERN_LABELS = {
     timeattack: '⏱ タイムアタック'
   };
   let currentRankingMode = 'soft';
-  const STORAGE_RANK_TAB = 'nexus-rank-tab-v1';   // 最後に見たランキングのタブを覚えておく(開き直しても、いつも「柔らかい」に戻らないように)
   const rankingCache = {};   // 前回のランキング(開いた瞬間に表示するため)
 
   const RANKING_TYPES = ['score', 'coins', 'playtime'];
@@ -1311,7 +1309,6 @@ const PATTERN_LABELS = {
     playtime: '⏱️ プレイ時間'
   };
   let currentRankingType = 'score';
-  try{ const t = JSON.parse(localStorage.getItem(STORAGE_RANK_TAB) || '{}'); if(RANKING_MODES.includes(t.mode)) currentRankingMode = t.mode; if(RANKING_TYPES.includes(t.type)) currentRankingType = t.type; }catch(e){}
   let rankingPollInterval = null;
   let userSyncInterval = null;
 
@@ -3502,10 +3499,6 @@ restartBtn.addEventListener('click', ()=>{
     const dnBtn = document.getElementById('dnSave'), dnInput = document.getElementById('dnInput'), dnMsg = document.getElementById('dnMsg'), idMsg = document.getElementById('idMsg');
     if(!hint) return;
     const setMsg = (el, text, ok)=>{ el.textContent = text; el.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
-    // アイコンの部品は、サーバーの返事(/api/account/info)を待たずに、先に使えるようにしておく(返事が遅い・失敗でもボタンが効く)
-    const ICON_EMOJIS_LOCAL = ['🎃','👻','🦇','🕷','💀','🧙','🧛','🧟','🕯','🍬','🍭','🐈‍⬛','🐶','🐱','🐰','🦊','🐻','🐼','🐸','🐵','🦁','🐯','🐧','🦉','🐙','🦄','🐲','🦖','🐢','🦋','🌙','⭐','🌈','🔥','⚡','❄️','🌸','🍀','🍎','🍕','🍩','🎮','🎯','🎲','🧩','🎧','🎸','🚀','👑','💎','🏆','⚔️','🛡','🤖','👽','😎','🥳','🤩','😺','🎭'];
-    try{ setupIconPicker({ iconEmojis: ICON_EMOJIS_LOCAL, iconColors: 8 }); }
-    catch(err){ const m = document.getElementById('iconMsg'); if(m){ m.textContent = 'アイコンの準備でエラー: ' + err.message; m.className = 'auth-msg error'; } console.error(err); }
     const lockId = (text)=>{ hint.textContent = text; idBtn.disabled = true; idNew.disabled = true; idPw.disabled = true; };
     try{
       const r = await fetch(`${API_BASE_URL}/api/account/info`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
@@ -3514,13 +3507,14 @@ restartBtn.addEventListener('click', ()=>{
       if(info.isAdmin) lockId('管理者アカウントのIDは変更できません。');
       else if(!info.canChangeId) lockId(`IDは${info.idChangeDays}日に1回だけ変更できます。あと ${fmtWait(info.waitSec)} で変更できます。`);
       else hint.textContent = `IDはログインに使う名前です。${info.idChangeDays}日に1回だけ変更できます(変更すると運営に通知されます)。他の端末では、新しいIDでログインし直しが必要です。`;
+      setupIconPicker(info);
     }catch(err){ hint.textContent = 'IDの情報を取得できませんでした。通信を確認してください。'; }
     function setupIconPicker(info){
       const grid = document.getElementById('iconGrid'), colors = document.getElementById('iconColors'), msg = document.getElementById('iconMsg'), av = document.getElementById('acctAv');
       if(!grid) return;
       const m = /^e:(.+):([0-7])$/.exec(currentIcon || '');
       let pickEmoji = m ? m[1] : null, pickColor = m ? +m[2] : 0;
-      const show = (text, ok)=>{ msg.textContent = text; msg.className = 'auth-msg ' + (ok ? 'ok' : 'error'); msg.style.whiteSpace = 'pre-wrap'; try{ msg.scrollIntoView({ block:'nearest', behavior:'smooth' }); }catch(e){} };
+      const show = (text, ok)=>{ msg.textContent = text; msg.className = 'auth-msg ' + (ok ? 'ok' : 'error'); };
       const applied = (icon)=>{ currentIcon = icon || ''; av.innerHTML = avatarHtml(currentIcon, myName(), currentUserId, 72); updateAccountButton(); };
       const paint = ()=>{
         colors.innerHTML = Array.from({ length: info.iconColors }, (_, i)=> `<button type="button" class="icon-color ${i === pickColor ? 'on' : ''}" data-c="${i}" style="background:linear-gradient(135deg,${AV_GRAD[i]})" aria-label="色${i+1}"></button>`).join('');
@@ -3535,88 +3529,18 @@ restartBtn.addEventListener('click', ()=>{
       paint();
       document.getElementById('iconResetBtn').addEventListener('click', async ()=>{ pickEmoji = null; paint(); await save(); });
       const file = document.getElementById('iconFile');
-      document.getElementById('iconUploadBtn').addEventListener('click', ()=>{ show('画像を選んでください…', true); file.click(); });
-      const IMGBB_KEY = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.IMGBB_API_KEY) || '').trim();
-      const iconSrc = (icon)=> String(icon).startsWith('u:') ? 'https://' + String(icon).slice(2) : `${API_BASE_URL}/api/img/${String(icon).slice(2)}`;
-      // ① imgbb(外部の画像サービス)に直接アップロード → そのURLだけをサーバーに保存(サーバーの容量・通信を使わない)
-      async function uploadIconImgbb(f){
-        const blob = await compressImage(f, { maxEdge:256, maxBytes:40000, square:true });
-        const fd = new FormData(); fd.append('image', blob, blob.type === 'image/webp' ? 'icon.webp' : 'icon.jpg');
-        const r = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(IMGBB_KEY)}`, { method:'POST', body: fd });
-        const d = await r.json().catch(()=>({}));
-        if(!r.ok || !d.success || !d.data || !d.data.url) throw new Error((d.error && d.error.message) || `imgbb ${r.status}`);
-        const m = /^https:\/\/(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(d.data.url);
-        if(!m) throw new Error('imgbb: 画像のURLが想定外でした');
-        const dd = await postJson('/api/account/icon', { icon: 'u:' + m[1] });
-        return { icon: dd.icon, size: blob.size };
-      }
-      // ② サーバー(DB)に保存(今までの方法)
-      async function uploadIconServer(f){
-        const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
-        const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
-        const d = await r.json().catch(()=>({}));
-        if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
-        return { icon: d.icon, size: blob.size };
-      }
-      // 🔍 診断: どこでつまずいているかを、1回のタップで調べて表示する
-      const diagBtn = document.getElementById('iconDiagBtn');
-      if(diagBtn) diagBtn.addEventListener('click', async ()=>{
-        const lines = []; const out = ()=> show(lines.join('\n'), !lines.some(l=> l.startsWith('❌')));
-        lines.push(`画面の版: ${document.querySelector('meta[name="app-version"]')?.content || '?'} / ログイン: ${authToken ? 'OK' : '❌未ログイン'}`);
-        lines.push(`imgbbのキー: ${IMGBB_KEY ? '設定あり' : '❌未設定(config.js)'}`); out();
-        if(IMGBB_KEY){
-          try{
-            const fd = new FormData(); fd.append('image', 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
-            const r = await fetch(`https://api.imgbb.com/1/upload?expiration=60&key=${encodeURIComponent(IMGBB_KEY)}`, { method:'POST', body: fd });
-            const d = await r.json().catch(()=>({}));
-            lines.push(r.ok && d.success ? '✅ imgbbにつながりました' : `❌ imgbb: ${r.status} ${(d.error && d.error.message) || ''}`);
-          }catch(err){ lines.push(`❌ imgbbにつながりません(${err.message})。広告ブロッカー・VPN・学校/会社のネットワークで止まっている可能性があります`); }
-          out();
-        }
-        try{
-          const r = await postJson('/api/account/icon', { icon: currentIcon || '' });
-          lines.push('✅ サーバーへのアイコン保存: OK');
-        }catch(err){ lines.push(`❌ サーバーへのアイコン保存: ${err.message}`); }
-        out();
-      });
-      // ③ 画像そのものを、アイコン情報の中に入れる(約2KB。外部サービスにもサーバーの画像置き場にも頼らない最後の手段)
-      const blobToB64 = (blob)=> new Promise((res, rej)=>{ const fr = new FileReader(); fr.onload = ()=> res(String(fr.result).split(',')[1] || ''); fr.onerror = ()=> rej(new Error('画像を読み取れませんでした')); fr.readAsDataURL(blob); });
-      async function uploadIconInline(f){
-        const blob = await compressImage(f, { maxEdge:64, maxBytes:2800, square:true });
-        const dd = await postJson('/api/account/icon', { icon: 'd:' + await blobToB64(blob) });
-        return { icon: dd.icon, size: blob.size };
-      }
-      // 画像が本当に表示できるか確かめる(8秒たっても読めなければ失敗扱い)
-      const canLoad = (url)=> new Promise(ok=>{ const im = new Image(); const t = setTimeout(()=> ok(false), 8000); im.onload = ()=>{ clearTimeout(t); ok(true); }; im.onerror = ()=>{ clearTimeout(t); ok(false); }; im.src = url; });
-      const iconUrlOf = (icon)=> { const x = String(icon); if(x.startsWith('u:')) return 'https://' + x.slice(2); if(x.startsWith('i:')) return `${API_BASE_URL}/api/img/${x.slice(2)}`; const b = x.slice(2); return `data:image/${b.startsWith('/9j/') ? 'jpeg' : b.startsWith('UklGR') ? 'webp' : 'png'};base64,${b}`; };
+      document.getElementById('iconUploadBtn').addEventListener('click', ()=> file.click());
       file.addEventListener('change', async ()=>{
-        const f = file.files[0]; file.value = ''; if(!f) return;
-        // ① 選んだ画像を、まずそのまま画面に出す(ここで何も出ないなら、画像の読み込みの問題)
-        const localUrl = URL.createObjectURL(f);
-        av.innerHTML = `<img class="av av-img" style="--s:72px" src="${localUrl}" alt="">`;
-        show('① 画像を選びました(保存はまだです)…', true);
-        const methods = [];
-        if(IMGBB_KEY) methods.push(['imgbb', uploadIconImgbb]);
-        methods.push(['サーバー', uploadIconServer], ['埋め込み', uploadIconInline]);
-        const fails = []; let done = null, how = '';
-        for(const [name, fn] of methods){
-          show(`② 「${name}」に保存しています…` + (fails.length ? `\n(前の方法はだめでした: ${fails.join(' / ')})` : ''), true);
-          try{
-            const res = await fn(f);
-            show(`③ 保存できました。表示を確認しています…`, true);
-            if(!(await canLoad(iconUrlOf(res.icon)))) throw new Error('保存はできたが、画像を表示できなかった');
-            done = res; how = name; break;
-          }catch(err){ fails.push(`${name}: ${/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'つながらない' : err.message}`); console.warn('アイコン', name, err); }
-        }
-        URL.revokeObjectURL(localUrl);
-        if(done){
-          iconHold = { icon: done.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
-          pickEmoji = null; paint(); applied(done.icon);
-          show(`✅ アイコンを設定しました(${how}・${Math.ceil(done.size/1000)}KB)` + (fails.length ? `\n※ うまくいかなかった方法: ${fails.join(' / ')}` : ''), true);
-        } else {
-          av.innerHTML = avatarHtml(currentIcon, myName(), currentUserId, 72);
-          show('❌ 設定できませんでした\n' + fails.join('\n'), false);
-        }
+        const f = file.files[0]; if(!f) return;
+        show('圧縮してアップロード中…', true);
+        try{
+          const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
+          const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
+          const d = await r.json().catch(()=>({}));
+          if(!r.ok) throw new Error(d.error || 'アップロードに失敗しました');
+          pickEmoji = null; paint(); applied(d.icon); show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
+        }catch(err){ show(err.message, false); }
+        file.value = '';
       });
     }
     dnBtn.addEventListener('click', async ()=>{
@@ -3662,7 +3586,6 @@ restartBtn.addEventListener('click', ()=>{
           <div class="acct-row2"><button class="ghost-btn" id="iconUploadBtn" type="button">📷 画像をアップロード</button><button class="ghost-btn" id="iconResetBtn" type="button">初期に戻す</button></div>
           <input type="file" id="iconFile" accept="image/*" hidden>
           <div class="auth-msg" id="iconMsg"></div>
-          <button type="button" id="iconDiagBtn" style="background:none;border:none;color:var(--text-dim);font-size:11.5px;text-decoration:underline;padding:6px 0;cursor:pointer;">🔍 うまくいかないとき(診断)</button>
         </div>
         <div class="acct-sec">
           <div class="acct-h">🏷 表示名</div>
@@ -3889,7 +3812,7 @@ restartBtn.addEventListener('click', ()=>{
 
   function applySyncData(data){
     if (typeof data.displayName === 'string') currentDisplayName = data.displayName;
-    if (typeof data.icon === 'string' && !(iconHold && Date.now() < iconHold.until && data.icon !== iconHold.icon)) currentIcon = data.icon;
+    if (typeof data.icon === 'string') currentIcon = data.icon;
     if (data.lv) currentLv = data.lv;
     // ベストスコア（モード別がある場合はそちらを優先）
     if (data.bestScores && typeof data.bestScores === 'object') {
@@ -4098,8 +4021,6 @@ restartBtn.addEventListener('click', ()=>{
   // ===================== ランキング =====================
   async function renderRankingModal() {
     modalContent.dataset.mode = 'ranking';
-    try{ localStorage.setItem(STORAGE_RANK_TAB, JSON.stringify({ mode: currentRankingMode, type: currentRankingType })); }catch(e){}
-    const oldTabs = document.getElementById('modeTabs'), oldTabsLeft = oldTabs ? oldTabs.scrollLeft : 0;   // タブを切り替えても、横にずらした位置を戻さない
     let html = `
       <h2 style="color:var(--gold);">🏆 ランキング</h2>
       <div class="sub">8×8サイズのスコアのみランキング対象です。</div>
@@ -4113,14 +4034,11 @@ restartBtn.addEventListener('click', ()=>{
           <button class="tab-btn ${currentRankingMode === m ? 'active' : ''}" data-rmode="${m}">${RANKING_MODE_LABELS[m]}</button>
         `).join('')}
       </div>
-      <div class="sub" style="margin-bottom:6px; color:var(--gold); font-weight:800;">▶ 表示中: ${currentRankingType === 'score' ? RANKING_MODE_LABELS[currentRankingMode] + ' のスコア' : RANKING_TYPE_LABELS[currentRankingType]}</div>
       <div id="rankingContent">
         <div class="sub">🔄 読み込み中...</div>
       </div>
     `;
     modalContent.innerHTML = html;
-    { const mt = document.getElementById('modeTabs'), on = mt && mt.querySelector('.active');
-      if(mt && on){ mt.scrollLeft = oldTabsLeft; const need = on.offsetLeft - mt.clientWidth/2 + on.offsetWidth/2; if(!oldTabs || Math.abs(mt.scrollLeft - need) > mt.clientWidth/2) mt.scrollLeft = Math.max(0, need); } }
 
     modalContent.querySelectorAll('.tab-btn[data-rtype]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -4318,7 +4236,7 @@ restartBtn.addEventListener('click', ()=>{
       const data = await res.json();
       if(!Array.isArray(data)) return;
       const changed = chatSig(data) !== chatSig(chatMessages) || data.some((m,i)=> chatMessages[i] && chatMessages[i].message !== m.message);
-      chatMessages = data; rememberNames(data.map(m=>({ id:m.user_id, name:m.name })));
+      chatMessages = data; rememberNames(data.map(m=>({ id:m.user_id, name:m.name, icon:m.icon, lv:m.lv })));
       if(data.length) chatLastSeenId = Math.max(...data.map(m => m.id));
       if (changed || !document.querySelector('#chatMessages .chat-item')) renderChatMessages();
     } catch (err) {
@@ -4495,7 +4413,7 @@ restartBtn.addEventListener('click', ()=>{
         <div style="text-align:center; color:var(--text-dim);">読み込み中...</div>
       </div>
       <div id="chatEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="chatEditCancel">キャンセル</button></div>
-      <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button><div class="chat-size-row" id="chatSizeRow"></div></div>
+      <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button></div>
       <div style="display:flex; gap:6px;">
         <button type="button" class="chat-attach" id="chatImgBtn" aria-label="画像を添付" title="画像を添付">📷</button>
         <input type="file" id="chatImgFile" accept="image/*" hidden>
@@ -4514,49 +4432,23 @@ restartBtn.addEventListener('click', ()=>{
     chatEditId = null; chatSelectedId = null;
     document.getElementById('chatEditCancel').addEventListener('click', cancelChatEdit);
     // 📷 画像の添付(選んだ画像は、ここで小さく圧縮してから送る)
-    let chatImgBlob = null, chatImgBusy = false, chatImgVariants = {}, chatImgSel = 'm';
-    const CHAT_IMG_SIZES = [
-      { k:'s', label:'小', maxEdge:640,  maxBytes:45000,  note:'軽い・拡大するとやや粗い' },
-      { k:'m', label:'中', maxEdge:1100, maxBytes:100000, note:'おすすめ' },
-      { k:'l', label:'大', maxEdge:1600, maxBytes:240000, note:'拡大してもきれい' }
-    ];
-    const prevBox = document.getElementById('chatImgPreview'), sizeRow = document.getElementById('chatSizeRow');
-    const clearChatImg = ()=>{ chatImgBlob = null; chatImgBusy = false; chatImgVariants = {}; chatImgSel = 'm'; sizeRow.innerHTML = ''; prevBox.style.display = 'none'; const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.removeAttribute('src'); document.getElementById('chatImgFile').value = ''; };
-    const renderSizes = ()=>{
-      sizeRow.innerHTML = CHAT_IMG_SIZES.map(z=>{ const b = chatImgVariants[z.k];
-        return `<button type="button" class="chat-size-btn ${chatImgSel === z.k ? 'on' : ''}" data-k="${z.k}" ${b ? '' : 'disabled'}><b>${z.label}</b><small>${b ? `${b.cw}×${b.ch}px<br>${Math.ceil(b.size/1000)}KB` : '作成中…'}</small></button>`; }).join('');
-      sizeRow.querySelectorAll('.chat-size-btn').forEach(btn=> btn.addEventListener('click', ()=>{ if(chatImgVariants[btn.dataset.k]){ chatImgSel = btn.dataset.k; pickSize(); } }));
-    };
-    const pickSize = ()=>{
-      chatImgBlob = chatImgVariants[chatImgSel]; if(!chatImgBlob) return;
-      const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.src = URL.createObjectURL(chatImgBlob);
-      const z = CHAT_IMG_SIZES.find(x=> x.k === chatImgSel);
-      prevBox.querySelector('span').textContent = `「${z.label}」で送ります(${z.note})。3日間だけ保存されます`;
-      renderSizes();
-    };
+    let chatImgBlob = null;
+    const prevBox = document.getElementById('chatImgPreview');
+    const clearChatImg = ()=>{ chatImgBlob = null; prevBox.style.display = 'none'; const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.removeAttribute('src'); document.getElementById('chatImgFile').value = ''; };
     document.getElementById('chatImgBtn').addEventListener('click', ()=>{ if(!authToken){ alert('ログインが必要です'); return; } document.getElementById('chatImgFile').click(); });
     document.getElementById('chatImgRemove').addEventListener('click', clearChatImg);
     document.getElementById('chatImgFile').addEventListener('change', async (e)=>{
       const f = e.target.files[0]; if(!f) return;
-      chatImgBlob = null; chatImgVariants = {}; chatImgBusy = true;
-      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '画像を読み込み中…(大きい画像は少し時間がかかります)'; renderSizes();
+      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '圧縮中…';
       try{
-        const bmp = await loadBitmapPublic(f);                       // どんなに大きな元画像でも、ここで1回だけ読み込む
-        for(const z of CHAT_IMG_SIZES){
-          try{ chatImgVariants[z.k] = await compressImage(f, { maxEdge:z.maxEdge, maxBytes:z.maxBytes, bitmap:bmp }); }catch(err){}
-          if(!chatImgBlob && chatImgVariants[z.k]){ chatImgSel = z.k; pickSize(); } else renderSizes();
-        }
-        if(bmp.close) bmp.close();
-        if(!Object.keys(chatImgVariants).length) throw new Error('画像を小さくできませんでした。別の画像でお試しください');
-        chatImgSel = chatImgVariants.m ? 'm' : Object.keys(chatImgVariants)[0];
-        pickSize();
+        chatImgBlob = await compressImage(f, { maxEdge:800, maxBytes:70000 });
+        const im = prevBox.querySelector('img'); im.src = URL.createObjectURL(chatImgBlob);
+        prevBox.querySelector('span').textContent = `${Math.ceil(chatImgBlob.size/1000)}KB に圧縮しました(送信で3日間だけ保存されます)`;
       }catch(err){ alert(err.message); clearChatImg(); }
-      chatImgBusy = false;
     });
     document.getElementById('chatSendBtn').addEventListener('click', async () => {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
-      if (chatImgBusy) { alert('画像を準備中です。大きさの表示が出るまで、少し待ってください'); return; }
       if (!msg && !chatImgBlob) return;
       if (chatImgBlob && !chatEditId) {                    // 画像つき: 先にアップロードしてから、そのIDでメッセージを送る
         const btn = document.getElementById('chatSendBtn'); btn.disabled = true;
@@ -4749,6 +4641,7 @@ restartBtn.addEventListener('click', ()=>{
       const data = await res.json();
       duelsList = data.duels || [];
       Object.assign(nameCache, data.names || {});
+      rememberNames(Object.entries(data.cards || {}).map(([id, c])=>({ id, name:c.name, icon:c.icon, lv:c.lv })));
     } catch (err) { /* 無視 */ }
   }
 
@@ -4809,11 +4702,12 @@ restartBtn.addEventListener('click', ()=>{
     } catch (err) { return null; }
   }
 
-  function duelResultText(duel){
+  function duelResultText(duel, asHtml){
     const isChallenger = duel.challenger_id === currentUserId;
     const myScore = isChallenger ? duel.challenger_score : duel.opponent_score;
     const oppScore = isChallenger ? duel.opponent_score : duel.challenger_score;
-    const oppId = cachedName(isChallenger ? duel.opponent_id : duel.challenger_id);
+    const oppKey = isChallenger ? duel.opponent_id : duel.challenger_id;
+    const oppId = asHtml ? whoById(oppKey, 22) : (nameCache[oppKey] || oppKey || '');
     if (duel.status !== 'completed') return `対 ${oppId}：相手の結果を待っています…`;
     if (myScore > oppScore) return `🏆 対 ${oppId} に勝利！（自分 ${myScore} - 相手 ${oppScore}）🪙+200コイン獲得！`;
     if (myScore < oppScore) return `😢 対 ${oppId} に敗北…（自分 ${myScore} - 相手 ${oppScore}）`;
@@ -4905,7 +4799,7 @@ restartBtn.addEventListener('click', ()=>{
       html += pendingIncoming.length===0 ? `<div class="empty-hint">届いている挑戦はありません。</div>` :
         pendingIncoming.map(d=>`
           <div class="friend-item pending">
-            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} ${cachedName(d.challenger_id)}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} ${whoById(d.challenger_id)}</span>
             <button class="fbtn accept" data-duelaccept="${d.id}">受ける</button>
             <button class="fbtn decline" data-dueldecline="${d.id}">断る</button>
           </div>`).join('');
@@ -4915,7 +4809,7 @@ restartBtn.addEventListener('click', ()=>{
           const opp = d.challenger_id===currentUserId ? d.opponent_id : d.challenger_id;
           return `
           <div class="friend-item chat">
-            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} 対 ${cachedName(opp)}</span>
+            <span class="fname">${d.game==='tetris'?'🧱':'🍬'} 対 ${whoById(opp)}</span>
             <button class="fbtn" data-duelplay="${d.id}">プレイする</button>
           </div>`;
         }).join('');
@@ -4924,11 +4818,11 @@ restartBtn.addEventListener('click', ()=>{
       html += pendingAndWaiting.length===0 ? `<div class="empty-hint">ありません。</div>` :
         pendingAndWaiting.map(d=>{
           const opp = d.challenger_id===currentUserId ? d.opponent_id : d.challenger_id;
-          return `<div class="friend-item pending"><span class="fname">⚔️ 対 ${cachedName(opp)}</span><span class="fsub">結果待ち…</span></div>`;
+          return `<div class="friend-item pending"><span class="fname">⚔️ 対 ${whoById(opp)}</span><span class="fsub">結果待ち…</span></div>`;
         }).join('');
       html += `<div class="qtitle" style="margin:14px 0 6px;">🏁 完了した対決</div>`;
       html += completed.length===0 ? `<div class="empty-hint">まだありません。</div>` :
-        completed.slice(0,10).map(d=>`<div class="friend-item"><span class="fname" style="flex:1;">${duelResultText(d)}</span></div>`).join('');
+        completed.slice(0,10).map(d=>`<div class="friend-item"><span class="fname" style="flex:1;">${duelResultText(d, true)}</span></div>`).join('');
     } else if (tab === 'requests') {
       html += `<div class="qtitle" style="margin-bottom:6px;">📥 届いている申請</div>`;
       if (incomingRequests.length === 0) {
@@ -5030,12 +4924,12 @@ restartBtn.addEventListener('click', ()=>{
   async function openDMThread(friendId){
     dmThreadWith = friendId;
     modalContent.dataset.mode = 'dmthread';
-    const initial = escapeHtml(Array.from(nameCache[friendId] || friendId || '?')[0].toUpperCase());
+    const dmCard = cardOf(friendId);
     modalContent.innerHTML = `
       <div class="dm-thread-header">
         <button class="dm-thread-back" id="dmBackBtn">←</button>
-        <div class="dm-thread-avatar">${initial}</div>
-        <div class="dm-thread-title"><b>${cachedName(friendId)}</b><span>💬 ダイレクトメッセージ</span></div>
+        ${avatarHtml(dmCard.icon, dmCard.name, friendId, 38)}
+        <div class="dm-thread-title"><b>${nameOf(dmCard.name, friendId)}${lvTag(dmCard.lv)}</b><span>💬 ダイレクトメッセージ</span></div>
       </div>
       <div id="dmMessages" style="height:300px; overflow-y:auto; background:var(--bg-deep2); border-radius:12px; padding:10px; margin:8px 0; border:1px solid rgba(255,255,255,0.05);">
         <div class="empty-hint">読み込み中...</div>
@@ -5209,7 +5103,7 @@ restartBtn.addEventListener('click', ()=>{
   // <SRS-PURE-END>
   const TSPIN_LINE_NAMES = { 1:'シングル', 2:'ダブル', 3:'トリプル' };
 
-  let tetrisActive = false, tetrisGameOver = false, tetrisGen = 0;   // tetrisGen: やり直すたびに増やす(前のゲームの予約処理を無効にする)
+  let tetrisActive = false, tetrisGameOver = false;
   let tetrisGrid = null, tetrisPiece = null, tetrisNextType = null, tetrisBag = [];
   let tetrisScore = 0, tetrisLevel = 1, tetrisLines = 0, tetrisCombo = 0, tetrisBackToBack = false;
   let tetrisTimer = null, tetrisCellEls = [];
@@ -5468,7 +5362,6 @@ restartBtn.addEventListener('click', ()=>{
       renderTetris();
     } else {
       tetrisLockPiece();
-      return 'locked';        // 置いた合図(押し続けても、次のピースを勝手に落とさないために使う)
     }
   }
 
@@ -5537,8 +5430,7 @@ restartBtn.addEventListener('click', ()=>{
         if(cell) cell.classList.add('clearing');
       }
     });
-    const gen = tetrisGen;
-    setTimeout(()=>{ if(gen !== tetrisGen || tetrisGameOver || !tetrisActive) return; cb(); }, 320);
+    setTimeout(cb, 320);
   }
 
   function tetrisCollapseRows(rows){
@@ -5805,7 +5697,6 @@ function tetrisTriggerGameOver(){
   }
 
   function restartTetris(){
-    tetrisGen++;
     tetrisStopLoop();
     tetrisGrid = Array.from({length:TETRIS_ROWS}, ()=>new Array(TETRIS_COLS).fill(-1));
     tetrisScore = 0; tetrisLevel = 1; tetrisLines = 0; tetrisCombo = 0; tetrisBackToBack = false;
@@ -6423,8 +6314,6 @@ function enterTetrisMode(){
   }
 
   // ===================== テトリス操作(キーボード) =====================
-  let tetrisSoftKeyBlock = false;     // ↓を押しっぱなしでピースを置いたあと、キーを離すまで次のピースを落とさない
-  document.addEventListener('keyup', (e)=>{ const k = e.key.toLowerCase(); if(k==='arrowdown' || k==='s') tetrisSoftKeyBlock = false; });
   document.addEventListener('keydown', (e)=>{
     if(currentMode!=='tetris' || !tetrisActive || tetrisGameOver) return;
     const key = e.key.toLowerCase();
@@ -6434,38 +6323,29 @@ function enterTetrisMode(){
     if(key==='arrowleft' || key==='a') tetrisMove(-1);
     else if(key==='arrowright' || key==='d') tetrisMove(1);
     else if(key==='arrowup' || key==='w') tetrisRotate();
-    else if(key==='arrowdown' || key==='s'){ if(!tetrisSoftKeyBlock && tetrisSoftDrop() === 'locked') tetrisSoftKeyBlock = true; }
-    else if(isSpace){ if(!e.repeat) tetrisHardDrop(); }
-    else if(key==='q'){ if(!e.repeat) tetrisHoldSwap(); }
+    else if(key==='arrowdown' || key==='s') tetrisSoftDrop();
+    else if(isSpace) tetrisHardDrop();
+    else if(key==='q') tetrisHoldSwap();
   });
 
   // ===================== テトリス操作(タッチ/タップ・iPad対応) =====================
-  const tetrisHoldStops = [];
   function bindTetrisHoldButton(el, fn, repeatMs, initialDelay){
     repeatMs = repeatMs || 100; initialDelay = initialDelay || 220;
-    let holdTimer = null, startTimer = null, pid = null;
-    const stop = ()=>{
-      clearTimeout(startTimer); clearInterval(holdTimer);
-      startTimer = null; holdTimer = null; pid = null;
-    };
-    tetrisHoldStops.push(stop);
+    let holdTimer = null, startTimer = null;
     const start = (e)=>{
       e.preventDefault();
-      stop(); pid = e.pointerId;
-      // ピースを置いた直後は、押し続けていても次のピースを勝手に落とさない(いったん指を離して、押し直すまで待つ)
-      if(fn() === 'locked') return;
-      startTimer = setTimeout(()=>{ holdTimer = setInterval(()=>{ if(fn() === 'locked') stop(); }, repeatMs); }, initialDelay);
+      fn();
+      startTimer = setTimeout(()=>{ holdTimer = setInterval(fn, repeatMs); }, initialDelay);
+    };
+    const stop = ()=>{
+      clearTimeout(startTimer); clearInterval(holdTimer);
+      startTimer = null; holdTimer = null;
     };
     el.addEventListener('pointerdown', start);
+    el.addEventListener('pointerup', stop);
     el.addEventListener('pointerleave', stop);
-    // 指を離したのを、ボタンの外で離しても取り逃がさない(取り逃がすと、止まらずに落とし続けてしまう)
-    const end = (e)=>{ if(e.pointerId === pid) stop(); };
-    window.addEventListener('pointerup', end, true);
-    window.addEventListener('pointercancel', end, true);
+    el.addEventListener('pointercancel', stop);
   }
-  const stopAllTetrisHolds = ()=> tetrisHoldStops.forEach(f=> f());
-  window.addEventListener('blur', stopAllTetrisHolds);
-  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stopAllTetrisHolds(); });
   bindTetrisHoldButton(tBtnLeftEl, ()=>tetrisMove(-1));
   bindTetrisHoldButton(tBtnRightEl, ()=>tetrisMove(1));
   bindTetrisHoldButton(tBtnSoftEl, ()=>tetrisSoftDrop());
@@ -6787,30 +6667,6 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
-    { version:'3.8.6', date:'2026-10-25', items:[
-      '🖼 アイコンの画像設定を作り直し。選んだ画像がすぐ表示され、保存の経過も見えます。1つの方法がだめでも、自動で別の方法に切り替えます'
-    ]},
-    { version:'3.8.5', date:'2026-10-25', items:[
-      '🧱 テトリス: ▼(ソフトドロップ)を押し続けると、置いたあとも次のピースを勝手に落として、そのままゲームオーバーになってしまう問題を修正(押し直すまで待つように)',
-      '🧱 テトリス: 指を離したのを取り逃がして、ボタンが押しっぱなし扱いになることがある問題を修正',
-      '🏆 ランキング: いまどのランキングを見ているか表示。最後に見たタブを覚え、タブを切り替えても横の位置が戻らないように',
-      '🖼 アイコン: うまくいかないとき用の「診断」ボタンを追加'
-    ]},
-    { version:'3.8.4', date:'2026-10-25', items:[
-      '🖼 アイコンの画像設定で、いまの状態(選択待ち・アップロード中・失敗の理由)が画面に出るように'
-    ]},
-    { version:'3.8.3', date:'2026-10-25', items:[
-      '🖼 アイコン画像の設定方法を改善。以前より、設定できる確率が上がります'
-    ]},
-    { version:'3.8.2', date:'2026-10-25', items:[
-      '📷 チャットの画像を送るとき、「小・中・大」から大きさを選べるように。選ぶ前に、できあがる大きさと容量が見えます',
-      '📷 どんなに大きな写真でも、自動で小さくして送れるように',
-      '🖼 アイコンを変えた直後に、もとのアイコンに戻ってしまうことがあった問題を修正'
-    ]},
-    { version:'3.8.1', date:'2026-10-25', items:[
-      '🖼 アイコンの画像アップロードが、サーバーの反応が遅いときでも使えるように',
-      '📷 チャットの画像を大きく・きれいに表示。タップすると画面いっぱいに拡大します'
-    ]},
     { version:'3.8.0', date:'2026-10-25', items:[
       '🖼 アイコンを設定できるように。絵文字+色から選ぶか、手持ちの画像をアップロード(自動で小さくします)。ランキング・チャット・フレンドなどに表示されます',
       '📷 チャットに画像を送れるように。送る前に自動で小さくし、画像は3日たつと自動で消えます(メッセージは残ります)',
@@ -7682,7 +7538,7 @@ function renderOtherGamesModal(){
     userId(){ return currentUserId; },
     displayName(){ return myName(); },
     openFeedback(){ renderFeedbackModal('request'); modalOverlay.classList.add('show'); },
-    who: whoHtml, avatar: avatarHtml, lvTag, compressImage, openLightbox, apiBase: API_BASE_URL,
+    who: whoHtml, whoById, avatar: avatarHtml, lvTag, compressImage, openLightbox, apiBase: API_BASE_URL,
     counts(){ return { chat: chatMentionCount || chatUnreadCount, chatMention: chatMentionCount, friends: friendsMentionBadge.classList.contains('show') ? (parseInt(friendsMentionBadge.textContent) || 0) : (friendsDot.classList.contains('show') ? 1 : 0) }; },
     setMyTitle(t){ myTitle = t || null; },                    // 🏷 自分が付けている称号(チャットに送った直後の表示用)
     isAdmin(){ return !!authToken && currentUserId === ADMIN_USER_ID; },
