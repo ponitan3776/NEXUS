@@ -1531,7 +1531,7 @@ const PATTERN_LABELS = {
     if(!hadCache || JSON.stringify(state) !== before) renderGachaModal(state);
   }
 
-  let gachaRateInfo = { ratePerSkin:0.004, rateTotal:0.032 };   // サーバーの排出率(表示用)。再描画でも保持する
+  let gachaRateInfo = { ratePerSkin:0.0003, rateTotal:0.0024 };   // サーバーの排出率(表示用)。再描画でも保持する
   function renderGachaModal(state){
     if(state && state.rateTotal != null) gachaRateInfo = { ratePerSkin: state.ratePerSkin, rateTotal: state.rateTotal };
     if(!state){
