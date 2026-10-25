@@ -1218,6 +1218,7 @@ const PATTERN_LABELS = {
   const myName = ()=> currentDisplayName || currentUserId || 'ゲスト';
   const rememberNames = (list)=>{ (list || []).forEach(x=>{ if(x && x.id) nameCache[x.id] = x.name || x.id; }); };
   const cachedName = (id)=> escapeHtml(nameCache[id] || id || '');
+  let iconHold = null;                               // アップロード直後だけ、古い同期の結果でアイコンが戻らないようにする
   let currentIcon = '', currentLv = null;            // 自分のアイコン('e:🎃:3' / 'i:画像ID' / '')とバトルパスLv
 
   // ----- 🖼 アイコン(アバター)・バトルパスLvの表示部品 -----
@@ -1243,14 +1244,15 @@ const PATTERN_LABELS = {
 
   // ----- 📷 画像を小さく圧縮(送る前に。容量を使いすぎないための工夫) -----
   function loadBitmap(file){
-    const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('画像を読み込めませんでした')); }; im.src = url; });
+    const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('この画像は読み込めませんでした(JPEG・PNG・WebP・HEICなどの写真を選んでください)')); }; im.src = url; });
     return window.createImageBitmap ? createImageBitmap(file).catch(viaImg) : viaImg();
   }
+  const loadBitmapPublic = loadBitmap;
   const toBlob = (cv, type, q)=> new Promise(r=> cv.toBlob(b=> r(b), type, q));
   async function compressImage(file, opt){
-    const o = Object.assign({ maxEdge:800, maxBytes:70000, square:false }, opt || {});
+    const o = Object.assign({ maxEdge:800, maxBytes:70000, square:false, bitmap:null }, opt || {});
     if(!file || !/^image\//.test(file.type || '')) throw new Error('画像ファイルを選んでください');
-    const src = await loadBitmap(file);
+    const src = o.bitmap || await loadBitmap(file);          // 大きな元画像は、1回だけ読み込んで使い回せる
     let w = src.width, h = src.height, sx = 0, sy = 0, sw = w, sh = h;
     if(o.square){ const m = Math.min(w, h); sx = (w - m)/2; sy = (h - m)/2; sw = sh = w = h = m; }
     const scale = Math.min(1, o.maxEdge / Math.max(w, h));
@@ -1262,7 +1264,7 @@ const PATTERN_LABELS = {
       for(const q of [0.82, 0.7, 0.58, 0.46, 0.36]){
         let blob = await toBlob(cv, 'image/webp', q);
         if(!blob || blob.type !== 'image/webp') blob = await toBlob(cv, 'image/jpeg', q);       // WebPが作れない端末(Safariなど)はJPEG
-        if(blob && blob.size <= o.maxBytes) return blob;
+        if(blob && blob.size <= o.maxBytes){ blob.cw = cw; blob.ch = ch; return blob; }
       }
       cw = Math.max(1, Math.round(cw*0.8)); ch = Math.max(1, Math.round(ch*0.8));
     }
@@ -3537,7 +3539,11 @@ restartBtn.addEventListener('click', ()=>{
           const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
           const d = await r.json().catch(()=>({}));
           if(!r.ok) throw new Error(d.error || `アップロードに失敗しました(エラー ${r.status}。サーバーが新しい版になっていない可能性があります)`);
-          pickEmoji = null; paint(); applied(d.icon); show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
+          const loaded = await new Promise(res=>{ const im = new Image(); im.onload = ()=> res(true); im.onerror = ()=> res(false); im.src = `${API_BASE_URL}/api/img/${String(d.icon).slice(2)}`; });
+          iconHold = { icon: d.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
+          pickEmoji = null; paint(); applied(d.icon);
+          if(loaded) show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
+          else show('アップロードはできましたが、画像を表示できませんでした。ページを再読み込みしてからもう一度お試しください', false);
         }catch(err){ show(/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'サーバーにつながりませんでした。少し待ってからもう一度お試しください' : err.message, false); }
         file.value = '';
       });
@@ -3811,7 +3817,7 @@ restartBtn.addEventListener('click', ()=>{
 
   function applySyncData(data){
     if (typeof data.displayName === 'string') currentDisplayName = data.displayName;
-    if (typeof data.icon === 'string') currentIcon = data.icon;
+    if (typeof data.icon === 'string' && !(iconHold && Date.now() < iconHold.until && data.icon !== iconHold.icon)) currentIcon = data.icon;
     if (data.lv) currentLv = data.lv;
     // ベストスコア（モード別がある場合はそちらを優先）
     if (data.bestScores && typeof data.bestScores === 'object') {
@@ -4412,7 +4418,7 @@ restartBtn.addEventListener('click', ()=>{
         <div style="text-align:center; color:var(--text-dim);">読み込み中...</div>
       </div>
       <div id="chatEditBar" class="edit-bar" style="display:none;"><span>✏️ メッセージを編集中</span><button type="button" id="chatEditCancel">キャンセル</button></div>
-      <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button></div>
+      <div id="chatImgPreview" class="chat-img-preview" style="display:none;"><img alt=""><span></span><button type="button" id="chatImgRemove" aria-label="画像を外す">✕</button><div class="chat-size-row" id="chatSizeRow"></div></div>
       <div style="display:flex; gap:6px;">
         <button type="button" class="chat-attach" id="chatImgBtn" aria-label="画像を添付" title="画像を添付">📷</button>
         <input type="file" id="chatImgFile" accept="image/*" hidden>
@@ -4431,23 +4437,49 @@ restartBtn.addEventListener('click', ()=>{
     chatEditId = null; chatSelectedId = null;
     document.getElementById('chatEditCancel').addEventListener('click', cancelChatEdit);
     // 📷 画像の添付(選んだ画像は、ここで小さく圧縮してから送る)
-    let chatImgBlob = null;
-    const prevBox = document.getElementById('chatImgPreview');
-    const clearChatImg = ()=>{ chatImgBlob = null; prevBox.style.display = 'none'; const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.removeAttribute('src'); document.getElementById('chatImgFile').value = ''; };
+    let chatImgBlob = null, chatImgBusy = false, chatImgVariants = {}, chatImgSel = 'm';
+    const CHAT_IMG_SIZES = [
+      { k:'s', label:'小', maxEdge:640,  maxBytes:45000,  note:'軽い・拡大するとやや粗い' },
+      { k:'m', label:'中', maxEdge:1100, maxBytes:100000, note:'おすすめ' },
+      { k:'l', label:'大', maxEdge:1600, maxBytes:240000, note:'拡大してもきれい' }
+    ];
+    const prevBox = document.getElementById('chatImgPreview'), sizeRow = document.getElementById('chatSizeRow');
+    const clearChatImg = ()=>{ chatImgBlob = null; chatImgBusy = false; chatImgVariants = {}; chatImgSel = 'm'; sizeRow.innerHTML = ''; prevBox.style.display = 'none'; const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.removeAttribute('src'); document.getElementById('chatImgFile').value = ''; };
+    const renderSizes = ()=>{
+      sizeRow.innerHTML = CHAT_IMG_SIZES.map(z=>{ const b = chatImgVariants[z.k];
+        return `<button type="button" class="chat-size-btn ${chatImgSel === z.k ? 'on' : ''}" data-k="${z.k}" ${b ? '' : 'disabled'}><b>${z.label}</b><small>${b ? `${b.cw}×${b.ch}px<br>${Math.ceil(b.size/1000)}KB` : '作成中…'}</small></button>`; }).join('');
+      sizeRow.querySelectorAll('.chat-size-btn').forEach(btn=> btn.addEventListener('click', ()=>{ if(chatImgVariants[btn.dataset.k]){ chatImgSel = btn.dataset.k; pickSize(); } }));
+    };
+    const pickSize = ()=>{
+      chatImgBlob = chatImgVariants[chatImgSel]; if(!chatImgBlob) return;
+      const im = prevBox.querySelector('img'); if(im.src.startsWith('blob:')) URL.revokeObjectURL(im.src); im.src = URL.createObjectURL(chatImgBlob);
+      const z = CHAT_IMG_SIZES.find(x=> x.k === chatImgSel);
+      prevBox.querySelector('span').textContent = `「${z.label}」で送ります(${z.note})。3日間だけ保存されます`;
+      renderSizes();
+    };
     document.getElementById('chatImgBtn').addEventListener('click', ()=>{ if(!authToken){ alert('ログインが必要です'); return; } document.getElementById('chatImgFile').click(); });
     document.getElementById('chatImgRemove').addEventListener('click', clearChatImg);
     document.getElementById('chatImgFile').addEventListener('change', async (e)=>{
       const f = e.target.files[0]; if(!f) return;
-      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '圧縮中…';
+      chatImgBlob = null; chatImgVariants = {}; chatImgBusy = true;
+      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '画像を読み込み中…(大きい画像は少し時間がかかります)'; renderSizes();
       try{
-        chatImgBlob = await compressImage(f, { maxEdge:1100, maxBytes:100000 });
-        const im = prevBox.querySelector('img'); im.src = URL.createObjectURL(chatImgBlob);
-        prevBox.querySelector('span').textContent = `${Math.ceil(chatImgBlob.size/1000)}KB に圧縮しました(送信で3日間だけ保存されます)`;
+        const bmp = await loadBitmapPublic(f);                       // どんなに大きな元画像でも、ここで1回だけ読み込む
+        for(const z of CHAT_IMG_SIZES){
+          try{ chatImgVariants[z.k] = await compressImage(f, { maxEdge:z.maxEdge, maxBytes:z.maxBytes, bitmap:bmp }); }catch(err){}
+          if(!chatImgBlob && chatImgVariants[z.k]){ chatImgSel = z.k; pickSize(); } else renderSizes();
+        }
+        if(bmp.close) bmp.close();
+        if(!Object.keys(chatImgVariants).length) throw new Error('画像を小さくできませんでした。別の画像でお試しください');
+        chatImgSel = chatImgVariants.m ? 'm' : Object.keys(chatImgVariants)[0];
+        pickSize();
       }catch(err){ alert(err.message); clearChatImg(); }
+      chatImgBusy = false;
     });
     document.getElementById('chatSendBtn').addEventListener('click', async () => {
       const input = document.getElementById('chatInput');
       const msg = input.value.trim();
+      if (chatImgBusy) { alert('画像を準備中です。大きさの表示が出るまで、少し待ってください'); return; }
       if (!msg && !chatImgBlob) return;
       if (chatImgBlob && !chatEditId) {                    // 画像つき: 先にアップロードしてから、そのIDでメッセージを送る
         const btn = document.getElementById('chatSendBtn'); btn.disabled = true;
@@ -6664,6 +6696,11 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.2', date:'2026-10-25', items:[
+      '📷 チャットの画像を送るとき、「小・中・大」から大きさを選べるように。選ぶ前に、できあがる大きさと容量が見えます',
+      '📷 どんなに大きな写真でも、自動で小さくして送れるように',
+      '🖼 アイコンを変えた直後に、もとのアイコンに戻ってしまうことがあった問題を修正'
+    ]},
     { version:'3.8.1', date:'2026-10-25', items:[
       '🖼 アイコンの画像アップロードが、サーバーの反応が遅いときでも使えるように',
       '📷 チャットの画像を大きく・きれいに表示。タップすると画面いっぱいに拡大します'
