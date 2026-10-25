@@ -1225,10 +1225,11 @@ const PATTERN_LABELS = {
   const AV_GRAD = ['#ff8a1f,#ff4d6d', '#b14dff,#5c9dff', '#3ddc84,#2bb3a0', '#ffd23d,#ff8a1f', '#ff4fa8,#b14dff', '#5c9dff,#3dd8c8', '#9a8cff,#ff8fb8', '#8a98c0,#3a48a0'];
   const hashStr = (str)=>{ let h = 0; for(const c of String(str || '')) h = (h*31 + c.codePointAt(0)) >>> 0; return h; };
   function avatarHtml(icon, name, id, size){
-    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || ''), um = /^u:(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(icon || '');
+    const sty = `--s:${size || 28}px`, e = /^e:(.+):([0-7])$/.exec(icon || ''), im = /^i:([0-9a-f]{16})$/.exec(icon || ''), um = /^u:(i\.ibb\.co(?:\.com)?\/[A-Za-z0-9]{4,16}\/[A-Za-z0-9._-]{1,120})$/.exec(icon || ''), dm = /^d:([A-Za-z0-9+\/]{20,6000}={0,2})$/.exec(icon || '');
     if(e) return `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})">${escapeHtml(e[1])}</span>`;
     const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
     const fb = `<span class="av" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})">${letter}</span>`;
+    if(dm){ const mime = dm[1].startsWith('/9j/') ? 'jpeg' : dm[1].startsWith('UklGR') ? 'webp' : dm[1].startsWith('iVBOR') ? 'png' : ''; if(mime) return `<img class="av av-img" style="${sty}" src="data:image/${mime};base64,${dm[1]}" alt="" data-fb="${encodeURIComponent(fb)}">`; }
     if(um) return `<img class="av av-img" style="${sty}" src="https://${um[1]}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     if(im) return `<img class="av av-img" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}">`;
     return fb;
@@ -3578,20 +3579,44 @@ restartBtn.addEventListener('click', ()=>{
         }catch(err){ lines.push(`❌ サーバーへのアイコン保存: ${err.message}`); }
         out();
       });
+      // ③ 画像そのものを、アイコン情報の中に入れる(約2KB。外部サービスにもサーバーの画像置き場にも頼らない最後の手段)
+      const blobToB64 = (blob)=> new Promise((res, rej)=>{ const fr = new FileReader(); fr.onload = ()=> res(String(fr.result).split(',')[1] || ''); fr.onerror = ()=> rej(new Error('画像を読み取れませんでした')); fr.readAsDataURL(blob); });
+      async function uploadIconInline(f){
+        const blob = await compressImage(f, { maxEdge:64, maxBytes:2800, square:true });
+        const dd = await postJson('/api/account/icon', { icon: 'd:' + await blobToB64(blob) });
+        return { icon: dd.icon, size: blob.size };
+      }
+      // 画像が本当に表示できるか確かめる(8秒たっても読めなければ失敗扱い)
+      const canLoad = (url)=> new Promise(ok=>{ const im = new Image(); const t = setTimeout(()=> ok(false), 8000); im.onload = ()=>{ clearTimeout(t); ok(true); }; im.onerror = ()=>{ clearTimeout(t); ok(false); }; im.src = url; });
+      const iconUrlOf = (icon)=> { const x = String(icon); if(x.startsWith('u:')) return 'https://' + x.slice(2); if(x.startsWith('i:')) return `${API_BASE_URL}/api/img/${x.slice(2)}`; const b = x.slice(2); return `data:image/${b.startsWith('/9j/') ? 'jpeg' : b.startsWith('UklGR') ? 'webp' : 'png'};base64,${b}`; };
       file.addEventListener('change', async ()=>{
-        const f = file.files[0]; if(!f) return;
-        show('圧縮してアップロード中…', true);
-        try{
-          let res = null, why = '';
-          if(IMGBB_KEY){ try{ res = await uploadIconImgbb(f); }catch(e1){ why = e1.message; console.warn('imgbb失敗:', e1); show('別の方法でもう一度試しています…', true); } }
-          if(!res) res = await uploadIconServer(f).catch(e2=>{ throw new Error(why ? `${e2.message}(imgbb: ${why})` : e2.message); });
-          const loaded = await new Promise(ok=>{ const im = new Image(); im.onload = ()=> ok(true); im.onerror = ()=> ok(false); im.src = iconSrc(res.icon); });
-          iconHold = { icon: res.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
-          pickEmoji = null; paint(); applied(res.icon);
-          if(loaded) show(`アイコンを設定しました(${Math.ceil(res.size/1000)}KB)`, true);
-          else show('保存はできましたが、画像を表示できませんでした。ページを再読み込みしてからもう一度お試しください', false);
-        }catch(err){ show(/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'つながりませんでした。少し待ってからもう一度お試しください' : err.message, false); }
-        file.value = '';
+        const f = file.files[0]; file.value = ''; if(!f) return;
+        // ① 選んだ画像を、まずそのまま画面に出す(ここで何も出ないなら、画像の読み込みの問題)
+        const localUrl = URL.createObjectURL(f);
+        av.innerHTML = `<img class="av av-img" style="--s:72px" src="${localUrl}" alt="">`;
+        show('① 画像を選びました(保存はまだです)…', true);
+        const methods = [];
+        if(IMGBB_KEY) methods.push(['imgbb', uploadIconImgbb]);
+        methods.push(['サーバー', uploadIconServer], ['埋め込み', uploadIconInline]);
+        const fails = []; let done = null, how = '';
+        for(const [name, fn] of methods){
+          show(`② 「${name}」に保存しています…` + (fails.length ? `\n(前の方法はだめでした: ${fails.join(' / ')})` : ''), true);
+          try{
+            const res = await fn(f);
+            show(`③ 保存できました。表示を確認しています…`, true);
+            if(!(await canLoad(iconUrlOf(res.icon)))) throw new Error('保存はできたが、画像を表示できなかった');
+            done = res; how = name; break;
+          }catch(err){ fails.push(`${name}: ${/Failed to fetch|NetworkError|Load failed|abort/i.test(err.message) ? 'つながらない' : err.message}`); console.warn('アイコン', name, err); }
+        }
+        URL.revokeObjectURL(localUrl);
+        if(done){
+          iconHold = { icon: done.icon, until: Date.now() + 20000 };      // このあと20秒は、古い同期の結果でアイコンが戻らないようにする
+          pickEmoji = null; paint(); applied(done.icon);
+          show(`✅ アイコンを設定しました(${how}・${Math.ceil(done.size/1000)}KB)` + (fails.length ? `\n※ うまくいかなかった方法: ${fails.join(' / ')}` : ''), true);
+        } else {
+          av.innerHTML = avatarHtml(currentIcon, myName(), currentUserId, 72);
+          show('❌ 設定できませんでした\n' + fails.join('\n'), false);
+        }
       });
     }
     dnBtn.addEventListener('click', async ()=>{
@@ -6762,6 +6787,9 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.8.6', date:'2026-10-25', items:[
+      '🖼 アイコンの画像設定を作り直し。選んだ画像がすぐ表示され、保存の経過も見えます。1つの方法がだめでも、自動で別の方法に切り替えます'
+    ]},
     { version:'3.8.5', date:'2026-10-25', items:[
       '🧱 テトリス: ▼(ソフトドロップ)を押し続けると、置いたあとも次のピースを勝手に落として、そのままゲームオーバーになってしまう問題を修正(押し直すまで待つように)',
       '🧱 テトリス: 指を離したのを取り逃がして、ボタンが押しっぱなし扱いになることがある問題を修正',
