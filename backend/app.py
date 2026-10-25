@@ -812,7 +812,11 @@ def account_icon():
         user_id = require_auth()
         raw = str((request.get_json(silent=True) or {}).get('icon') or '')
         value = None
-        if raw:
+        if raw.startswith('u:'):         # 外部の画像サービス(imgbb)のアイコン。決まった形のURLだけ受け付ける
+            if not re.match(r'^u:i\.ibb\.co(\.com)?/[A-Za-z0-9]{4,16}/[A-Za-z0-9._-]{1,120}$', raw):
+                raise ApiError('アイコンが不正です', 400)
+            value = raw
+        elif raw:
             parts = raw.split(':')
             if len(parts) != 3 or parts[0] != 'e' or parts[1] not in ICON_EMOJIS or not parts[2].isdigit() or int(parts[2]) >= ICON_COLOR_COUNT:
                 raise ApiError('アイコンが不正です', 400)
