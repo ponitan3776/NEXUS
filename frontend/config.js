@@ -5,5 +5,5 @@ window.NEXUS_CONFIG = {
   API_BASE_URL: 'https://pinkyburst.onrender.com',
   // アイコン画像のアップロード先(imgbb)。https://api.imgbb.com/ で無料のAPIキーを作って、''の中に貼る。
   // 空のままなら、今までどおりサーバーに保存する。(キーは画面から見えるので、このキー専用のアカウントがおすすめ)
-  IMGBB_API_KEY: '2a7a8c010826c936c5612c3a432a2dfc'
+  IMGBB_API_KEY: '5dd37aa80cef191ca6b0a84523a04a0d'
 };
