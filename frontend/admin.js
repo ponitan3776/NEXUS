@@ -932,7 +932,7 @@
   const logged = ()=> !!(CB().isLoggedIn && CB().isLoggedIn());
   const isAdmin = ()=> !!(CB().isAdmin && CB().isAdmin());
   // 運営チャットに出てくる「相手(送った人)」を、他の画面と同じアイコン+名前+Lvで
-  const whoOf = (t, size)=> CB().who ? CB().who({ id:t.userId, name:t.userName, icon:t.userIcon, lv:t.userLv }, 'id', size || 22) : esc(t.userName);
+  const whoOf = (t, size, zoom)=> CB().who ? CB().who({ id:t.userId, name:t.userName, icon:t.userIcon, lv:t.userLv }, 'id', size || 22, !!zoom) : esc(t.userName);
   const fmtTime = (iso)=>{ if(!iso) return ''; const d = new Date(iso), n = new Date(); const same = d.toDateString() === n.toDateString();
     return same ? d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : d.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }); };
   const inMode = (m)=> mo().classList.contains('show') && mc().dataset.mode === m;
@@ -1001,11 +1001,13 @@
     const sig = `${t.status}|${t.review}|${d.messages.length}|${d.messages.length ? d.messages[d.messages.length-1].id : 0}|${d.canReview}`;
     if(quiet && sig === lastSig) return;
     const prevInput = document.getElementById('supInput'), draft = prevInput ? prevInput.value : '';
+    const hadFocus = !!prevInput && document.activeElement === prevInput, selPos = prevInput ? prevInput.selectionStart : 0;
+    const prevMsgs = document.getElementById('supMsgs'), wasBottom = !prevMsgs || (prevMsgs.scrollHeight - prevMsgs.scrollTop - prevMsgs.clientHeight < 80), prevTop = prevMsgs ? prevMsgs.scrollTop : 0;
     lastSig = sig;
     const mineSender = adminView ? 'admin' : 'user';
     const msgs = d.messages.map(m=> m.sender === 'system'
       ? `<div class="sup-sys">${esc(m.message)}</div>`
-      : `<div class="sup-msg ${m.sender === mineSender ? 'mine' : 'theirs'}"><div class="sup-who">${m.sender === 'admin' ? '👑 運営' : whoOf(t)} <small>${fmtTime(m.at)}</small></div><div class="sup-bub">${esc(m.message).replace(/\n/g, '<br>')}</div></div>`).join('');
+      : `<div class="sup-msg ${m.sender === mineSender ? 'mine' : 'theirs'}"><div class="sup-who">${m.sender === 'admin' ? '👑 運営' : whoOf(t, 26, true)} <small>${fmtTime(m.at)}</small></div><div class="sup-bub">${esc(m.message).replace(/\n/g, '<br>')}</div></div>`).join('');
     let foot = '';
     if(open){
       foot = `<div class="sup-input"><textarea id="supInput" rows="2" maxlength="500" placeholder="${adminView ? '返信を入力…' : 'メッセージを入力…'}"></textarea><button class="primary-btn" id="supSend" type="button">送信</button></div>
@@ -1017,10 +1019,11 @@
       else if(t.review === 'up') foot += `<div class="sup-result up">${t.kind === 'bug' ? '👍 問題は解決しました。ご報告ありがとうございました！' : '👍 リクエストありがとうございました！'}</div>`;
       else if(t.review === 'down') foot += `<div class="sup-result down">👎 未解決として、新しいチャットを開きました。</div>`;
     }
-    body.innerHTML = `<div class="sup-head"><button class="ghost-btn sup-back" id="supBack" type="button">← 一覧</button><div class="sup-ht"><b>${esc(t.title || '(無題)')}</b><small>${KIND[t.kind] || ''} ・ #${t.id}${adminView ? ` ・ ${whoOf(t, 18)} (@${esc(t.userId)})` : ''}</small></div><span class="sup-chip ${open ? 'on' : 'off'}">${open ? '対応中' : '終了'}</span></div>
+    body.innerHTML = `<div class="sup-head"><button class="ghost-btn sup-back" id="supBack" type="button">← 一覧</button><div class="sup-ht"><b>${esc(t.title || '(無題)')}</b><small>${KIND[t.kind] || ''} ・ #${t.id}${adminView ? ` ・ ${whoOf(t, 22, true)} (@${esc(t.userId)})` : ''}</small></div><span class="sup-chip ${open ? 'on' : 'off'}">${open ? '対応中' : '終了'}</span></div>
       <div class="sup-msgs" id="supMsgs">${msgs}</div>${foot}`;
-    const box = document.getElementById('supMsgs'); box.scrollTop = box.scrollHeight;
+    const box = document.getElementById('supMsgs'); box.scrollTop = wasBottom ? box.scrollHeight : prevTop;      // 上を読んでいるときは動かさない
     const inp = document.getElementById('supInput'); if(inp && draft) inp.value = draft;
+    if(inp && hadFocus){ inp.focus(); try{ inp.setSelectionRange(selPos, selPos); }catch(e){} }      // 入力中にキーボードが閉じないように
     document.getElementById('supBack').addEventListener('click', ()=>{ curId = null; open_list(); });
     const send = document.getElementById('supSend');
     if(send){
