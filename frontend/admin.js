@@ -931,6 +931,8 @@
   let summary = { ...ZERO }, listTab = 'mine', curId = null, pollTimer = null, lastSig = '', lastUnread = 0;
   const logged = ()=> !!(CB().isLoggedIn && CB().isLoggedIn());
   const isAdmin = ()=> !!(CB().isAdmin && CB().isAdmin());
+  // 運営チャットに出てくる「相手(送った人)」を、他の画面と同じアイコン+名前+Lvで
+  const whoOf = (t, size)=> CB().who ? CB().who({ id:t.userId, name:t.userName, icon:t.userIcon, lv:t.userLv }, 'id', size || 22) : esc(t.userName);
   const fmtTime = (iso)=>{ if(!iso) return ''; const d = new Date(iso), n = new Date(); const same = d.toDateString() === n.toDateString();
     return same ? d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : d.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }); };
   const inMode = (m)=> mo().classList.contains('show') && mc().dataset.mode === m;
@@ -968,7 +970,7 @@
       const st = t.status === 'open' ? '<span class="sup-chip on">対応中</span>' : (t.review === 'up' ? '<span class="sup-chip done">👍 解決</span>' : (t.review === 'down' ? '<span class="sup-chip bad">👎 未解決</span>' : '<span class="sup-chip off">終了</span>'));
       return `<button type="button" class="sup-item ${t.unread ? 'unread' : ''}" data-tid="${t.id}">
         <div class="sup-top"><span class="sup-kind">${KIND[t.kind] || t.kind}</span>${st}${review}${t.unread ? `<span class="sup-new">NEW ${t.unread}</span>` : ''}</div>
-        <div class="sup-title">${listTab === 'admin' ? `<b>${esc(t.userName)}</b> ` : ''}${esc(t.title || '(無題)')}${t.reopenedFrom ? ` <small>(#${t.reopenedFrom}の再オープン)</small>` : ''}</div>
+        <div class="sup-title">${listTab === 'admin' ? `<span class="sup-whowrap">${whoOf(t)}</span> ` : ''}${esc(t.title || '(無題)')}${t.reopenedFrom ? ` <small>(#${t.reopenedFrom}の再オープン)</small>` : ''}</div>
         <div class="sup-prev">${esc(t.preview)}</div><div class="sup-time">#${t.id} ・ ${fmtTime(t.lastAt)}</div></button>`;
     }).join('');
     body.innerHTML = `<h2 style="color:var(--gold);">💬 運営とのやりとり</h2>${tabs}
@@ -1003,7 +1005,7 @@
     const mineSender = adminView ? 'admin' : 'user';
     const msgs = d.messages.map(m=> m.sender === 'system'
       ? `<div class="sup-sys">${esc(m.message)}</div>`
-      : `<div class="sup-msg ${m.sender === mineSender ? 'mine' : 'theirs'}"><div class="sup-who">${m.sender === 'admin' ? '👑 運営' : (adminView ? esc(t.userName) : 'あなた')} <small>${fmtTime(m.at)}</small></div><div class="sup-bub">${esc(m.message).replace(/\n/g, '<br>')}</div></div>`).join('');
+      : `<div class="sup-msg ${m.sender === mineSender ? 'mine' : 'theirs'}"><div class="sup-who">${m.sender === 'admin' ? '👑 運営' : whoOf(t)} <small>${fmtTime(m.at)}</small></div><div class="sup-bub">${esc(m.message).replace(/\n/g, '<br>')}</div></div>`).join('');
     let foot = '';
     if(open){
       foot = `<div class="sup-input"><textarea id="supInput" rows="2" maxlength="500" placeholder="${adminView ? '返信を入力…' : 'メッセージを入力…'}"></textarea><button class="primary-btn" id="supSend" type="button">送信</button></div>
@@ -1015,7 +1017,7 @@
       else if(t.review === 'up') foot += `<div class="sup-result up">${t.kind === 'bug' ? '👍 問題は解決しました。ご報告ありがとうございました！' : '👍 リクエストありがとうございました！'}</div>`;
       else if(t.review === 'down') foot += `<div class="sup-result down">👎 未解決として、新しいチャットを開きました。</div>`;
     }
-    body.innerHTML = `<div class="sup-head"><button class="ghost-btn sup-back" id="supBack" type="button">← 一覧</button><div class="sup-ht"><b>${esc(t.title || '(無題)')}</b><small>${KIND[t.kind] || ''} ・ #${t.id}${adminView ? ` ・ ${esc(t.userName)} (${esc(t.userId)})` : ''}</small></div><span class="sup-chip ${open ? 'on' : 'off'}">${open ? '対応中' : '終了'}</span></div>
+    body.innerHTML = `<div class="sup-head"><button class="ghost-btn sup-back" id="supBack" type="button">← 一覧</button><div class="sup-ht"><b>${esc(t.title || '(無題)')}</b><small>${KIND[t.kind] || ''} ・ #${t.id}${adminView ? ` ・ ${whoOf(t, 18)} (@${esc(t.userId)})` : ''}</small></div><span class="sup-chip ${open ? 'on' : 'off'}">${open ? '対応中' : '終了'}</span></div>
       <div class="sup-msgs" id="supMsgs">${msgs}</div>${foot}`;
     const box = document.getElementById('supMsgs'); box.scrollTop = box.scrollHeight;
     const inp = document.getElementById('supInput'); if(inp && draft) inp.value = draft;
