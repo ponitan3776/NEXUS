@@ -252,7 +252,7 @@ body.reduce-motion .ttl.r-admin{ animation:none; }
 .lightbox img{ width:min(96vw, 1100px); height:auto; max-height:92vh; object-fit:contain; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
 .lightbox button{ position:absolute; right:14px; top:max(14px, env(safe-area-inset-top)); width:40px; height:40px; border-radius:50%; font-size:18px; color:#fff; background:rgba(255,255,255,.18); border:0; }
 .chat-attach{ flex:0 0 auto; width:44px; border-radius:12px; font-size:20px; cursor:pointer; color:var(--text); background:var(--panel-light); border:1px solid rgba(255,255,255,.14); }
-.chat-img-preview{ display:flex; align-items:center; gap:8px; margin:0 0 6px; padding:6px 8px; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); font-size:11px; color:var(--text-dim); }
+.chat-img-preview{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 6px; padding:6px 8px; border-radius:12px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); font-size:11px; color:var(--text-dim); }
 .chat-img-preview img{ width:44px; height:44px; object-fit:cover; border-radius:8px; background:#120a22; }
 .chat-img-preview span{ flex:1; text-align:left; }
 .chat-img-preview button{ width:30px; height:30px; border-radius:50%; border:0; color:var(--text); background:rgba(255,255,255,.12); cursor:pointer; }
@@ -309,3 +309,10 @@ body.reduce-motion .ttl.r-admin{ animation:none; }
 .nt-chip.hot{ border-color:#ff3b5c; animation:egPulse 1.8s ease-in-out infinite; }
 .nt-ic{ font-size:16px; } .nt-n{ min-width:22px; padding:0 6px; border-radius:11px; font:900 11px/22px var(--sans); text-align:center; color:#fff; background:#ff3b5c; }
 .sup-head{ padding-right:44px; }     /* 右上の「×」ボタンと重ならないように */
+
+.chat-size-row{ flex-basis:100%; display:flex; gap:6px; margin-top:4px; }
+.chat-img-preview .chat-size-btn{ width:auto; height:auto; border-radius:10px; flex:1; padding:6px 4px; border-radius:10px; cursor:pointer; color:var(--text); background:rgba(255,255,255,.06); border:2px solid transparent; font-family:inherit; line-height:1.3; }
+.chat-img-preview .chat-size-btn b{ display:block; font-size:15px; }
+.chat-img-preview .chat-size-btn small{ display:block; font-size:10px; color:var(--text-dim); }
+.chat-img-preview .chat-size-btn.on{ border-color:var(--gold); background:rgba(255,210,60,.16); }
+.chat-img-preview .chat-size-btn:disabled{ opacity:.5; cursor:default; }
