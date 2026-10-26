@@ -3174,6 +3174,7 @@ function ensureBgmGainNode(){
   }
 
   function playBgmTrack(file){
+    if(menuDucking){ stopBgm(); if(file) bgmCurrentFile = file; return; }      // メニュー動画の音が出ている間は、BGMは待つ
     stopBgm();
     if(!file) return;
     bgmCurrentFile = file;
@@ -3239,7 +3240,22 @@ function ensureBgmGainNode(){
     } else if(bgmAudio){
       bgmAudio.volume = Math.min(1, bgmVolume);
     }
+    if(window.CBMenuAudio && window.CBMenuAudio.changed) window.CBMenuAudio.changed();      // メニュー動画の音量もBGMのスライダーに合わせる
   }
+
+  // 🎞 メニュー動画(menumedia.js)に音があるとき、BGMとかぶらないようにする。動画の音が出ている間だけ BGM を止め、止まったら続きから再開
+  let menuDucking = false;
+  function menuVideoDuck(on){
+    menuDucking = !!on;
+    if(on){ if(bgmAudio){ try{ bgmAudio.pause(); }catch(err){} } return; }
+    if(!bgmEnabled) return;
+    if(bgmAudio && bgmAudio.paused){ bgmAudio.play().catch(()=>{}); return; }
+    if(!bgmAudio){
+      if(!bgmCurrentFile && MUSIC_LIBRARY.length > 0) bgmCurrentFile = MUSIC_LIBRARY[0].file;
+      if(bgmCurrentFile) playBgmTrack(bgmCurrentFile);
+    }
+  }
+  window.CBMenuAudio = { duck: menuVideoDuck, enabled: ()=> bgmEnabled, volume: ()=> Math.min(1, Math.max(0.05, bgmVolume * 1.5)), changed: null };
 
   // ===================== サウンド =====================
   let audioCtx = null;
@@ -3357,6 +3373,7 @@ function ensureBgmGainNode(){
 
 // 最初の1タップでBGM自動開始(ブラウザの自動再生制限対策)
   function autoStartBgmOnFirstInteraction(){
+    if(menuDucking) return;           // メニュー動画の音が出ている間は、まだ始めない(止まったら menuVideoDuck(false) が始める)
     if(bgmStarted) return;
     if(!bgmEnabled) return;
     // まだ曲が選ばれていなければ、ライブラリの先頭を自動選択
