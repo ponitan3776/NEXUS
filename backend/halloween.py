@@ -57,8 +57,9 @@ class C:
     ]
     DEX_IDS = [d[0] for d in DEX]
     # 🎪 スタンプラリーの対象になるミニゲームのID(minigames.py の GAMES と同じ並び。他のファイルに頼らず起動できるよう、ここにも持つ)
-    MINI_GAME_IDS = ['g2048', 'snake', 'memory', 'whack', 'mines', 'flight', 'dino', 'breakout', 'simon', 'reflex', 'catch', 'math', 'maze', 'slide', 'lights', 'numtouch', 'stroop', 'stack']
-    DEX_DROP_CHANCE = 0.30          # ゲーム1回ごとに、図鑑に新しい(または重複の)おばけが出会える確率
+    MINI_GAME_IDS = ['g2048', 'snake', 'memory', 'whack', 'mines', 'flight', 'dino', 'breakout', 'simon', 'reflex', 'catch', 'math', 'maze', 'slide', 'lights', 'numtouch', 'stroop', 'stack',
+                     'tapspeed', 'timing', 'oddone', 'sortg', 'highlow', 'rps', 'pumpcount', 'holdexact']   # ← v3.9 パート3で+8
+    DEX_DROP_CHANCE = 0.40          # ゲーム1回ごとに、図鑑に新しい(または重複の)おばけが出会える確率
     DEX_DUP_CANDIES = {'common': 3, 'rare': 8, 'epic': 20, 'legendary': 60}   # すでに出会っていたら、キャンディに変わる
 
     # 図鑑の集めた数 → ごほうび
@@ -73,18 +74,21 @@ class C:
 
     # ===================== 🎪 ミニゲーム・スタンプラリー =====================
     # 全ミニゲームを1回ずつ遊ぶとスタンプがたまる(ゲームの数は minigames.py の GAMES から自動)
-    STAMP_STEPS = [3, 6, 9, 12, 15, 'all']
+    STAMP_STEPS = [3, 6, 9, 12, 15, 18, 21, 24, 'all']
     STAMP_REWARDS = {
         3:     {'type': 'coins', 'amount': 1500},
         6:     {'type': 'ticket', 'amount': 1},
         9:     {'type': 'bpxp', 'amount': 2000},
         12:    {'type': 'ticket', 'amount': 2},
         15:    {'type': 'coins', 'amount': 8000},
+        18:    {'type': 'ticket', 'amount': 2},
+        21:    {'type': 'bpxp', 'amount': 4000},
+        24:    {'type': 'coins', 'amount': 12000},
         'all': {'type': 'skin', 'skinId': 'hween_trickortreat', 'extraCoins': 8000},
     }
 
     # ===================== 🚪 トリック・オア・トリート(3つのドア) =====================
-    TOT_FREE_PER_DAY = 1
+    TOT_FREE_PER_DAY = 2
     TOT_EXTRA_COST = 30            # 2回目以降は、1回キャンディ30個
     TOT_MAX_PER_DAY = 6
     # kind, 重み, 内容, 見出し
@@ -125,8 +129,8 @@ class C:
     PATCH_BY_ID = {k[0]: k for k in PATCH_KINDS}
 
     # ===================== 👻 さまようおばけ =====================
-    GHOST_MAX_PER_DAY = 12
-    GHOST_COOLDOWN_SEC = 30
+    GHOST_MAX_PER_DAY = 20
+    GHOST_COOLDOWN_SEC = 20
     GHOST_NORMAL = (3, 10)         # キャンディの範囲
     GHOST_GOLD_CHANCE = 0.08
     GHOST_GOLD_CANDIES = 45
@@ -150,7 +154,7 @@ class C:
                   (11, 1):  (2.0, 'あとのまつり キャンディ2倍！')}
     BOOST_WEEKEND = (1.5, '週末ボーナス キャンディ1.5倍')
     BOOST_NIGHT = (1.5, 'ナイトタイム(20〜23時) キャンディ1.5倍')
-    MINI_GAME_BONUS = 4            # ミニゲームを1回遊ぶごとに、おまけで +4
+    MINI_GAME_BONUS = 10            # ミニゲームを1回遊ぶごとに、おまけで +4
 
     # ===================== 👤 ゲストからの引き継ぎ =====================
     GUEST_CARRYOVER_MAX = 150      # ゲストでためた🍬を、アカウント作成後に引き継げる上限(1回だけ)
@@ -181,6 +185,16 @@ class C:
         {'id': 'd_ghost3',   'stat': 'ghost',     'target': 3,     'candies': 40, 'text': 'さまようおばけを3回つかまえる'},
         {'id': 'd_dex1',     'stat': 'dex_new',   'target': 1,     'candies': 50, 'text': '図鑑に新しいおばけを登録する'},
         {'id': 'd_fortune',  'stat': 'fortune',   'target': 1,     'candies': 25, 'text': 'きょうのおみくじを引く'},
+        # --- v3.9 パート3 ---
+        {'id': 'd_snack2',   'stat': 'snack',     'target': 2,     'candies': 45, 'text': 'おやつタイムを2回食べる'},
+        {'id': 'd_snack4',   'stat': 'snack',     'target': 4,     'candies': 80, 'text': 'おやつタイムを4回食べる'},
+        {'id': 'd_games15',  'stat': 'games',     'target': 15,    'candies': 110, 'text': 'ゲームを15回プレイする'},
+        {'id': 'd_mini10',   'stat': 'mini_games', 'target': 10,   'candies': 95, 'text': 'ミニゲームを10回遊ぶ'},
+        {'id': 'd_minik6',   'stat': 'mini_kinds', 'target': 6,    'candies': 100, 'text': '6種類のミニゲームを遊ぶ'},
+        {'id': 'd_lines100', 'stat': 'lines',     'target': 100,   'candies': 90, 'text': 'テトリスで合計100ライン消す'},
+        {'id': 'd_ghost6',   'stat': 'ghost',     'target': 6,     'candies': 70, 'text': 'さまようおばけを6回つかまえる'},
+        {'id': 'd_tot2',     'stat': 'tot',       'target': 2,     'candies': 50, 'text': 'トリック・オア・トリートのドアを2回開ける'},
+        {'id': 'd_pulls10',  'stat': 'hw_pulls',  'target': 10,    'candies': 90, 'text': 'ハロウィンガチャを10回引く'},
     ]
     WEEKLY_POOL = [
         {'id': 'w_games30',  'stat': 'games',     'target': 30,     'candies': 210, 'text': '今週ゲームを30回プレイする'},
@@ -197,9 +211,27 @@ class C:
         {'id': 'w_harvest10', 'stat': 'harvest',  'target': 10,     'candies': 230, 'text': '今週かぼちゃを10個収穫する'},
         {'id': 'w_ghost25',  'stat': 'ghost',     'target': 25,     'candies': 220, 'text': '今週さまようおばけを25回つかまえる'},
         {'id': 'w_dex4',     'stat': 'dex_new',   'target': 4,      'candies': 270, 'text': '今週おばけを4種類、図鑑に登録する'},
+        # --- v3.9 パート3 ---
+        {'id': 'w_snack20',  'stat': 'snack',     'target': 20,     'candies': 250, 'text': '今週おやつタイムを20回食べる'},
+        {'id': 'w_games100', 'stat': 'games',     'target': 100,    'candies': 420, 'text': '今週ゲームを100回プレイする'},
+        {'id': 'w_mini40',   'stat': 'mini_games', 'target': 40,    'candies': 330, 'text': '今週ミニゲームを40回遊ぶ'},
+        {'id': 'w_minik12',  'stat': 'mini_kinds', 'target': 12,    'candies': 360, 'text': '今週12種類のミニゲームを遊ぶ'},
+        {'id': 'w_tot12',    'stat': 'tot',       'target': 12,     'candies': 280, 'text': '今週トリック・オア・トリートを12回'},
+        {'id': 'w_ghost50',  'stat': 'ghost',     'target': 50,     'candies': 320, 'text': '今週さまようおばけを50回つかまえる'},
+        {'id': 'w_harvest20', 'stat': 'harvest',  'target': 20,     'candies': 300, 'text': '今週かぼちゃを20個収穫する'},
+        {'id': 'w_pulls40',  'stat': 'hw_pulls',  'target': 40,     'candies': 360, 'text': '今週ハロウィンガチャを40回引く'},
     ]
-    DAILY_COUNT = 4
-    WEEKLY_COUNT = 4
+    DAILY_COUNT = 6      # v3.9 パート3で 4→6
+    WEEKLY_COUNT = 6
+
+    # ===================== 🎃 パート3(v3.9): おやつタイム・パレード・ボーナス =====================
+    SNACK_INTERVAL_SEC = 2 * 3600     # おやつタイムは2時間ごと(1日の最初はすぐ食べられる)
+    SNACK_MAX_PER_DAY = 8
+    SNACK_CANDIES = 30                # 1回ぶん(ボーナスタイムの倍率がかかる)
+    PARADE_TIERS = [(3, 30), (8, 70), (15, 130), (25, 220), (40, 360)]   # 今日あそんだ回数(ゲーム+ミニゲーム) → キャンディ
+    PARADE_TICKET_AT = 40             # この回数まで行くと、ガチャチケットも1枚
+    BOOST_PART3 = (1.3, 'パート3開催中！ キャンディ1.3倍')
+    PART3_FROM = (2026, 10, 26)
 
     # ===================== 🛒 交換所(増量) =====================
     SHOP = [
@@ -388,6 +420,10 @@ def norm_state(st):
         st['tot'] = {'date': today, 'used': 0}
     if not isinstance(st.get('ghost'), dict) or st['ghost'].get('date') != today:
         st['ghost'] = {'date': today, 'count': 0, 'last': st.get('ghost', {}).get('last', 0) if isinstance(st.get('ghost'), dict) else 0}
+    if not isinstance(st.get('snack'), dict) or st['snack'].get('date') != today:
+        st['snack'] = {'date': today, 'count': 0, 'last': 0}
+    if not isinstance(st.get('parade'), dict) or st['parade'].get('date') != today:
+        st['parade'] = {'date': today, 'claimed': []}
     if not isinstance(st.get('daily'), dict) or st['daily'].get('date') != today:
         st['daily'] = {'date': today, 'stats': {}, 'claimed': []}
     if not isinstance(st.get('weekly'), dict) or st['weekly'].get('week') != wk:
@@ -494,6 +530,8 @@ def candy_boost(now=None):
     d = C.BOOST_DAYS.get((now.month, now.day))
     if d:
         cands.append(d)
+    if (now.year, now.month, now.day) >= C.PART3_FROM:
+        cands.append(C.BOOST_PART3)
     if now.weekday() >= 5:
         cands.append(C.BOOST_WEEKEND)
     if 20 <= now.hour < 23:
@@ -584,6 +622,27 @@ def stamp_steps_view(st):
             for k, need, r in stamp_steps()]
 
 
+def parade_plays(st):
+    stt = st['daily']['stats']
+    return int(stt.get('games', 0) or 0) + int(stt.get('mini_games', 0) or 0)
+
+
+def part3_view(st):
+    """v3.9 パート3の画面用データ(おやつタイム・パレード)"""
+    sn, now_ts = st['snack'], time.time()
+    mult, _ = candy_boost()
+    left = max(0, C.SNACK_MAX_PER_DAY - sn['count'])
+    wait = 0
+    if sn['count'] > 0:
+        wait = max(0, int(C.SNACK_INTERVAL_SEC - (now_ts - float(sn.get('last') or 0))))
+    plays = parade_plays(st)
+    tiers = [{'need': n, 'candies': c, 'ticket': n == C.PARADE_TICKET_AT, 'reached': plays >= n, 'claimed': n in st['parade']['claimed']}
+             for n, c in C.PARADE_TIERS]
+    return {'snack': {'count': sn['count'], 'max': C.SNACK_MAX_PER_DAY, 'left': left, 'waitSec': wait if left else 0,
+                      'interval': C.SNACK_INTERVAL_SEC, 'candies': int(round(C.SNACK_CANDIES * mult)), 'ready': left > 0 and wait == 0},
+            'parade': {'plays': plays, 'tiers': tiers}}
+
+
 def extra_view(s):
     """v3.6 パート2 の画面用データ(state に足して返す)"""
     st = s['st']
@@ -605,6 +664,8 @@ def extra_view(s):
         'dex': sum(1 for d in dsteps if d['reached'] and not d['claimed']),
         'stamps': sum(1 for d in ssteps if d['reached'] and not d['claimed']),
     }
+    p3 = part3_view(st)
+    badges['part3'] = (1 if p3['snack']['ready'] else 0) + sum(1 for t in p3['parade']['tiers'] if t['reached'] and not t['claimed'])
     return {
         'boost': {'mult': mult, 'label': label},
         'daysToHalloween': days_to_halloween(),
@@ -617,6 +678,7 @@ def extra_view(s):
         'patch': {'plots': patch, 'kinds': [{'id': k[0], 'name': k[1], 'emoji': k[2], 'sec': k[3], 'candies': k[4]} for k in C.PATCH_KINDS]},
         'ghost': {'left': max(0, C.GHOST_MAX_PER_DAY - st['ghost']['count']), 'max': C.GHOST_MAX_PER_DAY},
         'guestBonusUsed': bool(st['guestBonus']),
+        'part3': p3,
         'badges': badges,
     }
 
@@ -1231,6 +1293,56 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
             add_stat_both(st, 'ghost', 1)
             return {'ok': True, 'gained': n, 'gold': gold, 'left': C.GHOST_MAX_PER_DAY - g['count'], **wallet(s)}
         return jsonify(with_state(user_id, fn))
+
+    # --- 🍪 おやつタイム(パート3): 2時間ごとに、無料でキャンディ ---
+    @app.post('/api/event/halloween/snack/claim')
+    @guard
+    def hw_snack_claim():
+        user_id = require_auth()
+
+        def fn(s):
+            st = s['st']
+            sn, now_ts = st['snack'], time.time()
+            if sn['count'] >= C.SNACK_MAX_PER_DAY:
+                raise ApiError('今日のおやつは、もう全部食べちゃった！また明日', 400)
+            if sn['count'] > 0 and now_ts - float(sn.get('last') or 0) < C.SNACK_INTERVAL_SEC:
+                raise ApiError('まだ、おやつの時間じゃないよ', 400)
+            mult, _ = candy_boost()
+            n = int(round(C.SNACK_CANDIES * mult))
+            sn['count'] += 1
+            sn['last'] = now_ts
+            add_candies(st, n)
+            add_stat_both(st, 'snack', 1)
+            return {'ok': True, 'gained': n, **wallet(s)}
+        return jsonify(with_state(user_id, fn))
+
+    # --- 🎪 パンプキン・パレード(パート3): 今日あそんだ回数に応じてキャンディ ---
+    @app.post('/api/event/halloween/parade/claim')
+    @guard
+    def hw_parade_claim():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        want_all = bool(b.get('all'))
+        try:
+            need = int(b.get('need'))
+        except (TypeError, ValueError):
+            need = -1
+
+        def fn(s):
+            st = s['st']
+            plays = parade_plays(st)
+            targets = [(n, c) for n, c in C.PARADE_TIERS if plays >= n and n not in st['parade']['claimed'] and (want_all or n == need)]
+            if not targets:
+                raise ApiError('受け取れる報酬がありません', 400)
+            total = 0
+            for n, c in targets:
+                add_candies(st, c)
+                total += c
+                st['parade']['claimed'].append(n)
+                if n == C.PARADE_TICKET_AT:
+                    st['tickets'] += 1
+            return {'ok': True, 'claimedCount': len(targets), 'gained': total, **wallet(s)}
+        return jsonify(with_state(user_id, fn, ('active', 'grace')))
 
     # --- 📖 図鑑のごほうび ---
     @app.post('/api/event/halloween/dex/claim')
