@@ -1,0 +1,32 @@
+/* minigames3.css — v3.9 の新ミニゲーム(m3-*)。基本の見た目は minigames.css の m2-* を使い回す */
+.m3-wrap{ width:100%; max-width:380px; display:flex; flex-direction:column; align-items:center; }
+.m3-bigtap{ width:100%; max-width:320px; min-height:240px; border-radius:26px; cursor:pointer; user-select:none; -webkit-user-select:none; touch-action:manipulation;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#fff;
+  background:linear-gradient(160deg,#5b2a8c,#2a1050); border:3px solid rgba(255,255,255,.3); box-shadow:0 14px 40px rgba(0,0,0,.45); transition:transform .06s; }
+.m3-bigtap span{ font-size:80px; line-height:1; } .m3-bigtap small{ font:800 14px var(--sans); opacity:.85; }
+.m3-bigtap.hit{ transform:scale(.94); background:linear-gradient(160deg,#ff8a2b,#b34a00); }
+.m3-bigtap.hold{ min-height:180px; }
+.m3-clock{ font:800 56px var(--serif); color:var(--gold); letter-spacing:.04em; margin:2px 0 10px; font-variant-numeric:tabular-nums; }
+.m3-msg{ min-height:26px; margin:8px 0; font:800 15px var(--sans); color:var(--text); text-align:center; }
+.m3-track{ position:relative; width:100%; max-width:340px; height:64px; border-radius:14px; background:rgba(255,255,255,.08); border:1px solid var(--gold-line); margin:10px 0; overflow:hidden; touch-action:manipulation; }
+.m3-zone{ position:absolute; left:42%; width:16%; top:0; bottom:0; background:rgba(61,220,132,.28); border-left:2px solid #3ddc84; border-right:2px solid #3ddc84; }
+.m3-mark{ position:absolute; top:6px; bottom:6px; width:12px; margin-left:-6px; border-radius:6px; background:linear-gradient(180deg,#ffb347,#ff3d6e); box-shadow:0 0 14px rgba(255,120,80,.8); left:0; }
+.m3-stop{ width:100%; max-width:340px; min-height:56px; font-size:17px; }
+.m3-grid{ display:grid; gap:6px; width:100%; max-width:340px; aspect-ratio:1; }
+.m3-cell{ border-radius:12px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.07); cursor:pointer; padding:0; color:inherit; touch-action:manipulation; }
+.m3-cell.ok{ background:rgba(61,220,132,.35); } .m3-cell.ng{ background:rgba(255,61,110,.4); }
+.m3-card{ width:150px; height:150px; border-radius:26px; display:flex; align-items:center; justify-content:center; font-size:84px; margin:6px 0 10px;
+  background:rgba(255,255,255,.07); border:2px solid var(--gold-line); transition:background .1s; }
+.m3-card.num{ font:800 84px var(--serif); color:var(--gold); }
+.m3-card.ok{ background:rgba(61,220,132,.3); } .m3-card.ng{ background:rgba(255,61,110,.35); }
+.m3-two, .m3-three{ display:grid; gap:10px; width:100%; max-width:340px; }
+.m3-two{ grid-template-columns:1fr 1fr; } .m3-three{ grid-template-columns:repeat(3,1fr); }
+.m3-side{ min-height:84px; border-radius:18px; font-size:34px; cursor:pointer; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  background:linear-gradient(160deg,#4a2a7a,#2b1650); border:2px solid rgba(255,255,255,.25); touch-action:manipulation; }
+.m3-side small{ font:800 12px var(--sans); opacity:.9; }
+.m3-side.treat{ background:linear-gradient(160deg,#ff8a2b,#b34a00); }
+.m3-hand{ min-height:92px; border-radius:20px; font-size:48px; cursor:pointer; background:linear-gradient(160deg,#4a2a7a,#2b1650); border:2px solid rgba(255,255,255,.25); touch-action:manipulation; }
+.m3-hand:active{ transform:scale(.94); }
+.m3-field{ position:relative; width:100%; max-width:340px; height:230px; border-radius:16px; background:#120a22; border:1px solid var(--gold-line); overflow:hidden; margin-bottom:6px; }
+.m3-pump{ position:absolute; font-size:30px; line-height:1; }
+.m3-q{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:80px; }
