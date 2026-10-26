@@ -23,6 +23,8 @@
   let pending = [];
   let showing = false;
   let checking = false;
+  let dismissed = false;        // ✕で閉じたあと、自動ではもう出さない(ログイン時・手動で開いたときは、また出す)
+  const fromLabel = (g)=> (g.from === 'vortx' || g.from === 'spirit') ? '運営' : (g.fromName || g.from);
 
   function lobbyVisible(){
     const t = document.getElementById('titleScreen');
@@ -37,6 +39,8 @@
   /* ---------- 届いているか確認して、出してよいタイミングなら出す ---------- */
   async function check(reason){
     if(showing || checking) return;
+    if(reason === 'login' || reason === 'manual') dismissed = false;
+    if(dismissed) return;            // ✕で閉じたあとは、勝手に出さない
     checking = true;
     try{
       await fetchPending();
@@ -64,21 +68,24 @@
       <div class="gx-bg"></div><div class="gx-rays"></div><div class="gx-flash"></div>
       <button class="gx-mini" id="gxMini" type="button" aria-label="手紙をもう一度読む">💌</button>
       <div class="gx-stage">
-        <div class="gx-head" id="gxHead">🎁 ギフトが届いています！<small>${esc((gift.from === 'vortx' || gift.from === 'spirit') ? '運営' : gift.from)} より</small></div>
+        <div class="gx-head" id="gxHead">🎁 ギフトが届いています！<small>${esc(fromLabel(gift))} より</small></div>
         <div class="gx-box" id="gxBox"><div class="gb-glow"></div><div class="gb-body"></div><div class="gb-lid"><i class="gb-bow"></i></div></div>
         <div class="gx-letter" id="gxLetter">
           <div class="gl-paper">
             <div class="gl-seal">💌</div>
             <div class="gl-title">メッセージが届いています</div>
             <div class="gl-msg">${esc(gift.message).replace(/\n/g, '<br>')}</div>
-            <div class="gl-from">— ${esc((gift.from === 'vortx' || gift.from === 'spirit') ? '運営' : gift.from)} より</div>
+            <div class="gl-from">— ${esc(fromLabel(gift))} より</div>
           </div>
         </div>
         <div class="gx-items" id="gxItems"></div>
-        <div class="gx-btns"><button class="gx-btn" id="gxAction" type="button">🎁 開封する</button></div>
-      </div>`;
+        <div class="gx-btns"><button class="gx-btn" id="gxAction" type="button">🎁 開封する</button>
+          ${pending.length > 1 ? `<button class="gx-btn gx-all" id="gxAll" type="button">📦 まとめて受け取る(${pending.length}件)</button>` : ''}</div>
+      </div>
+      <button class="gx-x" id="gxX" type="button" aria-label="とじる(あとで受け取れます)">✕</button>`;
     document.body.appendChild(root);
     const q = (s)=> root.querySelector(s);
+    const allBtn = q('#gxAll'), xBtn = q('#gxX');
     const box = q('#gxBox'), letter = q('#gxLetter'), itemsEl = q('#gxItems'), action = q('#gxAction'), mini = q('#gxMini'), flash = q('.gx-flash'), head = q('#gxHead');
     root.classList.add('show');
     if(!fast){ box.classList.add('drop'); snd('place'); }
@@ -101,6 +108,16 @@
       pending.shift();
       if(pending.length){ setTimeout(()=>present(), fast ? 0 : 420); }          // まだ届いていれば、次の箱へ
     }
+    // ✕: 受け取らずに閉じる。ギフトはそのまま残る(メニューの🎁から、いつでも受け取れる)
+    function dismiss(){
+      if(state === 'claiming') return;                         // 受け取り中は閉じない
+      if(state === 'items'){ close(); return; }                // もう受け取り済みなら、ふつうに閉じる
+      timers.forEach(clearTimeout);
+      root.classList.add('closing');
+      setTimeout(()=>root.remove(), fast ? 0 : 260);
+      showing = false; dismissed = true;
+      try{ CB().toast && CB().toast('🎁 ギフトは、あとで受け取れます(メニューの「ギフト」から)'); }catch(e){}
+    }
 
     /* 1) 開封: 箱が揺れて、フタが飛び、光があふれて、手紙が出てくる */
     async function openBox(){
@@ -115,6 +132,28 @@
       letter.classList.add('show');
       await wait(850);
       state = 'letter'; action.disabled = false; action.textContent = '次へ ▶';
+    }
+
+    /* アイテムのカード(数字がカウントアップ) */
+    async function renderItems(it){
+      const rows = [
+        ['🪙', 'コイン', it.coins], ['🍬', 'イベント通貨', it.candies], ['🎫', 'XP', it.bpXp], ['🏁', 'イベントXP', it.eventXp]
+      ].filter(r=>r[2] > 0);
+      itemsEl.classList.add('show');
+      for(let i=0;i<rows.length;i++){
+        const [ic, nm, val] = rows[i];
+        const card = $('div', 'gi-card', `<div class="gi-ic">${ic}</div><div class="gi-nm">${nm}</div><div class="gi-val">+0</div>`);
+        itemsEl.appendChild(card);
+        snd('coin'); vib(15);
+        const valEl = card.querySelector('.gi-val');
+        if(fast){ valEl.textContent = '+' + fmt(val); }
+        else {
+          const t0 = performance.now(), dur = 700;
+          await new Promise(res=>{ const step = (t)=>{ const k = Math.min(1, (t - t0)/dur), e = 1 - Math.pow(1 - k, 3); valEl.textContent = '+' + fmt(Math.round(val*e)); if(k < 1) requestAnimationFrame(step); else res(); }; requestAnimationFrame(step); });
+        }
+        await wait(160);
+      }
+      doFlash(); sparks(18);
     }
 
     /* 2) 次へ: ギフトを受け取り → 手紙が小さくなって左上へ → アイテムが出る */
@@ -142,31 +181,40 @@
       letter.classList.add('away'); mini.classList.add('show');
       snd('place');
       await wait(250);
-      // アイテム(数字がカウントアップ)
-      const it = data.items || gift;
-      const rows = [
-        ['🪙', 'コイン', it.coins], ['🍬', 'イベント通貨', it.candies], ['🎫', 'XP', it.bpXp], ['🏁', 'イベントXP', it.eventXp]
-      ].filter(r=>r[2] > 0);
-      itemsEl.classList.add('show');
-      for(let i=0;i<rows.length;i++){
-        const [ic, nm, val] = rows[i];
-        const card = $('div', 'gi-card', `<div class="gi-ic">${ic}</div><div class="gi-nm">${nm}</div><div class="gi-val">+0</div>`);
-        itemsEl.appendChild(card);
-        snd('coin'); vib(15);
-        const valEl = card.querySelector('.gi-val');
-        if(fast){ valEl.textContent = '+' + fmt(val); }
-        else {
-          const t0 = performance.now(), dur = 700;
-          await new Promise(res=>{ const step = (t)=>{ const k = Math.min(1, (t - t0)/dur), e = 1 - Math.pow(1 - k, 3); valEl.textContent = '+' + fmt(Math.round(val*e)); if(k < 1) requestAnimationFrame(step); else res(); }; requestAnimationFrame(step); });
-        }
-        await wait(160);
-      }
-      doFlash(); sparks(18);
+      await renderItems(data.items || gift);
       state = 'items';
       const remain = pending.length - 1;
       action.disabled = false;
       action.textContent = remain > 0 ? `次のギフトへ (残り${remain}件)` : '閉じる';
     }
+
+    /* 📦 まとめて受け取り: 届いている全部を一度に受け取って、合計を見せる */
+    async function claimAll(){
+      if(state === 'claiming' || state === 'items') return;
+      const prev = state;
+      state = 'claiming'; action.disabled = true; if(allBtn){ allBtn.disabled = true; allBtn.textContent = '受け取り中...'; }
+      let data = null;
+      try{
+        data = await CB().api('/api/gifts/claim-all', 'POST');
+      }catch(err){
+        if(/受け取れるギフトがありません/.test(err.message || '')){ pending.length = 0; showing = false; timers.forEach(clearTimeout); root.remove(); return; }
+        state = prev; action.disabled = false;
+        if(allBtn){ allBtn.disabled = false; allBtn.textContent = `📦 まとめて受け取る(${pending.length}件)`; }
+        head.innerHTML = `⚠️ ${esc(err.message || '受け取りに失敗しました')}`; return;
+      }
+      if(data && data.coins != null && CB().setCoins) CB().setCoins(data.coins);
+      const n = data.count || pending.length;
+      pending.length = 0;
+      box.classList.remove('drop', 'shake'); box.classList.add('gone'); letter.classList.add('away');
+      if(allBtn) allBtn.remove();
+      head.innerHTML = `🎉 ${n}件のギフトを、まとめて受け取りました！`;
+      snd('place');
+      await renderItems(data.items || {});
+      state = 'items'; action.disabled = false; action.textContent = '閉じる';
+    }
+    if(allBtn) allBtn.addEventListener('click', claimAll);
+    if(xBtn) xBtn.addEventListener('click', dismiss);
+    root.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') dismiss(); });
 
     action.addEventListener('click', ()=>{
       if(state === 'box') openBox();
@@ -184,5 +232,5 @@
   // 定期チェック(ロビーにいるときだけ表示。プレイ中はバッジだけ更新)
   setInterval(()=>{ if(CB().isLoggedIn && CB().isLoggedIn()) check('poll'); }, 60000);
 
-  window.GiftFx = { check, pendingCount: ()=> pending.length };
+  window.GiftFx = { check, pendingCount: ()=> pending.length, reset: ()=>{ dismissed = false; } };
 })();
