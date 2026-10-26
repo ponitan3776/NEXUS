@@ -86,3 +86,25 @@
 .lightbox .lb-av .av{ box-shadow:0 20px 60px rgba(0,0,0,.6); border:3px solid rgba(255,255,255,.25); }
 .lightbox .av{ margin:0; }
 .lightbox .lb-cap{ max-width:86vw; font:800 16px/1.4 var(--sans); color:#fff; text-align:center; word-break:break-word; }
+
+/* ===== フレンドをさがす / ギフトを贈る (v3.9) ===== */
+.fs-box{ margin-bottom:12px; }
+.fs-input{ width:100%; box-sizing:border-box; min-height:44px; padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,.18); background:var(--bg-deep2); color:var(--text); font:16px/1.4 inherit; margin-bottom:8px; }
+.fs-list{ max-height:42vh; overflow-y:auto; overscroll-behavior:contain; border-radius:12px; background:rgba(255,255,255,.04); padding:4px 8px; }
+.fs-head{ margin:6px 2px; font-size:12px; font-weight:800; color:var(--gold); }
+.fs-row{ display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,.06); }
+.fs-who{ flex:1; min-width:0; display:flex; align-items:center; flex-wrap:wrap; font-weight:800; font-size:14px; cursor:pointer; word-break:break-all; }
+.fs-who .fid{ margin-left:6px; font-size:10.5px; font-weight:600; color:var(--text-dim); }
+.fs-state{ flex:none; font-size:11px; font-weight:800; color:var(--text-dim); }
+.fs-more{ display:block; width:100%; margin:8px 0; padding:10px; }
+.fbtn.ok{ background:var(--mint, #4fd6a8); color:#10281f; }
+.fbtn.gift{ background:rgba(255,200,80,.2); color:var(--gold); }
+
+.pg-overlay{ position:fixed; inset:0; z-index:99999; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,.65); }
+.pg-card{ width:100%; max-width:340px; padding:18px 16px; border-radius:18px; background:var(--panel, #1c1a26); color:var(--text, #fff); border:1px solid rgba(255,255,255,.14); text-align:left; }
+.pg-title{ display:flex; align-items:center; flex-wrap:wrap; gap:4px; font-weight:800; font-size:16px; margin-bottom:6px; }
+.pg-sub{ font-size:12px; line-height:1.5; color:var(--text-dim); margin-bottom:10px; }
+.pg-quick{ display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
+.pg-err{ margin:0 0 8px; padding:8px 10px; border-radius:10px; font-size:13px; background:rgba(255,80,80,.16); color:#ffb3b3; }
+.pg-err[hidden]{ display:none; }
+.pg-btns{ display:flex; gap:8px; } .pg-btns .primary-btn{ flex:1; margin:0; } .pg-btns .fbtn{ min-height:44px; padding:0 16px; }
