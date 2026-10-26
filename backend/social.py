@@ -30,6 +30,11 @@ POLL_MIN_OPTIONS, POLL_MAX_OPTIONS = 2, 8
 POLL_Q_MAX, POLL_OPT_MAX = 120, 40
 GIFT_MAX = 10 ** 12
 GIFT_MSG_MAX = 300
+# プレイヤー同士のギフト(v3.9): フレンドにだけ・コインだけ。悪用防止のため、1回と1日の上限あり
+PLAYER_GIFT_MAX = 10_000          # 1回に贈れる上限
+PLAYER_GIFT_DAY_MAX = 30_000      # 24時間に贈れる合計
+PLAYER_GIFT_DAY_COUNT = 10        # 24時間に贈れる回数
+PLAYER_GIFT_MSG = 100
 CHAT_MAX, DM_MAX = 200, 300
 
 INIT_SQL = """
@@ -320,12 +325,14 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
     @guard
     def gifts_pending():
         user = require_auth()
-        rows = db_query('SELECT id, from_user, message, coins, candies, bp_xp, event_xp, created_at FROM gifts '
-                        'WHERE to_user = %s AND claimed_at IS NULL ORDER BY id ASC LIMIT 20', [user])
+        rows = db_query('SELECT g.id, g.from_user, u.display_name AS from_name, g.message, g.coins, g.candies, g.bp_xp, g.event_xp, g.created_at '
+                        'FROM gifts g LEFT JOIN users u ON u.id = g.from_user '
+                        'WHERE g.to_user = %s AND g.claimed_at IS NULL ORDER BY g.id ASC LIMIT 100', [user])
         out = []
         for r in rows:
             ca = r.get('created_at')
-            out.append({'id': r['id'], 'from': r['from_user'], 'message': r['message'], **gift_items(r),
+            out.append({'id': r['id'], 'from': r['from_user'], 'fromName': r.get('from_name') or r['from_user'],
+                        'fromPlayer': r['from_user'] != admin_id, 'message': r['message'], **gift_items(r),
                         'createdAt': ca.isoformat() if hasattr(ca, 'isoformat') else None})
         return jsonify({'gifts': out})
 
@@ -352,6 +359,68 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
             cur.execute('UPDATE gifts SET claimed_at = NOW() WHERE id = %s', [gid])
         return jsonify({'ok': True, 'items': it, 'coins': s['coins'], 'battlepassXp': s['bpxp'],
                         'candies': s['st']['candies'], 'totalCandies': s['st']['totalCandies']})
+
+    # 📦 まとめて受け取り(v3.9)
+    @app.post('/api/gifts/claim-all')
+    @guard
+    def gifts_claim_all():
+        user = require_auth()
+        with db_transaction() as cur:
+            cur.execute('SELECT id, coins, candies, bp_xp, event_xp FROM gifts WHERE to_user = %s AND claimed_at IS NULL ORDER BY id FOR UPDATE', [user])
+            gifts = cur.fetchall()
+            if not gifts:
+                raise ApiError('受け取れるギフトがありません', 404)
+            row = H.lock_user(cur, user)
+            if not row:
+                raise ApiError('ユーザーが見つかりません', 404)
+            s = H.load_state_from_row(row)
+            total = {'coins': 0, 'candies': 0, 'bpXp': 0, 'eventXp': 0}
+            for g in gifts:
+                it = apply_gift(s, g)
+                for k in total:
+                    total[k] += it[k]
+            H.save_user(cur, user, s)
+            cur.execute('UPDATE gifts SET claimed_at = NOW() WHERE id = ANY(%s)', [[g['id'] for g in gifts]])
+        return jsonify({'ok': True, 'count': len(gifts), 'items': total, 'coins': s['coins'], 'battlepassXp': s['bpxp'],
+                        'candies': s['st']['candies'], 'totalCandies': s['st']['totalCandies']})
+
+    # 🎁 プレイヤー同士のギフト(v3.9): フレンドにコインを贈る。贈った分は、すぐ自分のコインから引かれる
+    @app.post('/api/gifts/send')
+    @guard
+    def gifts_send():
+        user = require_auth()
+        b = request.get_json(silent=True) or {}
+        to = str(b.get('to') or '').strip()
+        try:
+            coins = int(b.get('coins'))
+        except (TypeError, ValueError):
+            raise ApiError('コインの数を入力してください', 400)
+        if coins < 1 or coins > PLAYER_GIFT_MAX:
+            raise ApiError(f'1回に贈れるのは 1〜{PLAYER_GIFT_MAX:,} コインです', 400)
+        msg = str(b.get('message') or '').strip()[:PLAYER_GIFT_MSG] or 'プレゼントです！'
+        if not to or to == user:
+            raise ApiError('贈り先が不正です', 400)
+        if not db_query('SELECT 1 FROM friends WHERE user_id = %s AND friend_id = %s', [user, to]):
+            raise ApiError('ギフトはフレンドにだけ贈れます', 403)
+        target = db_query('SELECT COALESCE(banned, FALSE) AS banned FROM users WHERE id = %s', [to])
+        if not target or target[0]['banned']:
+            raise ApiError('このユーザーには贈れません', 404)
+        with db_transaction() as cur:
+            row = H.lock_user(cur, user)               # 自分の行をロック → 同時に何回も送る裏技を防ぐ
+            if not row:
+                raise ApiError('ユーザーが見つかりません', 404)
+            s = H.load_state_from_row(row)
+            if s['coins'] < coins:
+                raise ApiError('コインが足りません', 400)
+            cur.execute("SELECT COALESCE(SUM(coins), 0) AS c, COUNT(*) AS n FROM gifts WHERE from_user = %s AND created_at > NOW() - INTERVAL '24 hours'", [user])
+            r = cur.fetchone()
+            if user != admin_id and (int(r['n']) >= PLAYER_GIFT_DAY_COUNT or int(r['c']) + coins > PLAYER_GIFT_DAY_MAX):
+                raise ApiError(f'ギフトは24時間で {PLAYER_GIFT_DAY_COUNT}回・合計{PLAYER_GIFT_DAY_MAX:,}コインまでです(いま {int(r["c"]):,}コイン贈りました)', 429)
+            s['coins'] -= coins
+            H.save_user(cur, user, s)
+            cur.execute('INSERT INTO gifts (batch_id, to_user, from_user, message, coins) VALUES (%s, %s, %s, %s, %s)',
+                        ['p' + uuid.uuid4().hex[:11], to, user, msg, coins])
+        return jsonify({'ok': True, 'coins': s['coins'], 'sentToday': int(r['c']) + coins, 'dayMax': PLAYER_GIFT_DAY_MAX})
 
     # ---------------------------------------------------------------- メッセージの編集・取り消し
     def edit_msg(table, id_col_user, limit):
@@ -411,6 +480,8 @@ def register(app, db_query, db_transaction, require_auth, optional_user, ApiErro
     def admin_users():
         require_admin()
         q = re.sub(r'([%_\\])', r'\\\1', (request.args.get('q') or '').strip()[:30])
-        rows = db_query("SELECT id, best_score, coins, COALESCE(banned, FALSE) AS banned FROM users WHERE id ILIKE %s "
-                        "ORDER BY last_login DESC NULLS LAST, id ASC LIMIT 40", [f'%{q}%'])
-        return jsonify({'users': [{'id': r['id'], 'bestScore': int(r.get('best_score') or 0), 'coins': int(r.get('coins') or 0), 'banned': bool(r['banned'])} for r in rows]})
+        rows = db_query("SELECT id, display_name, best_score, coins, COALESCE(banned, FALSE) AS banned FROM users "
+                        "WHERE id ILIKE %s OR COALESCE(display_name, '') ILIKE %s "
+                        "ORDER BY CASE WHEN LOWER(id) = LOWER(%s) THEN 0 ELSE 1 END, last_login DESC NULLS LAST, id ASC LIMIT 40",
+                        [f'%{q}%', f'%{q}%', (request.args.get('q') or '').strip()[:30]])
+        return jsonify({'users': [{'id': r['id'], 'name': r.get('display_name') or '', 'bestScore': int(r.get('best_score') or 0), 'coins': int(r.get('coins') or 0), 'banned': bool(r['banned'])} for r in rows]})
