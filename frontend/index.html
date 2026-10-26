@@ -28,6 +28,7 @@
 <link rel="stylesheet" href="social.css">
 <link rel="stylesheet" href="titles.css">
 <link rel="stylesheet" href="chatui.css">
+<link rel="stylesheet" href="menumedia.css">
 </head>
 <body>
 <!-- ✨ ロード画面: ページを開いた瞬間に出て、準備ができたら消える(script.js の start() が CBLoading を操作する) -->
@@ -117,6 +118,8 @@
     <div class="lobby-notify" id="lobbyNotify" hidden></div>
 
     <div class="lobby-hero" id="titleCard">
+      <!-- メニューの画像/動画(1278×718)。icons/menu.mp4 か menu.webm か menu.jpg|png|webp を置くと表示される(menumedia.js)。無ければ枠ごと非表示 -->
+      <div class="hero-media" id="heroMedia" hidden aria-hidden="true"></div>
       <!-- icons/logo.png を置くとテキストロゴの代わりに表示される(無ければ自動でテキストロゴ) -->
       <img class="title-logo-img" src="icons/logo.png" alt="NEXUS" onload="document.getElementById('titleCard').classList.add('has-logo')" onerror="this.remove()">
       <div class="title-logo">NEXUS</div>
@@ -315,6 +318,7 @@
 <script src="script.js"></script>
 <script src="minigames.js"></script>
 <script src="minigames3.js"></script>
+<script src="menumedia.js"></script>
 <script src="gachafx.js"></script>
 <script src="gifts.js"></script>
 <script src="social.js"></script>
