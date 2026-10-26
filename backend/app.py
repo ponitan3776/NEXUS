@@ -770,7 +770,20 @@ def purge_images():
         print(f'purge images error: {err}')
 
 
+SERVER_STARTED_AT = datetime.utcnow()      # このサーバープロセスが起動した時刻(環境変数を変えたら、再起動されるまで反映されない)
 _imgbb_last = {'ok': None, 'msg': '(まだ使われていません)', 'at': None}      # 直近の結果(管理者コマンド /imgbb で見られる)
+
+
+def _test_png(w=48, h=48):
+    """接続テスト用の、小さな本物のPNG(外部ライブラリなし)"""
+    import zlib
+    import struct
+
+    def chunk(tag, body):
+        c = struct.pack('>I', len(body)) + tag + body
+        return c + struct.pack('>I', zlib.crc32(tag + body) & 0xffffffff)
+    rows = b''.join(b'\x00' + b''.join(bytes((int(255 * x / w), int(255 * y / h), 170)) for x in range(w)) for y in range(h))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
 
 def imgbb_upload_ex(data, name, ttl_seconds=None):
@@ -2806,16 +2819,22 @@ def admin_command():
                      f"📅 最終ログイン: {last_login_str}")
 
         elif cmd == '/imgbb':
-            # 1x1 の透明GIF(60秒で消える)を実際に送って、imgBB が使えているか確かめる
-            tiny = base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
-            url, msg = imgbb_upload_ex(tiny, 'nexus-test', 60)
+            # テスト用に、小さな本物のPNG(48x48のグラデーション)を作って、実際に imgBB へ送る。
+            #   ①期限つき(600秒。チャット画像と同じ種類) ②だめなら 期限なし(アイコンと同じ種類)も試して、原因を切り分ける
+            png = _test_png()
+            u1, m1 = imgbb_upload_ex(png, 'nexus-test', 600)
+            u2, m2 = (None, '(①が成功したので省略)') if u1 else imgbb_upload_ex(png, 'nexus-test2', None)
             key_info = (IMGBB_API_KEY[:4] + '…' + IMGBB_API_KEY[-4:] + f'({len(IMGBB_API_KEY)}文字)') if IMGBB_API_KEY else '未設定'
             last = _imgbb_last
             last_s = '(まだ使われていません)' if last['ok'] is None else \
                 f"{'✅' if last['ok'] else '⚠️'} {last['at'].strftime('%m/%d %H:%M:%S')} UTC {last['msg'][:120]}"
+            okay = bool(u1 or u2)
             result = (f"☁️ imgBB 接続テスト\nAPIキー: {key_info}\n使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
-                      f"テスト結果: {'✅ ' if url else '❌ '}{msg}\n直近の実際のアップロード: {last_s}\n"
-                      + ('→ 画像は imgBB に保存されます。' if url else '→ いまは自前保存(サーバーのDB)に切り替わります。'))
+                      f"サーバーの起動: {SERVER_STARTED_AT.strftime('%m/%d %H:%M:%S')} UTC(環境変数を変えたのに、これより前なら、まだ再起動されていません)\n"
+                      f"①期限つき(チャット画像と同じ): {'✅ ' if u1 else '❌ '}{m1}\n"
+                      f"②期限なし(アイコンと同じ): {'✅ ' if u2 else ('➖ ' if u1 else '❌ ')}{m2}\n"
+                      f"直近の実際のアップロード: {last_s}\n"
+                      + ('→ imgBB は使えています。画像は imgBB に保存されます。' if okay else '→ いまは自前保存(サーバーのDB)に切り替わります。'))
 
         elif cmd == '/recovery':
             if not args:
