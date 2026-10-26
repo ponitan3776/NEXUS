@@ -1,7 +1,11 @@
-/* menumedia.css — メニュー(タイトル画面)の画像/動画。サイズは 1278×718(16:9にほぼ同じ) */
+/* menumedia.css — メニュー(タイトル画面)の画像/動画。サイズは 1280×720(16:9) */
 .lobby-hero.has-media{ padding:0; min-height:0; flex:0 0 auto; }
 .lobby-hero.has-media .title-logo, .lobby-hero.has-media .title-sub, .lobby-hero.has-media .title-logo-img{ display:none; }   /* 画像/動画のほうに、ロゴも入れておく */
-.hero-media{ position:relative; width:100%; aspect-ratio:1278 / 718; border-radius:18px; overflow:hidden; background:#120a22;
+.hero-media{ position:relative; width:100%; aspect-ratio:1280 / 720; border-radius:18px; overflow:hidden; background:#120a22;
   border:1px solid var(--gold-line, rgba(255,255,255,.14)); box-shadow:0 14px 40px rgba(0,0,0,.45); }
 .hero-media[hidden]{ display:none; }
 .hero-media > video, .hero-media > img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+.hero-sound{ position:absolute; right:10px; bottom:10px; z-index:2; width:44px; height:44px; border-radius:50%; font-size:20px; line-height:1; cursor:pointer;
+  color:#fff; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.4); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); touch-action:manipulation; }
+.hero-sound:active{ transform:scale(.92); }
+.hero-sound[hidden]{ display:none; }
