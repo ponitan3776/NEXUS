@@ -70,7 +70,16 @@
     { id:'resetuser', group:'👤 ユーザー', icon:'♻️', name:'ユーザーをリセット', desc:'スコア・コイン・スキンを初期化(取り消し不可)', danger:true,
       fields:[ { key:'user', type:'user', label:'対象のユーザー' } ],
       confirm:(v)=> `${v.user} のデータを初期化します。取り消せません。`, run:(v)=> CB().adminCommand(`/resetuser ${v.user}`) },
-    { id:'listusers', group:'👤 ユーザー', icon:'👥', name:'ユーザー一覧(上位20)', desc:'ベストスコア順', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/listusers') },
+    { id:'listusers', group:'👤 ユーザー', icon:'👥', name:'ユーザー一覧(上位20)', desc:'ベストスコア順(ID・表示名つき)', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/listusers') },
+    { id:'recovery', group:'👤 ユーザー', icon:'🔑', name:'復元コードを見る', desc:'そのユーザーのパスワード復元コードと、使用済みかどうか',
+      fields:[ { key:'user', type:'user', label:'対象のユーザー' } ], runLabel:'表示', run:(v)=> CB().adminCommand(`/recovery ${v.user}`) },
+    { id:'recoverylist', group:'👤 ユーザー', icon:'🗝', name:'復元コード一覧', desc:'最近ログインした順に60人ぶん(ID・表示名つき)', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/recoverylist') },
+    { id:'reissue', group:'👤 ユーザー', icon:'🆕', name:'復元コードを再発行', desc:'新しいコードを作る(古いコードは使えなくなる・使用済みも有効に戻る)', danger:true,
+      fields:[ { key:'user', type:'user', label:'対象のユーザー' } ],
+      confirm:(v)=> `${v.user} の復元コードを再発行します。古いコードは使えなくなります。`, run:(v)=> CB().adminCommand(`/reissue ${v.user}`) },
+    { id:'devices', group:'👤 ユーザー', icon:'📱', name:'登録端末を見る / 解除', desc:'端末(HWID)ログインで登録されている端末。解除すると、次回はパスワードが必要',
+      fields:[ { key:'user', type:'user', label:'対象のユーザー' }, { key:'act', type:'choice', label:'操作', options:[['devices', '📱 一覧を見る'], ['revokedevices', '🧹 全部解除']], def:'devices' } ],
+      confirm:(v)=> v.act === 'revokedevices' ? `${v.user} の登録端末を全部解除します。` : null, run:(v)=> CB().adminCommand(`/${v.act} ${v.user}`) },
 
     { id:'announce', group:'📢 お知らせ・投票', icon:'📢', name:'お知らせを配信', desc:'全員に表示されるお知らせ',
       fields:[ { key:'text', type:'text', label:'お知らせの内容', rows:2, max:200, templates:ANN_TEMPLATES } ],
@@ -262,7 +271,7 @@
     const root = begin();
     root.append(backBtn('戻る', ()=> renderForm(cmd)));
     root.append(el('h2', 'adm-h', '👤 ユーザーを選ぶ'));
-    const search = el('input', 'adm-search'); search.type = 'search'; search.placeholder = '🔍 IDで絞り込み(入力は任意)'; root.append(search);
+    const search = el('input', 'adm-search'); search.type = 'search'; search.placeholder = '🔍 IDか表示名で絞り込み(入力は任意)'; root.append(search);
     if(f.all){ const all = el('button', 'adm-user all', '<span class="au-id">🌍 全員</span><span class="au-sub">BANされていない全ユーザー</span>'); all.type = 'button';
       all.addEventListener('click', ()=>{ formState[cmd.id][f.key] = 'all'; renderForm(cmd); }); root.append(all); }
     const list = el('div', 'adm-users'); root.append(list);
@@ -275,7 +284,7 @@
         list.innerHTML = '';
         if(!d.users.length){ list.innerHTML = '<div class="empty-hint">該当するユーザーがいません</div>'; return; }
         d.users.forEach(u=>{
-          const b = el('button', 'adm-user', `<span class="au-id">${esc(u.id)}${u.banned ? ' <em>BAN中</em>' : ''}</span><span class="au-sub">🏆 ${fmt(u.bestScore)} ／ 🪙 ${fmt(u.coins)}</span>`);
+          const b = el('button', 'adm-user', `<span class="au-id">${esc(u.name || u.id)}${u.name ? ` <small>@${esc(u.id)}</small>` : ''}${u.banned ? ' <em>BAN中</em>' : ''}</span><span class="au-sub">🏆 ${fmt(u.bestScore)} ／ 🪙 ${fmt(u.coins)}</span>`);
           b.type = 'button'; b.addEventListener('click', ()=>{ formState[cmd.id][f.key] = u.id; renderForm(cmd); }); list.append(b);
         });
       }catch(e){ if(my === seq) list.innerHTML = `<div class="empty-hint">${esc(e.message)}</div>`; }
@@ -422,7 +431,7 @@
    ===================================================================== */
 (function(){
   'use strict';
-  const TABS = ['tot', 'patch', 'dex', 'stamps', 'community'];
+  const TABS = ['part3', 'tot', 'patch', 'dex', 'stamps', 'community'];
   const RARITY = { common:['ふつう', '#9fb0c8'], rare:['レア', '#5c9dff'], epic:['エピック', '#c25bff'], legendary:['伝説', '#ffc02e'] };
   const KIND_EMO = { candies:'🍬', coins:'🪙', ticket:'🎟', trick:'🤡', dex:'📖', jackpot:'🎰' };
   const fmtTime = (sec)=>{
@@ -617,6 +626,49 @@
     const go = root.querySelector('#hw2GoMini'); if(go) go.addEventListener('click', ()=>{ ctx.closeModal(); if(window.CB && window.CB.hideTitle) window.CB.hideTitle(); if(window.CBMini) window.CBMini.open(); });
   }
 
+  // ---------- 🍪 パート3: おやつタイム & パンプキン・パレード(キャンディが集めやすくなるイベント) ----------
+  let p3Timer = 0;
+  const mmss = (sec)=> { sec = Math.max(0, Math.ceil(sec)); const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), r = sec%60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(r).padStart(2, '0'); };
+  function part3Html(s, ctx){
+    const p = s.part3; if(!p) return '<div class="empty-hint">準備中です</div>';
+    const sn = p.snack, pa = p.parade, top = pa.tiers[pa.tiers.length - 1].need;
+    const ready = pa.tiers.filter(t=> t.reached && !t.claimed).length;
+    const snackLabel = sn.left <= 0 ? '🌙 今日のおやつは全部食べました' : (sn.ready ? `🍪 おやつを食べる 🍬+${sn.candies}` : `⏳ 次のおやつまで ${mmss(sn.waitSec)}`);
+    const tiers = pa.tiers.map(t=>`<div class="hw2-step ${t.claimed ? 'claimed' : (t.reached ? 'ready' : '')}"><div class="st-n">${t.need}<small>回</small></div>
+      <div class="st-r">🍬 ${ctx.fmt(t.candies)}${t.ticket ? ' ＋ 🎟 チケット1枚' : ''}</div>
+      <div class="st-a">${t.claimed ? '<span class="hw-done">済</span>' : (t.reached ? `<button class="claim-btn" data-p3claim="${t.need}" type="button">受け取る</button>` : `<span class="hw-lock">あと${t.need - pa.plays}回</span>`)}</div></div>`).join('');
+    return `<div class="hw2-card"><div class="hw2-ct">🍪 おやつタイム <span class="hw2-tag">${sn.count} / ${sn.max}</span></div>
+        <div class="sub" style="margin-bottom:8px;">2時間ごとに、ただでキャンディがもらえます(1日${sn.max}回まで)。ためておくことはできないので、こまめにどうぞ！</div>
+        <button class="primary-btn" id="hw3Snack" type="button" ${sn.ready ? '' : 'disabled'}>${snackLabel}</button></div>
+      <div class="hw2-card"><div class="hw2-ct">🎪 パンプキン・パレード <span class="hw2-tag">今日 ${pa.plays}回</span></div>
+        <div class="quest-bar-bg"><div class="quest-bar-fill" style="width:${Math.min(100, Math.round(pa.plays / top * 100))}%"></div></div>
+        <div class="sub" style="margin:6px 0 8px;">今日あそんだ回数(ゲーム＋ミニゲーム)に応じて、キャンディがもらえます。毎日リセット！</div>
+        <button class="primary-btn" id="hw3All" type="button" ${ready ? '' : 'disabled'}>まとめて受け取る${ready ? `(${ready}件)` : ''}</button>${tiers}</div>
+      <div class="hw2-card"><div class="hw2-ct">✨ パート3のボーナス</div>
+        <div class="sub">・ミニゲーム1回ごとのおまけが 🍬+10 に増量<br>・さまようおばけが 1日20匹・20秒ごとに<br>・トリック・オア・トリートの無料回数が 1日2回に<br>・デイリー/ウィークリーミッションが6個ずつに<br>・新しいミニゲーム8本(スタンプラリーも26個に)<br>・パート3の期間中は、いつでもキャンディ 1.3倍</div></div>`;
+  }
+  function bindPart3(root, s, ctx){
+    const p = s.part3; if(!p) return;
+    const run = async (url, body)=>{
+      try{ const d = await ctx.api(url, 'POST', body); ctx.applyWallet(d); ctx.sound('win'); await ctx.refresh(`🍬 +${ctx.fmt(d.gained || 0)} もらいました！`); }
+      catch(err){ alert(err.message); }
+    };
+    const sb = root.querySelector('#hw3Snack'); if(sb) sb.addEventListener('click', ()=>{ sb.disabled = true; run('snack/claim'); });
+    root.querySelectorAll('[data-p3claim]').forEach(b=> b.addEventListener('click', ()=> run('parade/claim', { need: +b.dataset.p3claim })));
+    const all = root.querySelector('#hw3All'); if(all) all.addEventListener('click', ()=> run('parade/claim', { all: true }));
+    // 次のおやつまでのカウントダウン
+    clearInterval(p3Timer);
+    if(sb && sb.disabled && p.snack.left > 0){
+      const ends = Date.now() + p.snack.waitSec * 1000;
+      p3Timer = setInterval(()=>{
+        if(!document.body.contains(sb)){ clearInterval(p3Timer); return; }
+        const left = (ends - Date.now()) / 1000;
+        if(left <= 0){ clearInterval(p3Timer); ctx.refresh(); return; }
+        sb.textContent = `⏳ 次のおやつまで ${mmss(left)}`;
+      }, 1000);
+    }
+  }
+
   // ---------- 🌍 みんなでキャンディ大作戦 ----------
   function communityHtml(){ return `<div id="hw2Comm"><div class="empty-hint">読み込み中...</div></div>`; }
   async function bindCommunity(root, s, ctx){
@@ -698,6 +750,7 @@
     has: (tab)=> TABS.includes(tab),
     boostBar, homeTop, guestHtml,
     render(tab, s, ctx){
+      if(tab === 'part3') return part3Html(s, ctx);
       if(tab === 'tot') return totHtml(s, ctx);
       if(tab === 'patch') return patchHtml(s, ctx);
       if(tab === 'dex') return dexHtml(s, ctx);
@@ -707,6 +760,8 @@
     },
     bind(tab, root, s, ctx){
       if(tab !== 'patch') clearInterval(patchTimer);
+      if(tab !== 'part3') clearInterval(p3Timer);
+      if(tab === 'part3') bindPart3(root, s, ctx);
       if(tab === 'tot') bindTot(root, s, ctx);
       else if(tab === 'patch') bindPatch(root, s, ctx);
       else if(tab === 'dex') bindDex(root, s, ctx);
