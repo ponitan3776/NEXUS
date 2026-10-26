@@ -1161,21 +1161,77 @@ const PATTERN_LABELS = {
 
   let pendingMode = currentMode, pendingSize = SIZE;
   let authToken = null;
-  const COOKIE_AUTH = 'nexus_auth';
-  async function saveAuthSession(token, id){
-    try{ setCookie(COOKIE_AUTH, JSON.stringify({token, id}), 30); }catch(err){}
+  const COOKIE_AUTH = 'nexus_auth';              // 旧方式(Cookie)。いまは引っ越し用に読むだけ
+  // ===================== 🔑 ログインの保存(v3.9): Cookie → 端末ID(HWID) =====================
+  // ・ログインのあと、この端末の「端末ID」を作ってサーバーに登録し、秘密のキーをもらう(端末IDはブラウザが乱数で作る)
+  // ・トークンが切れても、Cookieが消えても、この端末ならID+キーで自動ログインできる(サーバーにはキーのハッシュだけ)
+  // ・ログアウトすると、この端末の自動ログインも消える
+  const SESSION_KEY = 'nexus_session', HWID_KEY = 'nexus_hwid';
+  const lsGet = (k)=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } };
+  const lsSet = (k, v)=>{ try{ localStorage.setItem(k, v); }catch(e){} };
+  const lsDel = (k)=>{ try{ localStorage.removeItem(k); }catch(e){} };
+  function idbOpen(){ return new Promise(res=>{ try{ const r = indexedDB.open('nexus-device', 1); r.onupgradeneeded = ()=> r.result.createObjectStore('kv'); r.onsuccess = ()=> res(r.result); r.onerror = ()=> res(null); }catch(e){ res(null); } }); }
+  async function idbGet(k){ const db = await idbOpen(); if(!db) return null; return new Promise(res=>{ try{ const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = ()=> res(q.result || null); q.onerror = ()=> res(null); }catch(e){ res(null); } }); }
+  async function idbSet(k, v){ const db = await idbOpen(); if(!db) return; return new Promise(res=>{ try{ const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = ()=> res(); tx.onerror = ()=> res(); }catch(e){ res(); } }); }
+  const toHex = (buf)=> Array.from(new Uint8Array(buf)).map(b=> b.toString(16).padStart(2, '0')).join('');
+  async function makeFingerprint(){                       // 端末の特徴をまとめたハッシュ(参考情報。これだけではログインできない)
+    try{
+      const raw = [navigator.userAgent, navigator.platform, navigator.language, `${screen.width}x${screen.height}x${screen.colorDepth}`,
+        Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.hardwareConcurrency || '', navigator.deviceMemory || ''].join('|');
+      return toHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw))).slice(0, 32);
+    }catch(e){ return ''; }
   }
-  async function clearAuthSession(){
+  async function getHwid(create){
+    let h = null;
+    try{ h = JSON.parse(lsGet(HWID_KEY) || 'null'); }catch(e){}
+    if(!h || !h.deviceId) h = await idbGet(HWID_KEY);       // localStorage だけ消えても、控えから戻す
+    if((!h || !h.deviceId) && create){ const a = new Uint8Array(16); crypto.getRandomValues(a); h = { deviceId: toHex(a), deviceKey: '' }; }
+    if(h && h.deviceId){ lsSet(HWID_KEY, JSON.stringify(h)); idbSet(HWID_KEY, h); return h; }
+    return null;
+  }
+  async function saveHwid(h){ lsSet(HWID_KEY, JSON.stringify(h)); await idbSet(HWID_KEY, h); }
+  async function registerDevice(){                         // ログイン直後に、この端末を登録してキーをもらう
+    if(!authToken) return;
+    try{
+      const h = await getHwid(true);
+      const r = await fetch(`${API_BASE_URL}/api/device/register`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` },
+        body: JSON.stringify({ deviceId: h.deviceId, fp: await makeFingerprint() }) });
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d.deviceKey){ h.deviceKey = d.deviceKey; await saveHwid(h); }
+    }catch(e){ /* あとで次のログインのときに登録される */ }
+  }
+  async function deviceLogin(hintId){                      // この端末のID+キーで、ログインし直す(成功すると {token,id,...})
+    const h = await getHwid(false);
+    if(!h || !h.deviceKey) return null;
+    try{
+      const r = await fetch(`${API_BASE_URL}/api/device/login`, { method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ deviceId: h.deviceId, deviceKey: h.deviceKey, id: hintId || undefined }) });
+      if(r.status === 401 || r.status === 403){ h.deviceKey = ''; await saveHwid(h); return null; }     // 本当に無効 → キーを捨てる
+      if(!r.ok) return null;                                                                           // サーバーの不調 → キーは残す
+      return await r.json();
+    }catch(e){ return null; }
+  }
+  async function saveAuthSession(token, id){
+    lsSet(SESSION_KEY, JSON.stringify({ token, id }));
+    registerDevice();                                        // 待たなくてよい
+  }
+  async function clearAuthSession(tok){
+    lsDel(SESSION_KEY);
     try{ deleteCookie(COOKIE_AUTH); }catch(err){}
+    const h = await getHwid(false);
+    if(h){
+      if(tok){ try{ await fetch(`${API_BASE_URL}/api/device/logout`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${tok}` }, body: JSON.stringify({ deviceId: h.deviceId }) }); }catch(e){} }
+      h.deviceKey = ''; await saveHwid(h);                   // 端末IDは残し、自動ログインのキーだけ消す
+    }
   }
   async function loadAuthSession(){
-    try{
+    try{ const raw = lsGet(SESSION_KEY); if(raw){ const p = JSON.parse(raw); if(p && p.token) return p; } }catch(err){}
+    try{                                                     // 旧Cookieからの引っ越し(1回だけ)
       const raw = getCookie(COOKIE_AUTH);
-      if(raw){
-        const parsed = JSON.parse(raw);
-        return parsed.token ? parsed : null;
-      }
+      if(raw){ const p = JSON.parse(raw); if(p && p.token){ lsSet(SESSION_KEY, JSON.stringify(p)); deleteCookie(COOKIE_AUTH); return p; } }
     }catch(err){}
+    const d = await deviceLogin();                           // どちらも無ければ、この端末で自動ログイン
+    if(d && d.token){ const p = { token: d.token, id: d.id }; lsSet(SESSION_KEY, JSON.stringify(p)); return p; }
     return null;
   }
   // リロード後も安全にログイン状態を復元する。
@@ -1196,14 +1252,26 @@ const PATTERN_LABELS = {
       const r = await fetch(`${API_BASE_URL}/api/sync`, { headers:{ 'Authorization':`Bearer ${authToken}` }, signal: ctrl.signal });
       clearTimeout(to);
       if(r.status === 401 || r.status === 404){
-        // 本当に無効(期限切れ・アカウント削除)なときだけログアウトする
+        // トークンの期限切れなら、この端末のID(HWID)で自動ログインし直す
+        const dl = await deviceLogin(currentUserId);
+        if(dl && dl.token){
+          authToken = dl.token; currentUserId = dl.id;
+          lsSet(SESSION_KEY, JSON.stringify({ token: dl.token, id: dl.id }));
+          try{
+            const r2 = await fetch(`${API_BASE_URL}/api/sync`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
+            if(r2.ok){ applySyncData(await r2.json()); updateAccountButton(); return true; }
+          }catch(e){ return true; }
+        }
+        // 本当に無効(アカウント削除・BANなど)なときだけログアウトする
+        const oldTok = authToken;
         stopUserSync(); stopPlayTimeTracking();
         authToken = null; currentUserId = null; currentDisplayName = ''; currentIcon = ''; currentLv = null;
-        await clearAuthSession();
+        await clearAuthSession(oldTok);
         updateAccountButton();
         return false;
       }
       if(!r.ok) return true;                       // サーバーの一時的な不調ではログアウトしない
+      { const h = await getHwid(false); if(!h || !h.deviceKey) registerDevice(); }      // 旧Cookieから引っ越した人は、ここで端末を登録
       applySyncData(await r.json());
       updateAccountButton();
       return true;
@@ -3429,10 +3497,11 @@ restartBtn.addEventListener('click', ()=>{
   // ===================== アカウント（修正：ログアウト時に完全リセット） =====================
   function resetToGuest() {
     // ゲスト状態にリセット
+    const oldToken = authToken;
     authToken = null;
     currentUserId = null;
     currentDisplayName = ''; currentIcon = ''; currentLv = null;
-    clearAuthSession();
+    clearAuthSession(oldToken);
     // データ初期化
     bestScores = { soft:0, baked:0, hard:0, extreme:0 };
     best = 0;
@@ -4657,6 +4726,90 @@ restartBtn.addEventListener('click', ()=>{
     } catch (err) { /* 無視 */ }
   }
 
+  // ===================== 🔍 フレンドをさがす(v3.9) =====================
+  // ID でも表示名でも探せる。同じ表示名の人は全員出す。ID が完全一致した人は、いちばん上。入力なしなら、最近ログインした順の一覧
+  function bindFriendFinder(){
+    const input = document.getElementById('friendAddInput'), list = document.getElementById('friendSearchList');
+    if(!input || !list) return;
+    let seq = 0, timer = null, offset = 0, q = '';
+    const rowHtml = (u)=>{
+      const act = u.friend ? `<span class="fs-state">✔ フレンド</span>`
+        : u.requested ? `<span class="fs-state">申請ずみ</span>`
+        : u.incoming ? `<button class="fbtn ok" data-fsaccept="${escapeHtml(u.id)}" type="button">承認</button>`
+        : `<button class="fbtn ok" data-fsreq="${escapeHtml(u.id)}" type="button">申請</button>`;
+      return `<div class="fs-row"><span class="fs-who" data-showprofile="${escapeHtml(u.id)}">${whoHtml(u, 'id', 30)}<small class="fid">@${escapeHtml(u.id)}</small></span>${act}</div>`;
+    };
+    async function load(reset){
+      const my = ++seq;
+      if(reset){ offset = 0; list.innerHTML = '<div class="empty-hint">読み込み中...</div>'; }
+      list.hidden = false;
+      try{
+        const r = await fetch(`${API_BASE_URL}/api/users/search?q=${encodeURIComponent(q)}&offset=${offset}`, { headers:{ 'Authorization':`Bearer ${authToken}` } });
+        const d = await r.json();
+        if(my !== seq) return;
+        if(!r.ok) throw new Error(d.error || '読み込みに失敗しました');
+        rememberNames(d.users);
+        if(reset) list.innerHTML = '';
+        list.querySelectorAll('.fs-more').forEach(e=> e.remove());
+        if(!d.users.length && reset){ list.innerHTML = '<div class="empty-hint">該当するユーザーがいません</div>'; return; }
+        if(reset) list.insertAdjacentHTML('beforeend', `<div class="fs-head">${q ? `「${escapeHtml(q)}」の検索結果` : 'ユーザー一覧(最近ログインした順)'}</div>`);
+        list.insertAdjacentHTML('beforeend', d.users.map(rowHtml).join(''));
+        offset += d.users.length;
+        if(d.more) list.insertAdjacentHTML('beforeend', '<button class="fs-more fbtn" type="button">もっと見る</button>');
+      }catch(err){ if(my === seq) list.innerHTML = `<div class="empty-hint">${escapeHtml(err.message)}</div>`; }
+    }
+    input.addEventListener('focus', ()=>{ if(list.hidden) load(true); });
+    input.addEventListener('input', ()=>{ clearTimeout(timer); timer = setTimeout(()=>{ q = input.value.trim(); load(true); }, 250); });
+    list.addEventListener('click', async (e)=>{
+      const more = e.target.closest('.fs-more'); if(more){ load(false); return; }
+      const req = e.target.closest('[data-fsreq]');
+      if(req){
+        req.disabled = true; req.textContent = '...';
+        try{
+          const r = await fetch(`${API_BASE_URL}/api/friends/request`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` }, body: JSON.stringify({ toId: req.dataset.fsreq }) });
+          const d = await r.json(); if(!r.ok) throw new Error(d.error || '申請に失敗しました');
+          req.outerHTML = `<span class="fs-state">${d.autoAccepted ? '✔ フレンドになりました！' : '申請しました'}</span>`;
+          fetchFriendsData();
+        }catch(err){ alert(err.message); req.disabled = false; req.textContent = '申請'; }
+        return;
+      }
+      const acc = e.target.closest('[data-fsaccept]');
+      if(acc){ await respondFriendRequest(acc.dataset.fsaccept, 'accept'); }
+    });
+  }
+
+  // ===================== 🎁 フレンドにギフト(v3.9) =====================
+  function openPlayerGift(friendId){
+    if(!authToken){ alert('ログインが必要です'); return; }
+    const c = cardOf(friendId);
+    const ov = document.createElement('div'); ov.className = 'pg-overlay';
+    ov.innerHTML = `<div class="pg-card" role="dialog" aria-modal="true">
+      <div class="pg-title">🎁 ${whoHtml(c, 'id', 28)} にギフト</div>
+      <div class="pg-sub">コインを贈れます(あなたのコインから引かれます)。<br>1回 最大 10,000 ／ 24時間で 10回・合計 30,000 まで。</div>
+      <div class="pg-quick">${[100, 500, 1000, 5000].map(n=>`<button type="button" class="fbtn" data-q="${n}">${n.toLocaleString()}</button>`).join('')}</div>
+      <input type="number" id="pgCoins" class="fs-input" min="1" max="10000" inputmode="numeric" placeholder="コインの数" value="500">
+      <input type="text" id="pgMsg" class="fs-input" maxlength="100" placeholder="メッセージ(任意)">
+      <div class="pg-err" id="pgErr" hidden></div>
+      <div class="pg-btns"><button type="button" class="fbtn" id="pgCancel">キャンセル</button><button type="button" class="primary-btn" id="pgSend">贈る</button></div></div>`;
+    document.body.appendChild(ov);
+    const q = (id)=> ov.querySelector(id);
+    const close = ()=> ov.remove();
+    ov.addEventListener('click', (e)=>{ if(e.target === ov) close(); });
+    q('#pgCancel').addEventListener('click', close);
+    ov.querySelectorAll('[data-q]').forEach(b=> b.addEventListener('click', ()=>{ q('#pgCoins').value = b.dataset.q; }));
+    q('#pgSend').addEventListener('click', async ()=>{
+      const n = parseInt(q('#pgCoins').value, 10), err = q('#pgErr');
+      if(!(n >= 1)){ err.textContent = 'コインの数を入れてください'; err.hidden = false; return; }
+      if(!confirm(`${c.name || friendId} さんに 🪙${n.toLocaleString()} を贈ります。よろしいですか？`)) return;
+      const btn = q('#pgSend'); btn.disabled = true; btn.textContent = '送信中...'; err.hidden = true;
+      try{
+        const d = await authPost('/api/gifts/send', { to: friendId, coins: n, message: q('#pgMsg').value.trim() });
+        if(d.coins != null){ coins = d.coins; updateCoinUI(); }
+        close(); showEventToast(`🎁 ${c.name || friendId} さんに 🪙${n.toLocaleString()} を贈りました！`);
+      }catch(e){ err.textContent = e.message || '贈れませんでした'; err.hidden = false; btn.disabled = false; btn.textContent = '贈る'; }
+    });
+  }
+
   async function sendFriendRequest(toId){
     if (!authToken) { alert('ログインが必要です'); return; }
     if (!toId) return;
@@ -4835,12 +4988,12 @@ restartBtn.addEventListener('click', ()=>{
 
     if (tab === 'friends') {
       html += `
-        <div class="friend-add-row">
-          <input type="text" id="friendAddInput" placeholder="ユーザーIDでフレンド申請...">
-          <button class="primary-btn" id="friendAddBtn" style="width:auto; margin:0; padding:10px 16px;">申請</button>
+        <div class="fs-box">
+          <input type="search" id="friendAddInput" class="fs-input" placeholder="🔍 ID・表示名でさがして、フレンド申請" autocomplete="off" enterkeyhint="search">
+          <div id="friendSearchList" class="fs-list" hidden></div>
         </div>`;
       if (friendsList.length === 0) {
-        html += `<div class="empty-hint">まだフレンドがいません。上の欄にIDを入力して申請しましょう。</div>`;
+        html += `<div class="empty-hint">まだフレンドがいません。上の欄をタップすると、ユーザー一覧が出ます。IDでも表示名でも探せます。</div>`;
       } else {
         friendsList.forEach(f => {
           const unread = dmPerFriendUnread[f.id] || 0;
@@ -4852,6 +5005,7 @@ restartBtn.addEventListener('click', ()=>{
               <span class="fsub">${f.online ? '🟢 オンライン' : 'オフライン'}</span>
               <button class="fbtn" data-challenge="${f.id}" data-game="candy">🍬 対決</button>
               <button class="fbtn" data-challenge="${f.id}" data-game="tetris">🧱 対決</button>
+              <button class="fbtn gift" data-giftfriend="${f.id}">🎁 ギフト</button>
               <button class="fbtn remove" data-removefriend="${f.id}">削除</button>
             </div>`;
         });
@@ -4943,16 +5097,10 @@ restartBtn.addEventListener('click', ()=>{
         renderFriendsModal(btn.dataset.ftab);
       });
     });
-    const addBtn = document.getElementById('friendAddBtn');
-    if (addBtn) {
-      addBtn.addEventListener('click', () => {
-        const input = document.getElementById('friendAddInput');
-        const val = input.value.trim();
-        if (!val) return;
-        sendFriendRequest(val);
-        input.value = '';
-      });
-    }
+    bindFriendFinder();
+    modalContent.querySelectorAll('[data-giftfriend]').forEach(el => {
+      el.addEventListener('click', () => openPlayerGift(el.dataset.giftfriend));
+    });
     modalContent.querySelectorAll('[data-showprofile]').forEach(el => {
       el.addEventListener('click', () => showProfile(el.dataset.showprofile));
     });
@@ -6738,6 +6886,17 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'3.9.0', date:'2026-10-26', items:[
+      '🎃 ハロウィン パート3！ 新タブ「🍪 パート3」: 2時間ごとにもらえる「おやつタイム」と、今日あそんだ回数で報酬が増える「パンプキン・パレード」。期間中はキャンディ常時1.3倍',
+      '🍬 キャンディが集めやすく: ミニゲームのおまけ+10・さまようおばけ1日20匹・ドアの無料回数2回・図鑑の出会い率UP。デイリー/ウィークリーのミッションが6個ずつに',
+      '🕹 新しいミニゲームを8本追加(おばけ10秒れんだ / ぴったりストップ / ぴったり5秒 / ちがうのはどれ？ / おばけ仕分け / ハイ＆ロー / おばけじゃんけん / かぼちゃ数え)。スタンプラリーは26個に',
+      '🎁 フレンドにコインのギフトが贈れるように(フレンド一覧の「🎁 ギフト」。1回1万まで・24時間で3万まで)',
+      '🎁 ギフトの画面に ✕ ボタン(受け取らずに閉じられます)と「まとめて受け取る」を追加',
+      '🔍 フレンド申請を、ID・表示名で探せるユーザー一覧に変更。同じ表示名の人も全員出て、IDが一致した人が一番上に出ます',
+      '🔑 ログインの保存を、Cookieから「端末ID(HWID)」方式に変更。ログインが7日で切れにくくなりました(ログアウトすると、この端末の自動ログインも消えます)',
+      '🖼 画像の保存先を imgBB に(アイコン・チャット画像)。imgBB が使えないときは、これまで通りサーバーに保存します',
+      '🎲 週替わりチャレンジの1位報酬を 50,000 コインに増額'
+    ]},
     { version:'3.8.0', date:'2026-10-25', items:[
       '🖼 アイコンを設定できるように。絵文字+色から選ぶか、手持ちの画像をアップロード(自動で小さくします)。ランキング・チャット・フレンドなどに表示されます',
       '📷 チャットに画像を送れるように。送る前に自動で小さくし、画像は3日たつと自動で消えます(メッセージは残ります)',
@@ -7149,7 +7308,7 @@ function renderOtherGamesModal(){
   }
 
   // [キー, '絵文字 名前', NEWバッジ] — 受け取れるものがあるタブには、サーバーの badges で赤丸が付く
-  const HW_TABS = [['home','🏠 ホーム'],['road','🛤 ロード'],['missions','📋 ミッション'],['tot','🚪 ドア',1],['patch','🌱 畑',1],['dex','📖 図鑑',1],['stamps','🎪 スタンプ',1],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['community','🌍 みんなで',1],['ranking','🏆 ランキング']];
+  const HW_TABS = [['home','🏠 ホーム'],['part3','🍪 パート3',1],['road','🛤 ロード'],['missions','📋 ミッション'],['tot','🚪 ドア',1],['patch','🌱 畑',1],['dex','📖 図鑑',1],['stamps','🎪 スタンプ',1],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['community','🌍 みんなで',1],['ranking','🏆 ランキング']];
   let hwTimerHandle = null;
 
   function renderHalloween(extraHtml){
