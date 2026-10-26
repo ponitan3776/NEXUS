@@ -770,25 +770,43 @@ def purge_images():
         print(f'purge images error: {err}')
 
 
-def imgbb_upload(data, name, ttl_seconds=None):
-    """imgBB にアップロードして画像のURLを返す。使えない・失敗したときは None(呼び出し側が自前保存に切り替える)"""
-    if not (IMGBB_API_KEY and IMG_USE_IMGBB):
-        return None
+_imgbb_last = {'ok': None, 'msg': '(まだ使われていません)', 'at': None}      # 直近の結果(管理者コマンド /imgbb で見られる)
+
+
+def imgbb_upload_ex(data, name, ttl_seconds=None):
+    """imgBB にアップロードする。(URL か None, 結果の説明) を返す。
+    imgBB の呼び出し例と同じ形: key と expiration は URL(クエリ)、画像は multipart のフォーム(--form image=...)で POST"""
+    if not IMGBB_API_KEY:
+        return None, 'IMGBB_API_KEY が空です(Renderの環境変数に入れてください)'
+    if not IMG_USE_IMGBB:
+        return None, 'IMG_USE_IMGBB=0 のため、imgBB は使いません'
     try:
-        payload = {'key': IMGBB_API_KEY, 'image': base64.b64encode(data).decode('ascii'), 'name': name}
+        params = {'key': IMGBB_API_KEY}
         if ttl_seconds:
-            payload['expiration'] = str(max(60, min(int(ttl_seconds), 15552000)))     # imgBB の範囲: 60秒〜180日
-        r = requests.post(IMGBB_ENDPOINT, data=payload, timeout=(5, 15))
-        j = r.json() if r.content else {}
+            params['expiration'] = str(max(60, min(int(ttl_seconds), 15552000)))     # imgBB の範囲: 60秒〜180日
+        files = {'image': (None, base64.b64encode(data).decode('ascii')), 'name': (None, name)}
+        r = requests.post(IMGBB_ENDPOINT, params=params, files=files, timeout=(5, 15))
+        try:
+            j = r.json()
+        except ValueError:
+            j = {}
         if r.status_code == 200 and j.get('success'):
             d = j.get('data') or {}
             url = d.get('url') or d.get('display_url')
             if url and url.startswith('https://'):
-                return url
-        print(f"imgBB upload failed: status={r.status_code} body={(r.text or '')[:200]}")
+                return url, f'成功 (HTTP 200) {url}'
+        err = (j.get('error') or {}).get('message') if isinstance(j.get('error'), dict) else None
+        return None, f"失敗 (HTTP {r.status_code}) {err or (r.text or '')[:160]}"
     except Exception as err:
-        print(f'imgBB upload error: {err}')
-    return None
+        return None, f'通信エラー: {err}'
+
+
+def imgbb_upload(data, name, ttl_seconds=None):
+    """imgBB にアップロードして画像のURLを返す。使えない・失敗したときは None(呼び出し側が自前保存に切り替える)"""
+    url, msg = imgbb_upload_ex(data, name, ttl_seconds)
+    _imgbb_last.update({'ok': bool(url), 'msg': msg, 'at': datetime.utcnow()})
+    print(('☁️ imgBB OK: ' if url else '⚠️ imgBB 失敗 → 自前保存に切り替え: ') + msg)
+    return url
 
 
 @app.post('/api/img/upload')
@@ -2786,6 +2804,18 @@ def admin_command():
                      f"🪙 コイン: {u['coins']}\n⏱️ プレイ時間: {u.get('play_time') or 0}秒\n"
                      f"🚫 BAN: {'BAN中' if u.get('banned') else 'なし'}\n📅 作成日: {created_str}\n"
                      f"📅 最終ログイン: {last_login_str}")
+
+        elif cmd == '/imgbb':
+            # 1x1 の透明GIF(60秒で消える)を実際に送って、imgBB が使えているか確かめる
+            tiny = base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+            url, msg = imgbb_upload_ex(tiny, 'nexus-test', 60)
+            key_info = (IMGBB_API_KEY[:4] + '…' + IMGBB_API_KEY[-4:] + f'({len(IMGBB_API_KEY)}文字)') if IMGBB_API_KEY else '未設定'
+            last = _imgbb_last
+            last_s = '(まだ使われていません)' if last['ok'] is None else \
+                f"{'✅' if last['ok'] else '⚠️'} {last['at'].strftime('%m/%d %H:%M:%S')} UTC {last['msg'][:120]}"
+            result = (f"☁️ imgBB 接続テスト\nAPIキー: {key_info}\n使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
+                      f"テスト結果: {'✅ ' if url else '❌ '}{msg}\n直近の実際のアップロード: {last_s}\n"
+                      + ('→ 画像は imgBB に保存されます。' if url else '→ いまは自前保存(サーバーのDB)に切り替わります。'))
 
         elif cmd == '/recovery':
             if not args:
