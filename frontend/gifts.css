@@ -81,3 +81,10 @@
 
 .gx-spark{ position:absolute; left:50%; top:46%; width:9px; height:9px; z-index:9; pointer-events:none; border-radius:50%; animation:confFly 1.4s cubic-bezier(.2,.7,.3,1) forwards; }
 @media (max-height:640px){ .gx-stage{ min-height:0; } .gx-box{ transform:scale(.82); margin:0 0 10px; } }
+
+/* ✕ で閉じる・まとめて受け取り (v3.9) */
+.gx-x{ position:absolute; top:max(14px, env(safe-area-inset-top)); right:14px; z-index:8; width:44px; height:44px; border-radius:50%; font-size:20px; line-height:1;
+  color:#fff; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.4); cursor:pointer; }
+.gx-x:active{ transform:scale(.92); }
+.gx-btns{ display:flex; flex-direction:column; gap:8px; }
+.gx-all{ min-height:46px; font-size:14px; color:var(--text, #fff); background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.4); }
