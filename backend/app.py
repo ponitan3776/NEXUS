@@ -12,6 +12,8 @@ import base64
 import random
 import string
 import secrets
+import hashlib
+import hmac
 import threading
 import time
 import gzip
@@ -24,7 +26,7 @@ import jwt
 import bcrypt
 import requests
 import psycopg2
-from flask import Flask, request, jsonify, g, has_request_context
+from flask import Flask, request, jsonify, g, has_request_context, redirect
 from flask_cors import CORS
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import RealDictCursor
@@ -464,6 +466,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         CREATE INDEX IF NOT EXISTS idx_images_kind_created ON images(kind, created_at);
         CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner, kind);
         ALTER TABLE images ENABLE ROW LEVEL SECURITY;
+        -- v3.9: imgBB に置いた画像は url だけを持つ(data は空)。imgBB が使えないときは、これまで通り data に入れる
+        ALTER TABLE images ADD COLUMN IF NOT EXISTS url TEXT;
+        ALTER TABLE images ALTER COLUMN data DROP NOT NULL;
+    """)
+    # 🔑 端末(HWID)ログイン: 端末ごとのIDと秘密のキー(キーはハッシュだけを保存)
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            device_id TEXT NOT NULL, user_id TEXT NOT NULL, key_hash TEXT NOT NULL, fp TEXT, ua TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(), last_used TIMESTAMP NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (device_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, last_used);
+        ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
     """)
     # 📮 サポートチャット(ご要望・不具合報告ごとの、運営との専用チャット)
     db_execute("""
@@ -629,7 +644,7 @@ GACHA_MISS_COINS = 30
 
 BATTLEPASS_XP_PER_LEVEL = 1000
 BATTLEPASS_CYCLE_LENGTH = 10
-WEEKLY_CHALLENGE_REWARD = 1500
+WEEKLY_CHALLENGE_REWARD = 50000
 
 
 def battle_pass_reward_for_level(level):
@@ -699,6 +714,12 @@ def handle_api_error(err):
 #   ② サーバー側でも上限を確認(ICON_MAX_BYTES / CHAT_IMG_MAX_BYTES を超えたら受け付けない)
 #   ③ チャット画像は IMG_CHAT_TTL_HOURS 時間たつと自動で消える。全体でも 件数・合計サイズ の上限があり、超えると古い順に消える
 #   ④ アイコンは1人1枚(新しく設定すると古いのは消える)。プリセット(絵文字)のアイコンは画像を使わない=容量ゼロ
+#   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Renderの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
+#      キーが空、または imgBB が落ちている/失敗したときは、これまで通りサーバーのDBに保存する(下の「自前保存」)。
+#      IMG_USE_IMGBB=0 にすると、キーがあっても imgBB を使わない(手動で切り替えたいとき)。
+IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY', '').strip()
+IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1') != '0'
+IMGBB_ENDPOINT = 'https://api.imgbb.com/1/upload'
 ICON_MAX_BYTES = 24_000
 CHAT_IMG_MAX_BYTES = 150_000
 IMG_CHAT_ENABLED = True                    # False にすると、チャットへの画像送信を止められる(荒れたとき用)
@@ -741,12 +762,33 @@ def purge_images():
                  [now - timedelta(hours=1)])
         db_query("DELETE FROM images WHERE kind = 'icon' AND owner NOT IN (SELECT id FROM users) RETURNING id")
         for _ in range(20):
-            r = db_query("SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM images WHERE kind = 'chat'")[0]
+            r = db_query("SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM images WHERE kind = 'chat' AND url IS NULL")[0]
             if int(r['c']) <= IMG_CHAT_MAX_COUNT and int(r['s']) <= IMG_CHAT_MAX_TOTAL_BYTES:
                 break
-            db_query("DELETE FROM images WHERE id IN (SELECT id FROM images WHERE kind = 'chat' ORDER BY created_at ASC LIMIT 20) RETURNING id")
+            db_query("DELETE FROM images WHERE id IN (SELECT id FROM images WHERE kind = 'chat' AND url IS NULL ORDER BY created_at ASC LIMIT 20) RETURNING id")
     except Exception as err:
         print(f'purge images error: {err}')
+
+
+def imgbb_upload(data, name, ttl_seconds=None):
+    """imgBB にアップロードして画像のURLを返す。使えない・失敗したときは None(呼び出し側が自前保存に切り替える)"""
+    if not (IMGBB_API_KEY and IMG_USE_IMGBB):
+        return None
+    try:
+        payload = {'key': IMGBB_API_KEY, 'image': base64.b64encode(data).decode('ascii'), 'name': name}
+        if ttl_seconds:
+            payload['expiration'] = str(max(60, min(int(ttl_seconds), 15552000)))     # imgBB の範囲: 60秒〜180日
+        r = requests.post(IMGBB_ENDPOINT, data=payload, timeout=(5, 15))
+        j = r.json() if r.content else {}
+        if r.status_code == 200 and j.get('success'):
+            d = j.get('data') or {}
+            url = d.get('url') or d.get('display_url')
+            if url and url.startswith('https://'):
+                return url
+        print(f"imgBB upload failed: status={r.status_code} body={(r.text or '')[:200]}")
+    except Exception as err:
+        print(f'imgBB upload error: {err}')
+    return None
 
 
 @app.post('/api/img/upload')
@@ -771,15 +813,22 @@ def img_upload():
             raise ApiError('この形式の画像は使えません(WebP / JPEG のみ)', 400)
         _img_rate_check(user_id, kind)
         img_id = secrets.token_hex(8)
-        db_execute('INSERT INTO images (id, owner, kind, mime, size, data, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                   [img_id, user_id, kind, mime, len(data), psycopg2.Binary(data), datetime.utcnow()])
+        ttl = IMG_CHAT_TTL_HOURS * 3600 if kind == 'chat' else None            # チャット画像は imgBB 側でも期限つき
+        url = imgbb_upload(data, f'{kind}-{img_id}', ttl)
+        host = 'imgbb' if url else 'local'
+        if url:                                                                 # imgBB に置けた → DBには URL だけ
+            db_execute('INSERT INTO images (id, owner, kind, mime, size, data, url, created_at) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)',
+                       [img_id, user_id, kind, mime, len(data), url, datetime.utcnow()])
+        else:                                                                   # 自前保存(imgBB が使えないときの予備)
+            db_execute('INSERT INTO images (id, owner, kind, mime, size, data, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                       [img_id, user_id, kind, mime, len(data), psycopg2.Binary(data), datetime.utcnow()])
         if kind == 'icon':
             db_execute('UPDATE users SET icon = %s WHERE id = %s', [f'i:{img_id}', user_id])
             db_execute("DELETE FROM images WHERE owner = %s AND kind = 'icon' AND id <> %s", [user_id, img_id])     # 古いアイコンは消す
             cache_drop('chat:', 'rank:')
         else:
             purge_images()
-        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data)})
+        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data), 'host': host})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
@@ -792,8 +841,14 @@ def img_get(img_id):
     if not re.match(r'^[0-9a-f]{16}$', img_id or ''):
         return jsonify({'error': 'not found'}), 404
     try:
-        rows = db_query('SELECT mime, data FROM images WHERE id = %s', [img_id])
+        rows = db_query('SELECT mime, data, url FROM images WHERE id = %s', [img_id])
         if not rows:
+            return jsonify({'error': 'not found'}), 404
+        if rows[0].get('url'):                                                    # imgBB の画像 → そちらへ案内(1日はブラウザが覚える)
+            resp = redirect(rows[0]['url'], code=302)
+            resp.headers['Cache-Control'] = 'public, max-age=86400'
+            return resp
+        if rows[0].get('data') is None:
             return jsonify({'error': 'not found'}), 404
         resp = app.response_class(bytes(rows[0]['data']), mimetype=rows[0]['mime'])
         resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'      # 画像のIDは作り直すたびに変わるので、ずっと使い回してOK
@@ -1048,11 +1103,11 @@ USER_ID_COLUMNS = [
     ('duels', 'challenger_id'), ('duels', 'opponent_id'), ('weekly_challenge_scores', 'user_id'),
     ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('polls', 'created_by'),
     ('gifts', 'to_user'), ('gifts', 'from_user'), ('daily_bonus', 'user_id'),
-    ('images', 'owner'), ('support_threads', 'user_id'),
+    ('images', 'owner'), ('support_threads', 'user_id'), ('devices', 'user_id'),
 ]
 # 新しいIDに「持ち主のいない古いデータ」(アカウント削除の残り)があると重複エラーになる表は、先に片付ける
 ORPHAN_PURGE = [('friend_requests', 'from_id'), ('friend_requests', 'to_id'), ('friends', 'user_id'), ('friends', 'friend_id'),
-                ('weekly_challenge_scores', 'user_id'), ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('daily_bonus', 'user_id')]
+                ('weekly_challenge_scores', 'user_id'), ('mini_scores', 'user_id'), ('poll_votes', 'user_id'), ('daily_bonus', 'user_id'), ('devices', 'user_id')]
 
 
 def rename_user(cur, old_id, new_id):
@@ -1291,6 +1346,106 @@ def login():
     except Exception as err:
         print(err)
         return jsonify({'error': 'サーバーエラー'}), 500
+
+
+# ===================== 🔑 端末(HWID)ログイン (v3.9) =====================
+# Cookie の代わりに、端末ごとの「端末ID(HWID)+秘密のキー」でログインを保存する。
+#   ・端末IDはブラウザが1回だけ作る(ブラウザはパソコンのシリアル番号などの本当のハードウェアIDを読めないため、乱数で作る)
+#   ・秘密のキーは、ログインのあとサーバーが発行する。サーバーにはハッシュだけを保存する(端末IDだけでは入れない)
+#   ・トークン(7日)が切れても、この端末なら自動でログインし直せる。ログアウトすると、この端末の登録も消える
+#   ・1アカウントにつき最大8台(古い順に外れる)。管理者コマンド /devices・/revokedevices で確認・解除できる
+DEVICE_MAX_PER_USER = 8
+_DEVICE_ID_RE = re.compile(r'^[0-9a-f]{32,64}$')
+_device_hits = {}
+
+
+def _hash_key(key):
+    return hashlib.sha256((key or '').encode('utf-8')).hexdigest()
+
+
+def _client_ip():
+    return (request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or request.remote_addr or '?')
+
+
+def _device_rate(key, limit=20, window=60):
+    now = time.time()
+    hits = [t for t in _device_hits.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        raise ApiError('しばらく待ってからお試しください', 429)
+    hits.append(now)
+    _device_hits[key] = hits
+    if len(_device_hits) > 5000:
+        _device_hits.clear()
+
+
+@app.post('/api/device/register')
+def device_register():
+    """ログイン直後に呼ぶ。この端末を登録して、秘密のキーを1回だけ返す"""
+    try:
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        device_id = str(b.get('deviceId') or '').lower()
+        if not _DEVICE_ID_RE.match(device_id):
+            raise ApiError('端末IDが不正です', 400)
+        _device_rate('reg:' + user_id)
+        key = secrets.token_urlsafe(32)
+        db_execute("""INSERT INTO devices (device_id, user_id, key_hash, fp, ua) VALUES (%s, %s, %s, %s, %s)
+                      ON CONFLICT (device_id, user_id) DO UPDATE SET key_hash = EXCLUDED.key_hash, fp = EXCLUDED.fp, ua = EXCLUDED.ua, last_used = NOW()""",
+                   [device_id, user_id, _hash_key(key), str(b.get('fp') or '')[:64], (request.headers.get('User-Agent') or '')[:200]])
+        db_execute("""DELETE FROM devices WHERE user_id = %s AND device_id NOT IN
+                      (SELECT device_id FROM devices WHERE user_id = %s ORDER BY last_used DESC LIMIT %s)""",
+                   [user_id, user_id, DEVICE_MAX_PER_USER])
+        return jsonify({'ok': True, 'deviceKey': key})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        print(f'device register error: {err}')
+        return jsonify({'error': 'サーバーエラー'}), 500
+
+
+@app.post('/api/device/login')
+def device_login():
+    """トークンが切れたとき・Cookieが消えたときに、端末ID+キーでログインし直す"""
+    try:
+        b = request.get_json(silent=True) or {}
+        device_id, key, hint = str(b.get('deviceId') or '').lower(), str(b.get('deviceKey') or ''), str(b.get('id') or '')
+        if not _DEVICE_ID_RE.match(device_id) or not key:
+            raise ApiError('端末の認証情報がありません', 401)
+        _device_rate('ip:' + _client_ip(), 60)
+        _device_rate('dev:' + device_id)
+        rows = db_query('SELECT user_id, key_hash FROM devices WHERE device_id = %s', [device_id])
+        want = _hash_key(key)
+        match = next((r for r in rows if hmac.compare_digest(r['key_hash'], want) and (not hint or r['user_id'] == hint)), None)
+        if not match:
+            raise ApiError('この端末のログインは無効になりました。もう一度ログインしてください', 401)
+        users = db_query('SELECT * FROM users WHERE id = %s', [match['user_id']])
+        if not users:
+            raise ApiError('アカウントが見つかりません', 401)
+        u = users[0]
+        if u.get('banned'):
+            raise ApiError('このアカウントはBANされています', 403)
+        db_execute('UPDATE devices SET last_used = NOW() WHERE device_id = %s AND user_id = %s', [device_id, u['id']])
+        db_execute('UPDATE users SET last_login = NOW() WHERE id = %s', [u['id']])
+        return jsonify({'token': make_token(u['id']), 'id': u['id'], 'displayName': u.get('display_name') or '',
+                        'icon': u.get('icon') or '', 'lv': bp_level_of(u.get('battlepass_xp'))})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        print(f'device login error: {err}')
+        return jsonify({'error': 'サーバーエラー'}), 500
+
+
+@app.post('/api/device/logout')
+def device_logout():
+    """ログアウトしたとき、この端末の自動ログインを消す"""
+    try:
+        user_id = require_auth()
+        device_id = str((request.get_json(silent=True) or {}).get('deviceId') or '').lower()
+        if _DEVICE_ID_RE.match(device_id):
+            db_execute('DELETE FROM devices WHERE device_id = %s AND user_id = %s', [device_id, user_id])
+        return jsonify({'ok': True})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
 
 
 # ===================== パスワード復元 =====================
@@ -2137,6 +2292,7 @@ def quests_claim():
 def account_delete():
     try:
         user_id = require_auth()
+        db_execute('DELETE FROM devices WHERE user_id = %s', [user_id])
         db_execute('DELETE FROM users WHERE id = %s', [user_id])
         try:                                                    # 画像・サポートチャットも一緒に消す
             db_execute('DELETE FROM images WHERE owner = %s', [user_id])
@@ -2150,6 +2306,56 @@ def account_delete():
 
 
 # ===================== 🆕 フレンドAPI =====================
+@app.get('/api/users/search')
+def users_search():
+    """フレンド申請用のユーザー一覧/検索(v3.9)。IDにも表示名にも当てはまる。表示名が同じ人は全員出す。
+    並び: ①IDが完全一致 → ②表示名が完全一致 → ③IDの前方一致 → ④表示名の前方一致 → ⑤IDの部分一致 → ⑥表示名の部分一致"""
+    try:
+        user_id = require_auth()
+        q = (request.args.get('q') or '').strip()[:30]
+        try:
+            offset = max(0, min(int(request.args.get('offset') or 0), 2000))
+        except ValueError:
+            offset = 0
+        if q:
+            esc = re.sub(r'([%_\\])', r'\\\1', q)
+            pre, con = esc + '%', '%' + esc + '%'
+            rows = db_query("""
+                SELECT id, display_name, icon, battlepass_xp,
+                  CASE WHEN LOWER(id) = LOWER(%s) THEN 0
+                       WHEN LOWER(COALESCE(display_name, '')) = LOWER(%s) THEN 1
+                       WHEN id ILIKE %s THEN 2
+                       WHEN COALESCE(display_name, '') ILIKE %s THEN 3
+                       WHEN id ILIKE %s THEN 4 ELSE 5 END AS rk
+                FROM users
+                WHERE COALESCE(banned, FALSE) = FALSE AND id <> %s AND (id ILIKE %s OR COALESCE(display_name, '') ILIKE %s)
+                ORDER BY rk, last_login DESC NULLS LAST, id ASC LIMIT 31 OFFSET %s""",
+                [q, q, pre, pre, con, user_id, con, con, offset])
+        else:
+            rows = db_query("""
+                SELECT id, display_name, icon, battlepass_xp FROM users
+                WHERE COALESCE(banned, FALSE) = FALSE AND id <> %s
+                ORDER BY last_login DESC NULLS LAST, id ASC LIMIT 31 OFFSET %s""", [user_id, offset])
+        more = len(rows) > 30
+        rows = rows[:30]
+        ids = [r['id'] for r in rows]
+        friends, sent, incoming = set(), set(), set()
+        if ids:
+            friends = {r['friend_id'] for r in db_query('SELECT friend_id FROM friends WHERE user_id = %s AND friend_id = ANY(%s)', [user_id, ids])}
+            for r in db_query("SELECT from_id, to_id FROM friend_requests WHERE status = 'pending' AND ((from_id = %s AND to_id = ANY(%s)) OR (to_id = %s AND from_id = ANY(%s)))",
+                              [user_id, ids, user_id, ids]):
+                (sent if r['from_id'] == user_id else incoming).add(r['to_id'] if r['from_id'] == user_id else r['from_id'])
+        return jsonify({'users': [{'id': r['id'], 'name': r.get('display_name') or '', 'icon': r.get('icon') or '',
+                                   'lv': bp_level_of(r.get('battlepass_xp')), 'friend': r['id'] in friends,
+                                   'requested': r['id'] in sent, 'incoming': r['id'] in incoming} for r in rows],
+                        'more': more, 'offset': offset})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
+    except Exception as err:
+        print(f'users search error: {err}')
+        return jsonify({'error': 'サーバーエラー'}), 500
+
+
 @app.post('/api/friends/request')
 def friends_request():
     try:
@@ -2561,9 +2767,9 @@ def admin_command():
             result = f'✅ {target_id} のデータをリセットしました。'
 
         elif cmd == '/listusers':
-            rows = db_query('SELECT id, best_score, coins, play_time FROM users ORDER BY best_score DESC LIMIT 20')
+            rows = db_query('SELECT id, display_name, best_score, coins, play_time FROM users ORDER BY best_score DESC LIMIT 20')
             result = '📊 ユーザー一覧 (TOP20):\n' + '\n'.join(
-                f"{u['id']}: {u['best_score']}点, {u['coins']}コイン, {u['play_time']}秒" for u in rows
+                f"{u['id']}({u.get('display_name') or '-'}): {u['best_score']}点, {u['coins']}コイン, {u['play_time']}秒" for u in rows
             )
 
         elif cmd == '/search':
@@ -2580,6 +2786,46 @@ def admin_command():
                      f"🪙 コイン: {u['coins']}\n⏱️ プレイ時間: {u.get('play_time') or 0}秒\n"
                      f"🚫 BAN: {'BAN中' if u.get('banned') else 'なし'}\n📅 作成日: {created_str}\n"
                      f"📅 最終ログイン: {last_login_str}")
+
+        elif cmd == '/recovery':
+            if not args:
+                raise ValueError('使用法: /recovery <ユーザーID>')
+            rows = db_query('SELECT id, display_name, recovery_code, recovery_code_used FROM users WHERE id = %s', [args[0]])
+            if not rows:
+                raise ValueError(f'ユーザー {args[0]} は見つかりません')
+            u = rows[0]
+            result = (f"🔑 復元コード\nID: {u['id']}({u.get('display_name') or '表示名なし'})\n"
+                      f"コード: {u.get('recovery_code') or '(未設定)'}\n状態: {'使用済み(無効)→ /reissue で再発行できます' if u.get('recovery_code_used') else '有効'}")
+
+        elif cmd == '/recoverylist':
+            q = ' '.join(args).strip()
+            esc = re.sub(r'([%_\\])', r'\\\1', q)
+            rows = db_query("SELECT id, display_name, recovery_code, recovery_code_used FROM users WHERE (%s = '' OR id ILIKE %s OR COALESCE(display_name, '') ILIKE %s) "
+                            "ORDER BY last_login DESC NULLS LAST, id LIMIT 60", [q, f'%{esc}%', f'%{esc}%'])
+            result = f"🔑 復元コード一覧(最大60件{' / 検索: ' + q if q else ''}):\n" + '\n'.join(
+                f"{u['id']}({u.get('display_name') or '-'}): {u.get('recovery_code') or '(未設定)'}{' ※使用済み' if u.get('recovery_code_used') else ''}" for u in rows)
+
+        elif cmd == '/reissue':
+            if not args:
+                raise ValueError('使用法: /reissue <ユーザーID>')
+            new_code = generate_recovery_code()
+            rows = db_query('UPDATE users SET recovery_code = %s, recovery_code_used = false WHERE id = %s RETURNING id', [new_code, args[0]])
+            if not rows:
+                raise ValueError(f'ユーザー {args[0]} は見つかりません')
+            result = f'🆕 {args[0]} の復元コードを再発行しました(古いコードは使えなくなります)\nコード: {new_code}'
+
+        elif cmd == '/devices':
+            if not args:
+                raise ValueError('使用法: /devices <ユーザーID>')
+            rows = db_query('SELECT device_id, ua, created_at, last_used FROM devices WHERE user_id = %s ORDER BY last_used DESC', [args[0]])
+            result = f'📱 {args[0]} の登録端末({len(rows)}台):\n' + ('\n'.join(
+                f"・{d['device_id'][:8]}… 最終 {d['last_used'].strftime('%m/%d %H:%M')} / {(d.get('ua') or '')[:60]}" for d in rows) or '(なし)')
+
+        elif cmd == '/revokedevices':
+            if not args:
+                raise ValueError('使用法: /revokedevices <ユーザーID>')
+            rows = db_query('DELETE FROM devices WHERE user_id = %s RETURNING device_id', [args[0]])
+            result = f'✅ {args[0]} の登録端末 {len(rows)} 台を解除しました(次回はIDとパスワードでログインが必要)'
 
         elif cmd == '/gift':
             if len(args) < 6:
