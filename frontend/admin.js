@@ -109,6 +109,7 @@
       confirm:(v)=> `イベント ${v.id} を削除します。`, run:(v)=> CB().adminCommand(`/eventremove ${v.id}`) },
 
     { id:'discordtest', group:'🖥 サーバー', icon:'📨', name:'外部通知の接続テスト', desc:'通知用Webhookの設定と、送信できるかを確認', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/discordtest') },
+    { id:'imgbb', group:'🖥 サーバー', icon:'☁️', name:'imgBB 接続テスト', desc:'画像の保存先(imgBB)が使えているか、実際に1枚送って確かめる', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/imgbb') },
     { id:'stats', group:'🖥 サーバー', icon:'📊', name:'サーバー統計', desc:'ユーザー数・総コイン・総プレイ時間', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/stats') },
     { id:'safety', group:'🖥 サーバー', icon:'🛡', name:'セーフティモード', desc:'管理者アカウントの強制セーフティモードを切り替え',
       fields:[ { key:'mode', type:'choice', label:'設定', options:[['status', '状態を見る'], ['on', 'ONにする'], ['off', 'OFFにする']], def:'status' } ],
