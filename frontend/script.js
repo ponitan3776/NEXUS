@@ -1333,6 +1333,10 @@ const PATTERN_LABELS = {
   document.addEventListener('error', (e)=>{                  // 画像が読めなかったら、頭文字のアイコンに差し替える / チャット画像は「期限切れ」の表示に
     const t = e.target;
     if(!t || !t.classList) return;
+    // 🖼 imgBB に直接つながらない端末(iPad・フィルター・ブロッカーなど)対策: 読み込みに失敗したら、1回だけサーバー経由でやり直す
+    if(t.tagName === 'IMG' && !t.dataset.px && /\/api\/img\/[0-9a-f]{16}/.test(t.src || '')){
+      t.dataset.px = '1'; t.src = t.src + (t.src.includes('?') ? '&' : '?') + 'px=1'; return;
+    }
     if(t.classList.contains('av-img')){ const d = document.createElement('span'); d.innerHTML = decodeURIComponent(t.dataset.fb || ''); if(d.firstChild) t.replaceWith(d.firstChild); }
     else if(t.classList.contains('chat-img')){ const d = document.createElement('div'); d.className = 'chat-img-gone'; d.textContent = '🕒 画像の保存期限が切れました'; t.replaceWith(d); }
   }, true);
@@ -1396,7 +1400,9 @@ const PATTERN_LABELS = {
         if(m === 0x01 || (m >= 0xD0 && m <= 0xD7)){ kept.push(buf.subarray(i, i + 2)); i += 2; continue; }
         const len = (buf[i + 2] << 8) | buf[i + 3], end = i + 2 + len;
         if(len < 2 || end > buf.length) return file;                          // 形がおかしい → 触らない
-        if(m === 0xE1 || m === 0xED || m === 0xFE){                           // APP1(Exif/XMP)・APP13・コメント → 外す
+        if(m === 0xE2 && buf[i + 4] === 0x4D && buf[i + 5] === 0x50 && buf[i + 6] === 0x46 && buf[i + 7] === 0){
+          /* 'MPF': 複数画像の位置情報。バイト位置がずれると壊れるので外す(色のプロファイルなど他のAPP2は残す) */
+        }else if(m === 0xE1 || m === 0xED || m === 0xFE){                           // APP1(Exif/XMP)・APP13・コメント → 外す
           if(m === 0xE1 && buf[i + 4] === 0x45 && buf[i + 5] === 0x78 && buf[i + 6] === 0x69 && buf[i + 7] === 0x66){   // 'Exif'
             const t = i + 10, le = buf[t] === 0x49, dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
             try{
@@ -1408,6 +1414,7 @@ const PATTERN_LABELS = {
         i = end;
       }
       const parts = [buf.subarray(0, 2)];
+      if(kept.length && kept[0][1] === 0xE0) parts.push(kept.shift());                // JFIF(APP0)は、いちばん前に置く決まり
       if(orient > 1 && orient <= 8){
         parts.push(new Uint8Array([0xFF, 0xE1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0,  0x4D, 0x4D, 0, 0x2A, 0, 0, 0, 8,  0, 1,  0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, orient, 0, 0,  0, 0, 0, 0]));
       }
@@ -7023,6 +7030,7 @@ function renderOtherGamesModal(){
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
     { version:'4.1.0', date:'2026-10-27', items:[
+      '🖼 iPadなどで画像が表示されないときの対策: 直接読めない画像は、自動でサーバー経由でやり直します',
       '🔐 HWID(この端末の登録)を見直し: ログイン/新規登録でこの端末とアカウントが紐づき、ログアウトで外れます。ページを開くたびにHWIDを確認し、紐づいたアカウントがあればそのままログイン、なければゲストになります。1つの端末に複数のアカウントが紐づいていたら、いちばん新しくログインしたものにそろえます',
       '🖼 画像のアップロードを2パターンに: imgBBにつながるときは、圧縮せず「オリジナルの画質のまま」送ってアイコン/チャットに使います。つながらないときだけ、圧縮して使います(撮影場所などの情報は自動で取り除かれます)'
     ]},
