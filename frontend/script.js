@@ -1313,6 +1313,28 @@ const PATTERN_LABELS = {
     else if(t.classList.contains('chat-img')){ const d = document.createElement('div'); d.className = 'chat-img-gone'; d.textContent = '🕒 画像の保存期限が切れました'; t.replaceWith(d); }
   }, true);
 
+  // 📤 画像をサーバーへ送る(v4.0で見直し)。Renderの無料サーバーは眠っていることがあるので、
+  //    つながらない・502/503/504 のときは、少し待って最大3回まで自動でやり直す。
+  //    サーバーが imgBB に保存し、返事の host が 'imgbb'(または 'local')、url が画像の場所。
+  async function uploadImageBlob(kind, blob, onStatus){
+    const url = `${API_BASE_URL}/api/img/upload?kind=${kind}`;
+    let lastErr = null;
+    for(let attempt = 0; attempt < 3; attempt++){
+      try{
+        const r = await fetch(url, { method:'POST', headers:{ 'Content-Type': blob.type || 'image/jpeg', 'Authorization':`Bearer ${authToken}` }, body: blob });
+        const d = await r.json().catch(()=>({}));
+        if(r.ok && d.ok !== false) return d;
+        if([502, 503, 504].includes(r.status)){ lastErr = new Error('サーバーを起こしています…'); }
+        else throw Object.assign(new Error(d.error || `アップロードに失敗しました(${r.status})`), { final:true });
+      }catch(err){
+        if(err && err.final) throw err;
+        lastErr = (err && err.name === 'TypeError') ? new Error('サーバーにつながりません。ネットワークを確認してください') : err;
+      }
+      if(attempt < 2){ if(onStatus) onStatus('サーバーを起こしています…もう一度送ります'); await new Promise(res=> setTimeout(res, 2500 + attempt * 2500)); }
+    }
+    throw lastErr || new Error('アップロードに失敗しました');
+  }
+
   // ----- 📷 画像を小さく圧縮(送る前に。容量を使いすぎないための工夫) -----
   function loadBitmap(file){
     const viaImg = ()=> new Promise((res, rej)=>{ const url = URL.createObjectURL(file), im = new Image(); im.onload = ()=>{ URL.revokeObjectURL(url); res(im); }; im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('画像を読み込めませんでした')); }; im.src = url; });
@@ -3652,9 +3674,7 @@ restartBtn.addEventListener('click', ()=>{
         show('圧縮してアップロード中…', true);
         try{
           const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
-          const r = await fetch(`${API_BASE_URL}/api/img/upload?kind=icon`, { method:'POST', headers:{ 'Content-Type': blob.type, 'Authorization':`Bearer ${authToken}` }, body: blob });
-          const d = await r.json().catch(()=>({}));
-          if(!r.ok) throw new Error(d.error || 'アップロードに失敗しました');
+          const d = await uploadImageBlob('icon', blob, (t)=> show(t, true));
           pickEmoji = null; paint(); applied(d.icon); show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
         }catch(err){ show(err.message, false); }
         file.value = '';
@@ -4609,9 +4629,7 @@ restartBtn.addEventListener('click', ()=>{
       if (chatImgBlob && !chatEditId) {                    // 画像つき: 先にアップロードしてから、そのIDでメッセージを送る
         const btn = document.getElementById('chatSendBtn'); btn.disabled = true;
         try{
-          const up = await fetch(`${API_BASE_URL}/api/img/upload?kind=chat`, { method:'POST', headers:{ 'Content-Type': chatImgBlob.type, 'Authorization':`Bearer ${authToken}` }, body: chatImgBlob });
-          const ud = await up.json().catch(()=>({}));
-          if(!up.ok) throw new Error(ud.error || '画像のアップロードに失敗しました');
+          const ud = await uploadImageBlob('chat', chatImgBlob, (t)=>{ prevBox.querySelector('span').textContent = t; });
           input.value = '';
           const ok = await sendChatMessage(msg, ud.id);
           if(ok) clearChatImg(); else if(!input.value) input.value = msg;
@@ -6903,6 +6921,12 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'4.0.0', date:'2026-10-27', items:[
+      '👹 ハロウィン パート3 拡張！ 新タブ「👹 ボス」: みんなのダメージを合わせて、4体のボスを順番にたおす協力イベント。ゲームやミニゲームを遊ぶだけで自動でダメージが入り、キャンディを使って「こうげき」もできます(クリティカルあり)。たおすたびに、参加した全員にごほうび',
+      '🕹 新しいミニゲームを5本追加(コウモリよけ / ともしびメモリー / ガイコツ・ビート / かぼちゃふくらまし / もじならべ)。スタンプラリーは31個に、27個・29個のごほうびも追加',
+      '👻 「おばけ10秒れんだ」のスコア上限をなくしました。どこまでも記録がのびます',
+      '🖼 画像の送信を見直し: imgBB のAPIキーを環境変数からしっかり読み取るように。サーバーが眠っていても自動でやり直すので、アイコン・チャット画像が送れないことが減ります'
+    ]},
     { version:'3.9.0', date:'2026-10-26', items:[
       '🎃 ハロウィン パート3！ 新タブ「🍪 パート3」: 2時間ごとにもらえる「おやつタイム」と、今日あそんだ回数で報酬が増える「パンプキン・パレード」。期間中はキャンディ常時1.3倍',
       '🍬 キャンディが集めやすく: ミニゲームのおまけ+10・さまようおばけ1日20匹・ドアの無料回数2回・図鑑の出会い率UP。デイリー/ウィークリーのミッションが6個ずつに',
@@ -7325,7 +7349,7 @@ function renderOtherGamesModal(){
   }
 
   // [キー, '絵文字 名前', NEWバッジ] — 受け取れるものがあるタブには、サーバーの badges で赤丸が付く
-  const HW_TABS = [['home','🏠 ホーム'],['part3','🍪 パート3',1],['road','🛤 ロード'],['missions','📋 ミッション'],['tot','🚪 ドア',1],['patch','🌱 畑',1],['dex','📖 図鑑',1],['stamps','🎪 スタンプ',1],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['community','🌍 みんなで',1],['ranking','🏆 ランキング']];
+  const HW_TABS = [['home','🏠 ホーム'],['part3','🍪 パート3',1],['raid','👹 ボス',1],['road','🛤 ロード'],['missions','📋 ミッション'],['tot','🚪 ドア',1],['patch','🌱 畑',1],['dex','📖 図鑑',1],['stamps','🎪 スタンプ',1],['gacha','🎰 ガチャ'],['shop','🛒 交換所'],['community','🌍 みんなで',1],['ranking','🏆 ランキング']];
   let hwTimerHandle = null;
 
   function renderHalloween(extraHtml){
