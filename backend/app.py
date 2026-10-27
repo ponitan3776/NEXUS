@@ -468,6 +468,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         ALTER TABLE images ENABLE ROW LEVEL SECURITY;
         -- v3.9: imgBB に置いた画像は url だけを持つ(data は空)。imgBB が使えないときは、これまで通り data に入れる
         ALTER TABLE images ADD COLUMN IF NOT EXISTS url TEXT;
+        ALTER TABLE images ADD COLUMN IF NOT EXISTS thumb_url TEXT;        -- v4.1: imgBB の小さい版(アイコンの小さな表示用)
         ALTER TABLE images ALTER COLUMN data DROP NOT NULL;
     """)
     # 🔑 端末(HWID)ログイン: 端末ごとのIDと秘密のキー(キーはハッシュだけを保存)
@@ -480,6 +481,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, last_used);
         ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
     """)
+    # v4.1: 1つのHWIDに紐づくアカウントは1つだけ。バグなどで複数あれば、いちばん新しくログインしたものを残す
+    try:
+        db_execute("""
+            DELETE FROM devices d USING devices d2
+             WHERE d.device_id = d2.device_id AND d.user_id <> d2.user_id
+               AND (d.last_used < d2.last_used OR (d.last_used = d2.last_used AND d.user_id < d2.user_id));
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_device ON devices(device_id);
+        """)
+    except Exception as err:
+        print(f'devices unique index error: {err}')
     # 📮 サポートチャット(ご要望・不具合報告ごとの、運営との専用チャット)
     db_execute("""
         CREATE TABLE IF NOT EXISTS support_threads (
@@ -725,7 +736,8 @@ def handle_api_error(err):
 #      IMG_USE_IMGBB=0 にすると、キーがあっても imgBB を使わない(手動で切り替えたいとき)。
 IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1').strip().lower() not in ('0', 'false', 'off', 'no')
 IMGBB_ENDPOINT = 'https://api.imgbb.com/1/upload'
-ICON_MAX_BYTES = 24_000
+ICON_MAX_BYTES = 24_000                    # 圧縮版(imgBBが使えないとき)の上限
+IMG_ORIGINAL_MAX_BYTES = 16_000_000        # オリジナル画像(imgBBに送るとき)の上限。これより大きいときは、アプリ側で圧縮に切り替わる
 CHAT_IMG_MAX_BYTES = 150_000
 IMG_CHAT_ENABLED = True                    # False にすると、チャットへの画像送信を止められる(荒れたとき用)
 IMG_CHAT_TTL_HOURS = 72
@@ -739,12 +751,25 @@ ICON_EMOJIS = ['🎃', '👻', '🦇', '🕷', '💀', '🧙', '🧛', '🧟', '
 _img_hits = {}
 
 
-def _sniff_image(data):
+def _sniff_image(data, any_format=False):
+    """画像の種類を中身で判定する。any_format=True(オリジナル画像)なら PNG / GIF も許す"""
     if len(data) > 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
         return 'image/webp'
     if data[:3] == b'\xff\xd8\xff':
         return 'image/jpeg'
+    if any_format:
+        if data[:8] == b'\x89PNG\r\n\x1a\n':
+            return 'image/png'
+        if data[:6] in (b'GIF87a', b'GIF89a'):
+            return 'image/gif'
     return None
+
+
+def _img_rate_refund(user_id, kind):
+    """失敗して圧縮版でやり直すとき、1回分を数えないように戻す"""
+    hits = _img_hits.get((user_id, kind), [])
+    if hits:
+        hits.pop()
 
 
 def _img_rate_check(user_id, kind):
@@ -874,7 +899,7 @@ def _imgbb_post(key, data, name, mime, ttl_seconds, as_base64):
         files = {'image': (None, base64.b64encode(data).decode('ascii')), 'name': (None, name)}
     else:                                                                       # 本物のファイルとして送るのが、いちばん確実
         files = {'image': (f'{name}.{_EXT.get(mime, "bin")}', data, mime or 'application/octet-stream')}
-    r = requests.post(IMGBB_ENDPOINT, params=params, files=files, timeout=(6, 20), headers={'Accept': 'application/json'})
+    r = requests.post(IMGBB_ENDPOINT, params=params, files=files, timeout=(6, 60), headers={'Accept': 'application/json'})
     try:
         j = r.json()
     except ValueError:
@@ -884,7 +909,10 @@ def _imgbb_post(key, data, name, mime, ttl_seconds, as_base64):
         url = d.get('url') or d.get('display_url') or (d.get('image') or {}).get('url')
         if url and str(url).startswith('http'):
             url = 'https://' + str(url)[len('http://'):] if str(url).startswith('http://') else str(url)
-            return url, f'成功 (HTTP 200) {url}', False
+            thumb = (d.get('thumb') or {}).get('url') if isinstance(d.get('thumb'), dict) else None
+            if thumb and str(thumb).startswith('http://'):
+                thumb = 'https://' + str(thumb)[len('http://'):]
+            return {'url': url, 'thumb': thumb or None}, f'成功 (HTTP 200) {url}', False
     e = j.get('error')
     err = (e.get('message') if isinstance(e, dict) else e) or (r.text or '')[:160]
     code = e.get('code') if isinstance(e, dict) else None
@@ -892,68 +920,138 @@ def _imgbb_post(key, data, name, mime, ttl_seconds, as_base64):
     return None, f'失敗 (HTTP {r.status_code}) {err}', bool(bad_key)
 
 
-def imgbb_upload_ex(data, name, ttl_seconds=None, mime=None):
-    """imgBB にアップロードする。(URL か None, 結果の説明) を返す。
+def imgbb_upload_full(data, name, ttl_seconds=None, mime=None):
+    """imgBB にアップロードする。({'url','thumb'} か None, 結果の説明) を返す。
     ①ファイルとして送る → ②だめならbase64で送る → ③期限つきが原因かもしれないので、期限なしでもう一度。
-    (APIキーが間違っているときは、何度やっても同じなので、すぐやめる)"""
+    (APIキーが間違っているときは、何度やっても同じなので、すぐやめる。大きい画像は、時間がかかるので1回だけ)"""
     key, src = get_imgbb_key()
     if not key:
         return None, 'APIキーが見つかりません(Renderの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
     if not IMG_USE_IMGBB:
         return None, 'IMG_USE_IMGBB=0 のため、imgBB は使いません'
-    mime = mime or _sniff_image(data) or ('image/png' if data[:4] == b'\x89PNG' else None)
+    mime = mime or _sniff_image(data, True)
     tries = [(ttl_seconds, False), (ttl_seconds, True)] + ([(None, False)] if ttl_seconds else [])
+    if len(data) > 1_500_000:
+        tries = tries[:1]
     last = ''
     for ttl, b64 in tries:
         try:
-            url, msg, bad_key = _imgbb_post(key, data, name, mime, ttl, b64)
+            info, msg, bad_key = _imgbb_post(key, data, name, mime, ttl, b64)
         except Exception as err:
-            url, msg, bad_key = None, f'通信エラー: {err}', False
-        if url:
-            return url, msg
+            info, msg, bad_key = None, f'通信エラー: {err}', False
+        if info:
+            return info, msg
         last = f"{'base64' if b64 else 'ファイル'}送信{'(期限なし)' if not ttl and ttl_seconds else ''}: {msg}"
         if bad_key:
             return None, f'{msg} → APIキーが正しくありません(取得元: {src})'
     return None, last
 
 
+def imgbb_upload_ex(data, name, ttl_seconds=None, mime=None):
+    info, msg = imgbb_upload_full(data, name, ttl_seconds, mime)
+    return (info['url'] if info else None), msg
+
+
+_imgbb_status = {'t': 0.0, 'ok': False, 'msg': ''}
+
+
+def imgbb_check(force=False):
+    """imgBB につながるか・APIキーが通るかを、画像を送らずに確認する(結果は45秒おぼえておく)。(OKか, 理由)
+    画像なしで送ると、キーが正しければ「画像がない」というエラーが返り、キーがまちがいなら「キーが不正」と返る"""
+    if not force and time.time() - _imgbb_status['t'] < 45:
+        return _imgbb_status['ok'], _imgbb_status['msg']
+    ok, msg = False, ''
+    key, _src = get_imgbb_key()
+    if not key:
+        msg = 'APIキーが設定されていません'
+    elif not IMG_USE_IMGBB:
+        msg = 'imgBB は使わない設定です'
+    else:
+        try:
+            r = requests.post(IMGBB_ENDPOINT, params={'key': key}, timeout=(4, 8), headers={'Accept': 'application/json'})
+            try:
+                j = r.json()
+            except ValueError:
+                j = {}
+            e = j.get('error')
+            em = str((e.get('message') if isinstance(e, dict) else e) or '')
+            code = e.get('code') if isinstance(e, dict) else None
+            if r.status_code >= 500 or r.status_code == 429:
+                msg = f'imgBB が混み合っています (HTTP {r.status_code})'
+            elif code == 100 or 'key' in em.lower():
+                msg = 'APIキーが正しくありません'
+            elif j:
+                ok, msg = True, '接続OK'                       # キーは通って、画像がないと言われた = つながっている
+            else:
+                msg = f'imgBB の返事が読めません (HTTP {r.status_code})'
+        except Exception as err:
+            msg = f'imgBB につながりません: {err}'
+    _imgbb_status.update({'t': time.time(), 'ok': ok, 'msg': msg})
+    return ok, msg
+
+
 def imgbb_upload(data, name, ttl_seconds=None, mime=None):
-    """imgBB にアップロードして画像のURLを返す。使えない・失敗したときは None(呼び出し側が自前保存に切り替える)"""
-    url, msg = imgbb_upload_ex(data, name, ttl_seconds, mime)
-    _imgbb_last.update({'ok': bool(url), 'msg': msg, 'at': datetime.utcnow()})
-    print(('☁️ imgBB OK: ' if url else '⚠️ imgBB 失敗 → 自前保存に切り替え: ') + msg)
-    return url
+    """imgBB にアップロードして {'url','thumb'} を返す。使えない・失敗したときは None"""
+    info, msg = imgbb_upload_full(data, name, ttl_seconds, mime)
+    _imgbb_last.update({'ok': bool(info), 'msg': msg, 'at': datetime.utcnow()})
+    print(('☁️ imgBB OK: ' if info else '⚠️ imgBB 失敗: ') + msg)
+    if not info:
+        _imgbb_status.update({'t': 0.0})                       # 次の確認では、もう一度ちゃんと調べる
+    return info
+
+
+@app.get('/api/img/status')
+def img_status():
+    """ステップ①: 画像を送る前の「imgBB につながるか」の確認。ok=True ならオリジナル画質のまま送れる"""
+    try:
+        require_auth()
+        ok, msg = imgbb_check()
+        return jsonify({'ok': True, 'imgbb': bool(ok), 'reason': msg, 'originalMax': IMG_ORIGINAL_MAX_BYTES})
+    except ApiError as e:
+        return jsonify({'error': e.message}), e.status
 
 
 @app.post('/api/img/upload')
 def img_upload():
+    """画像のアップロード。2つのやり方(mode):
+      mode=original   … ステップ②-A: imgBB へ「オリジナルのまま」送る。成功したらURLだけをDBに保存。
+                         失敗したら fallback=true を返す(アプリ側が圧縮版でやり直す)
+      mode=compressed … ステップ②-B: アプリ側で圧縮済みの小さな画像を、サーバーのDBに保存する(imgBB が使えないとき用)"""
+    kind, user_id, counted = None, None, False
     try:
         user_id = require_auth()
         kind = request.args.get('kind')
+        mode = 'original' if request.args.get('mode') == 'original' else 'compressed'
         if kind not in ('icon', 'chat'):
             raise ApiError('画像の種類が不正です', 400)
         if kind == 'chat' and not IMG_CHAT_ENABLED:
             raise ApiError('チャットへの画像送信は現在オフです', 403)
-        limit = ICON_MAX_BYTES if kind == 'icon' else CHAT_IMG_MAX_BYTES
+        original = mode == 'original'
+        limit = IMG_ORIGINAL_MAX_BYTES if original else (ICON_MAX_BYTES if kind == 'icon' else CHAT_IMG_MAX_BYTES)
+        too_big = {'error': f'画像が大きすぎます({limit // 1000}KBまで)', 'fallback': original}
         if request.content_length and request.content_length > limit + 4096:
-            raise ApiError(f'画像が大きすぎます({limit // 1000}KBまで)', 413)
+            return jsonify(too_big), 413
         data = request.get_data(cache=False)
         if not data:
             raise ApiError('画像が空です', 400)
         if len(data) > limit:
-            raise ApiError(f'画像が大きすぎます({limit // 1000}KBまで)', 413)
-        mime = _sniff_image(data)
+            return jsonify(too_big), 413
+        mime = _sniff_image(data, any_format=original)
         if not mime:
-            raise ApiError('この形式の画像は使えません(WebP / JPEG のみ)', 400)
+            return jsonify({'error': 'この形式の画像は使えません' + ('' if original else '(WebP / JPEG のみ)'), 'fallback': original}), 400
         _img_rate_check(user_id, kind)
+        counted = True
         img_id = secrets.token_hex(8)
-        ttl = IMG_CHAT_TTL_HOURS * 3600 if kind == 'chat' else None            # チャット画像は imgBB 側でも期限つき
-        url = imgbb_upload(data, f'{kind}-{img_id}', ttl, mime)
-        host = 'imgbb' if url else 'local'
-        if url:                                                                 # imgBB に置けた → DBには URL だけ
-            db_execute('INSERT INTO images (id, owner, kind, mime, size, data, url, created_at) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)',
-                       [img_id, user_id, kind, mime, len(data), url, datetime.utcnow()])
-        else:                                                                   # 自前保存(imgBB が使えないときの予備)
+        info = None
+        if original:                                                              # ②-A オリジナルのまま imgBB へ
+            ttl = IMG_CHAT_TTL_HOURS * 3600 if kind == 'chat' else None            # チャット画像は imgBB 側でも期限つき
+            info = imgbb_upload(data, f'{kind}-{img_id}', ttl, mime)
+            if not info:
+                _img_rate_refund(user_id, kind)
+                return jsonify({'error': 'imgBB に送れませんでした', 'fallback': True}), 502
+            db_execute('INSERT INTO images (id, owner, kind, mime, size, data, url, thumb_url, created_at) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s, %s)',
+                       [img_id, user_id, kind, mime, len(data), info['url'], info.get('thumb'), datetime.utcnow()])
+        else:                                                                     # ②-B 圧縮版を、自前保存(DB)
             db_execute('INSERT INTO images (id, owner, kind, mime, size, data, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)',
                        [img_id, user_id, kind, mime, len(data), psycopg2.Binary(data), datetime.utcnow()])
         if kind == 'icon':
@@ -962,12 +1060,15 @@ def img_upload():
             cache_drop('chat:', 'rank:')
         else:
             purge_images()
-        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data), 'host': host, 'url': url or None})
+        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data),
+                        'host': 'imgbb' if info else 'local', 'url': info['url'] if info else None})
     except ApiError as e:
-        return jsonify({'error': e.message}), e.status
+        return jsonify({'error': e.message, 'fallback': False}), e.status
     except Exception as err:
         print(f'img upload error: {err}')
-        return jsonify({'error': 'アップロードに失敗しました'}), 500
+        if counted and user_id and kind:
+            _img_rate_refund(user_id, kind)
+        return jsonify({'error': 'アップロードに失敗しました', 'fallback': request.args.get('mode') == 'original'}), 500
 
 
 @app.get('/api/img/<img_id>')
@@ -975,11 +1076,13 @@ def img_get(img_id):
     if not re.match(r'^[0-9a-f]{16}$', img_id or ''):
         return jsonify({'error': 'not found'}), 404
     try:
-        rows = db_query('SELECT mime, data, url FROM images WHERE id = %s', [img_id])
+        rows = db_query('SELECT mime, data, url, thumb_url FROM images WHERE id = %s', [img_id])
         if not rows:
             return jsonify({'error': 'not found'}), 404
         if rows[0].get('url'):                                                    # imgBB の画像 → そちらへ案内(1日はブラウザが覚える)
-            resp = redirect(rows[0]['url'], code=302)
+            # ?s=t … 小さな表示(アイコンの丸など)用。imgBB の小さい版があればそれを、なければオリジナルを返す
+            target = (rows[0].get('thumb_url') or rows[0]['url']) if request.args.get('s') == 't' else rows[0]['url']
+            resp = redirect(target, code=302)
             resp.headers['Cache-Control'] = 'public, max-age=86400'
             return resp
         if rows[0].get('data') is None:
@@ -1486,7 +1589,9 @@ def login():
 # Cookie の代わりに、端末ごとの「端末ID(HWID)+秘密のキー」でログインを保存する。
 #   ・端末IDはブラウザが1回だけ作る(ブラウザはパソコンのシリアル番号などの本当のハードウェアIDを読めないため、乱数で作る)
 #   ・秘密のキーは、ログインのあとサーバーが発行する。サーバーにはハッシュだけを保存する(端末IDだけでは入れない)
-#   ・トークン(7日)が切れても、この端末なら自動でログインし直せる。ログアウトすると、この端末の登録も消える
+#   ・v4.1: 1つの端末(HWID)に紐づくアカウントは1つだけ。ログイン/新規登録で紐づき、ログアウトで外れる。
+#     ページを開くたびにHWIDを確認し、紐づいたアカウントがあればそのままログイン、なければゲスト。
+#     バグなどで複数に紐づいていたら、いちばん新しくログインしたアカウントにそろえる
 #   ・1アカウントにつき最大8台(古い順に外れる)。管理者コマンド /devices・/revokedevices で確認・解除できる
 DEVICE_MAX_PER_USER = 8
 _DEVICE_ID_RE = re.compile(r'^[0-9a-f]{32,64}$')
@@ -1523,6 +1628,8 @@ def device_register():
             raise ApiError('端末IDが不正です', 400)
         _device_rate('reg:' + user_id)
         key = secrets.token_urlsafe(32)
+        # このHWIDを、いまログインしているアカウントだけに紐づける(前に紐づいていた別アカウントは外れる)
+        db_execute("DELETE FROM devices WHERE device_id = %s AND user_id <> %s", [device_id, user_id])
         db_execute("""INSERT INTO devices (device_id, user_id, key_hash, fp, ua) VALUES (%s, %s, %s, %s, %s)
                       ON CONFLICT (device_id, user_id) DO UPDATE SET key_hash = EXCLUDED.key_hash, fp = EXCLUDED.fp, ua = EXCLUDED.ua, last_used = NOW()""",
                    [device_id, user_id, _hash_key(key), str(b.get('fp') or '')[:64], (request.headers.get('User-Agent') or '')[:200]])
@@ -1539,25 +1646,29 @@ def device_register():
 
 @app.post('/api/device/login')
 def device_login():
-    """トークンが切れたとき・Cookieが消えたときに、端末ID+キーでログインし直す"""
+    """ページを開くたびに呼ばれる。このHWIDに紐づいたアカウントがあれば、そのアカウントでログインする。
+    なければ 401(→ アプリ側はゲストになる)。複数のアカウントに紐づいていたら、いちばん新しいログインのものを使う"""
     try:
         b = request.get_json(silent=True) or {}
-        device_id, key, hint = str(b.get('deviceId') or '').lower(), str(b.get('deviceKey') or ''), str(b.get('id') or '')
+        device_id, key = str(b.get('deviceId') or '').lower(), str(b.get('deviceKey') or '')
         if not _DEVICE_ID_RE.match(device_id) or not key:
-            raise ApiError('端末の認証情報がありません', 401)
+            raise ApiError('この端末はまだ登録されていません', 401)
         _device_rate('ip:' + _client_ip(), 60)
         _device_rate('dev:' + device_id)
-        rows = db_query('SELECT user_id, key_hash FROM devices WHERE device_id = %s', [device_id])
+        rows = db_query('SELECT user_id, key_hash, last_used FROM devices WHERE device_id = %s ORDER BY last_used DESC', [device_id])
         want = _hash_key(key)
-        match = next((r for r in rows if hmac.compare_digest(r['key_hash'], want) and (not hint or r['user_id'] == hint)), None)
+        match = next((r for r in rows if hmac.compare_digest(r['key_hash'], want)), None)      # 新しい順なので、最初に合ったものが最新
         if not match:
-            raise ApiError('この端末のログインは無効になりました。もう一度ログインしてください', 401)
+            raise ApiError('この端末のログインは無効になりました', 401)
         users = db_query('SELECT * FROM users WHERE id = %s', [match['user_id']])
         if not users:
+            db_execute('DELETE FROM devices WHERE device_id = %s AND user_id = %s', [device_id, match['user_id']])
             raise ApiError('アカウントが見つかりません', 401)
         u = users[0]
         if u.get('banned'):
             raise ApiError('このアカウントはBANされています', 403)
+        if len(rows) > 1:                                                                       # 重複していた分は片づける(最新だけ残す)
+            db_execute('DELETE FROM devices WHERE device_id = %s AND user_id <> %s', [device_id, u['id']])
         db_execute('UPDATE devices SET last_used = NOW() WHERE device_id = %s AND user_id = %s', [device_id, u['id']])
         db_execute('UPDATE users SET last_login = NOW() WHERE id = %s', [u['id']])
         return jsonify({'token': make_token(u['id']), 'id': u['id'], 'displayName': u.get('display_name') or '',
@@ -1576,7 +1687,7 @@ def device_logout():
         user_id = require_auth()
         device_id = str((request.get_json(silent=True) or {}).get('deviceId') or '').lower()
         if _DEVICE_ID_RE.match(device_id):
-            db_execute('DELETE FROM devices WHERE device_id = %s AND user_id = %s', [device_id, user_id])
+            db_execute('DELETE FROM devices WHERE device_id = %s', [device_id])        # ログアウト = この端末とアカウントの紐付けを無しにする
         return jsonify({'ok': True})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
