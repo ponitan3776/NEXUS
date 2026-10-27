@@ -22,12 +22,18 @@
   const box = document.getElementById('heroMedia'), card = document.getElementById('titleCard');
   if(!box || !card) return;
 
+  // iPad/iPhone(iPadOS は「Macのふり」をするので、タッチ点の数でも見分ける)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const saveData = !!(navigator.connection && navigator.connection.saveData);
   const getPref = ()=>{ try{ return localStorage.getItem(PREF) !== '0'; }catch(e){ return true; } };
   const setPref = (on)=>{ try{ localStorage.setItem(PREF, on ? '1' : '0'); }catch(e){} };
   const audioApi = ()=> window.CBMenuAudio || null;
   const show = (el)=>{ box.replaceChildren(el); box.hidden = false; card.classList.add('has-media'); };
+  const SVG = (inner)=> `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  const ICON_ON  = SVG('<path d="M4 9v6h4l5 4V5L8 9H4z" fill="#fff"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/>');
+  const ICON_OFF = SVG('<path d="M4 9v6h4l5 4V5L8 9H4z" fill="#fff"/><path d="M17 9l5 6M22 9l-5 6"/>');
+  const ICON_PLAY = '<svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M8 5v14l11-7z" fill="#fff"/></svg>';
 
   let still = false;                                                 // true = 動画は再生せず、最初の1コマだけ見せる(動きを減らす設定の端末で、画像が無いとき)
   function tryImage(i, onNone){
@@ -54,11 +60,13 @@
   }
 
   function setupVideo(v){
-    show(v);
+    if(v.parentNode !== box) show(v); else { box.hidden = false; card.classList.add('has-media'); }
     if(still){ try{ v.currentTime = 0.1; }catch(e){} }
     fitToVideo(v);
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'hero-sound'; box.append(btn);
+    const playBtn = document.createElement('button');                 // 自動再生を止められたとき(低電力モードなど)の「▶」ボタン
+    playBtn.type = 'button'; playBtn.className = 'hero-play'; playBtn.hidden = true; playBtn.setAttribute('aria-label', '再生'); playBtn.innerHTML = ICON_PLAY; box.append(playBtn);
 
     let wantSound = getPref();            // ボタンで消していなければ ON
     let unlocked = !!(navigator.userActivation && navigator.userActivation.hasBeenActive);   // 一度でも操作済みなら、すぐ音を出せる
@@ -68,7 +76,7 @@
     function refreshBtn(){
       btn.hidden = noAudio;
       const on = wantSound && musicOn();
-      btn.textContent = on ? (unlocked ? '🔊' : '🔇') : '🔇';
+      btn.innerHTML = (on && unlocked) ? ICON_ON : ICON_OFF;
       btn.setAttribute('aria-label', on ? '音を消す' : '音を出す');
       btn.title = on ? (unlocked ? '音を消す' : 'タップで音が出ます') : '音を出す';
     }
@@ -79,6 +87,7 @@
       v.muted = !sound;
       if(sound) v.volume = a ? a.volume() : 0.6;
       const p = v.play();
+      setTimeout(()=>{ if(v.paused && visible && !document.hidden && !still) playBtn.hidden = false; }, 1200);     // 1.2秒たっても止まったまま → ▶ を出す
       if(p && p.catch) p.catch(()=>{                                 // 音つき再生をブラウザに止められたら、音なしで続ける
         if(!v.muted){ v.muted = true; unlocked = false; v.play().catch(()=>{}); if(a) a.duck(false); refreshBtn(); }
       });
@@ -86,14 +95,17 @@
       if(sound && !checkTimer){                                      // 音声トラックが無い動画か、少し再生してから確かめる
         checkTimer = setTimeout(()=>{
           checkTimer = 0;
+          // ※ iPad/iPhone では、この判定(webkitAudioDecodedByteCount)が常に0になり「音声なし」と誤判定して、ボタンまで消えてしまうため使わない
           const none = (typeof v.mozHasAudio === 'boolean' && !v.mozHasAudio) ||
-                       ('webkitAudioDecodedByteCount' in v && !v.muted && !v.paused && v.currentTime > 0.8 && v.webkitAudioDecodedByteCount === 0);
+                       (!isIOS && 'webkitAudioDecodedByteCount' in v && !v.muted && !v.paused && v.currentTime > 0.8 && v.webkitAudioDecodedByteCount === 0);
           if(none){ noAudio = true; if(a) a.duck(false); v.muted = true; refreshBtn(); }
         }, 1500);
       }
       refreshBtn();
     }
 
+    v.addEventListener('playing', ()=>{ playBtn.hidden = true; });
+    playBtn.addEventListener('click', (e)=>{ e.stopPropagation(); unlocked = true; playBtn.hidden = true; apply(); v.play().catch(()=>{ playBtn.hidden = false; }); });
     btn.addEventListener('click', (e)=>{ e.stopPropagation(); unlocked = true; wantSound = !(wantSound && musicOn()) ; setPref(wantSound); apply(); });
     const onGesture = ()=>{ if(unlocked) return; unlocked = true; apply(); };
     ['pointerdown', 'keydown', 'touchend'].forEach(ev=> document.addEventListener(ev, onGesture, { capture: true }));
@@ -108,27 +120,22 @@
   //   ・iOS は preload を無視するので、読み込みの合図は loadedmetadata / loadeddata / canplay の「どれか最初の1つ」にする
   //   ・自動再生を止められたとき(低電力モードなど)も、枠をタップすれば再生できるようにする
   function tryVideo(i, onFail){
-    if(i >= VIDEOS.length){ (onFail || (()=> tryImage(0)))(); return; }               // 動画が無い/読めない → 画像へ
+    if(i >= VIDEOS.length){ box.replaceChildren(); box.hidden = true; card.classList.remove('has-media'); (onFail || (()=> tryImage(0)))(); return; }   // 動画が無い/読めない → 画像へ
     const v = document.createElement('video');
     v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
     v.setAttribute('muted', ''); v.setAttribute('autoplay', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('aria-hidden', 'true');
     v.disablePictureInPicture = true; v.preload = 'auto';
-    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';   // 読み込み中だけ、見えない場所に
     let done = false, timer = 0;
     const next = ()=>{ if(done) return; done = true; clearTimeout(timer); v.remove(); tryVideo(i + 1, onFail); };
-    const ready = ()=>{
-      if(done) return; done = true; clearTimeout(timer);
-      v.removeAttribute('style'); v.remove();
-      setupVideo(v);
-      box.addEventListener('click', ()=>{ if(v.paused) v.play().catch(()=>{}); });      // 自動再生を止められたとき用: 枠をタップで再生
-    };
+    const ready = ()=>{ if(done) return; done = true; clearTimeout(timer); setupVideo(v); };
     v.addEventListener('error', next, { once: true });
     ['loadedmetadata', 'loadeddata', 'canplay'].forEach(ev=> v.addEventListener(ev, ready, { once: true }));
     timer = setTimeout(()=>{ if(v.readyState >= 1) ready(); else next(); }, 8000);       // 8秒たっても読めなければ、次(別の形式/画像)へ
-    document.body.appendChild(v);
+    // iPad/iPhone の Safari は、画面に置いていない動画を読み込まないので、最初から枠の中に置く(読み込み中は、暗い枠だけが見える)
+    box.replaceChildren(v); box.hidden = false; card.classList.add('has-media');
     v.src = BASE + VIDEOS[i];
     v.load();
-    const p = v.play(); if(p && p.catch) p.catch(()=>{});                                // iOS は、再生を始めて初めて読み込みが進むことがある
+    const p = v.play(); if(p && p.catch) p.catch(()=>{});
   }
 
   if(reduce || saveData) tryImage(0, ()=>{ still = true; tryVideo(0, ()=>{}); });   // 動きを減らす/データ節約 → 画像があれば画像。無ければ、動画を止めたまま(1コマ)で見せる
