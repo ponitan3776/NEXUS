@@ -1166,6 +1166,7 @@ const PATTERN_LABELS = {
   // ・ログインのあと、この端末の「端末ID」を作ってサーバーに登録し、秘密のキーをもらう(端末IDはブラウザが乱数で作る)
   // ・トークンが切れても、Cookieが消えても、この端末ならID+キーで自動ログインできる(サーバーにはキーのハッシュだけ)
   // ・ログアウトすると、この端末の自動ログインも消える
+  // ・v4.1: 1つの端末(HWID)に紐づくアカウントは1つだけ。ログイン/新規登録で紐づき、ログアウトで外れる
   const SESSION_KEY = 'nexus_session', HWID_KEY = 'nexus_hwid';
   const lsGet = (k)=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } };
   const lsSet = (k, v)=>{ try{ localStorage.setItem(k, v); }catch(e){} };
@@ -1200,16 +1201,21 @@ const PATTERN_LABELS = {
       if(r.ok && d.deviceKey){ h.deviceKey = d.deviceKey; await saveHwid(h); }
     }catch(e){ /* あとで次のログインのときに登録される */ }
   }
-  async function deviceLogin(hintId){                      // この端末のID+キーで、ログインし直す(成功すると {token,id,...})
+  // この端末のHWIDで、ログインを試す。結果は3種類:
+  //   { status:'ok', data:{token,id,...} } … HWIDに紐づいたアカウントがあった → そのアカウントでログイン
+  //   { status:'none' }                    … 未登録(または無効) → ゲスト
+  //   { status:'error' }                   … サーバーに届かない/不調 → 判断できない(今のログインは保つ)
+  async function deviceLogin(){
     const h = await getHwid(false);
-    if(!h || !h.deviceKey) return null;
+    if(!h || !h.deviceKey) return { status:'none' };
     try{
       const r = await fetch(`${API_BASE_URL}/api/device/login`, { method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ deviceId: h.deviceId, deviceKey: h.deviceKey, id: hintId || undefined }) });
-      if(r.status === 401 || r.status === 403){ h.deviceKey = ''; await saveHwid(h); return null; }     // 本当に無効 → キーを捨てる
-      if(!r.ok) return null;                                                                           // サーバーの不調 → キーは残す
-      return await r.json();
-    }catch(e){ return null; }
+        body: JSON.stringify({ deviceId: h.deviceId, deviceKey: h.deviceKey }) });
+      if(r.status === 401 || r.status === 403){ h.deviceKey = ''; await saveHwid(h); return { status:'none' }; }     // 紐付けが無い/無効 → キーを捨てる
+      if(!r.ok) return { status:'error' };
+      const data = await r.json();
+      return data && data.token ? { status:'ok', data } : { status:'error' };
+    }catch(e){ return { status:'error' }; }
   }
   async function saveAuthSession(token, id){
     lsSet(SESSION_KEY, JSON.stringify({ token, id }));
@@ -1224,14 +1230,31 @@ const PATTERN_LABELS = {
       h.deviceKey = ''; await saveHwid(h);                   // 端末IDは残し、自動ログインのキーだけ消す
     }
   }
-  async function loadAuthSession(){
+  // ページを開くたびに、まずHWIDを確認する(v4.1):
+  //   ① HWIDに紐づいたアカウントがある → そのアカウントでログイン
+  //   ② 紐づいていない(未登録) → ゲスト
+  //   ③ サーバーに届かないときだけ、前回のログイン情報をそのまま使う(通信エラーで勝手にログアウトしないため)
+  // ※ 旧バージョン(HWID導入前)でログイン中だった人は、最初の1回だけそのまま引き継ぎ、この端末に紐づけます
+  const HW2_FLAG = 'nexus_hw_v41';
+  function readSavedSession(){
     try{ const raw = lsGet(SESSION_KEY); if(raw){ const p = JSON.parse(raw); if(p && p.token) return p; } }catch(err){}
-    try{                                                     // 旧Cookieからの引っ越し(1回だけ)
+    try{
       const raw = getCookie(COOKIE_AUTH);
       if(raw){ const p = JSON.parse(raw); if(p && p.token){ lsSet(SESSION_KEY, JSON.stringify(p)); deleteCookie(COOKIE_AUTH); return p; } }
     }catch(err){}
-    const d = await deviceLogin();                           // どちらも無ければ、この端末で自動ログイン
-    if(d && d.token){ const p = { token: d.token, id: d.id }; lsSet(SESSION_KEY, JSON.stringify(p)); return p; }
+    return null;
+  }
+  async function loadAuthSession(){
+    const saved = readSavedSession();
+    const r = await deviceLogin();
+    if(r.status === 'ok'){
+      const p = { token: r.data.token, id: r.data.id };
+      lsSet(SESSION_KEY, JSON.stringify(p)); lsSet(HW2_FLAG, '1');
+      return p;
+    }
+    if(r.status === 'error') return saved;                    // サーバーに届かない: 判断できないので、今の状態を保つ
+    if(!lsGet(HW2_FLAG)){ lsSet(HW2_FLAG, '1'); return saved; }   // 旧バージョンからの引っ越し(1回だけ)
+    lsDel(SESSION_KEY);                                       // 未登録 → ゲスト
     return null;
   }
   // リロード後も安全にログイン状態を復元する。
@@ -1253,7 +1276,8 @@ const PATTERN_LABELS = {
       clearTimeout(to);
       if(r.status === 401 || r.status === 404){
         // トークンの期限切れなら、この端末のID(HWID)で自動ログインし直す
-        const dl = await deviceLogin(currentUserId);
+        const dlr = await deviceLogin();
+        const dl = dlr.status === 'ok' ? dlr.data : null;
         if(dl && dl.token){
           authToken = dl.token; currentUserId = dl.id;
           lsSet(SESSION_KEY, JSON.stringify({ token: dl.token, id: dl.id }));
@@ -1300,7 +1324,7 @@ const PATTERN_LABELS = {
     if(e) return `<span class="av${zc}" style="${sty};background:linear-gradient(135deg,${AV_GRAD[+e[2]]})"${za}>${escapeHtml(e[1])}</span>`;
     const letter = escapeHtml(Array.from(name || id || '?')[0].toUpperCase());       // 設定がなければ、名前の頭文字(色はIDから自動)
     const fb = `<span class="av${zc}" style="${sty};background:linear-gradient(135deg,${AV_GRAD[hashStr(id || name) % 8]})"${za}>${letter}</span>`;
-    if(im) return `<img class="av av-img${zc}" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}"${za}>`;
+    if(im) return `<img class="av av-img${zc}" style="${sty}" src="${API_BASE_URL}/api/img/${im[1]}${(size || 28) <= 80 ? '?s=t' : ''}" alt="" loading="lazy" decoding="async" data-fb="${encodeURIComponent(fb)}"${za}>`;
     return fb;
   }
   const lvTag = (lv)=> lv ? `<span class="bplv" title="バトルパスのレベル">Lv.${lv}</span>` : '';
@@ -1313,26 +1337,104 @@ const PATTERN_LABELS = {
     else if(t.classList.contains('chat-img')){ const d = document.createElement('div'); d.className = 'chat-img-gone'; d.textContent = '🕒 画像の保存期限が切れました'; t.replaceWith(d); }
   }, true);
 
-  // 📤 画像をサーバーへ送る(v4.0で見直し)。Renderの無料サーバーは眠っていることがあるので、
-  //    つながらない・502/503/504 のときは、少し待って最大3回まで自動でやり直す。
-  //    サーバーが imgBB に保存し、返事の host が 'imgbb'(または 'local')、url が画像の場所。
-  async function uploadImageBlob(kind, blob, onStatus){
-    const url = `${API_BASE_URL}/api/img/upload?kind=${kind}`;
+  // ===================== 🖼 画像のアップロード(v4.1) =====================
+  // 画像を選んだあとの流れ(2パターン):
+  //   ①接続確認: サーバーに「imgBB につながる?」と聞く
+  //   ②-A つながった → 圧縮せず「オリジナルの画質のまま」imgBB へ送る → そのURLの画像を、アイコン/チャットで呼び出す
+  //   ②-B つながらない(または途中で失敗) → 小さく圧縮して、サーバーに保存 → アイコン/チャットで使う
+  const sleepMs = (ms)=> new Promise(res=> setTimeout(res, ms));
+
+  // 📤 画像1枚をサーバーへ送る。mode='original'(オリジナルのまま・imgBBへ) / 'compressed'(圧縮版・サーバー保存)
+  //    Renderの無料サーバーは眠っていることがあるので、つながらない・502/503/504 のときは、少し待って最大3回までやり直す。
+  //    失敗したとき、error.fallback が true なら「圧縮版でやり直してよい」という意味
+  async function uploadImageBlob(kind, blob, onStatus, mode){
+    const url = `${API_BASE_URL}/api/img/upload?kind=${kind}&mode=${mode === 'original' ? 'original' : 'compressed'}`;
     let lastErr = null;
     for(let attempt = 0; attempt < 3; attempt++){
       try{
         const r = await fetch(url, { method:'POST', headers:{ 'Content-Type': blob.type || 'image/jpeg', 'Authorization':`Bearer ${authToken}` }, body: blob });
         const d = await r.json().catch(()=>({}));
         if(r.ok && d.ok !== false) return d;
+        if(!r.ok && d && d.fallback) throw Object.assign(new Error(d.error || 'imgBB に送れませんでした'), { final:true, fallback:true });
         if([502, 503, 504].includes(r.status)){ lastErr = new Error('サーバーを起こしています…'); }
-        else throw Object.assign(new Error(d.error || `アップロードに失敗しました(${r.status})`), { final:true });
+        else throw Object.assign(new Error(d.error || `アップロードに失敗しました(${r.status})`), { final:true, fallback:false });
       }catch(err){
         if(err && err.final) throw err;
         lastErr = (err && err.name === 'TypeError') ? new Error('サーバーにつながりません。ネットワークを確認してください') : err;
       }
-      if(attempt < 2){ if(onStatus) onStatus('サーバーを起こしています…もう一度送ります'); await new Promise(res=> setTimeout(res, 2500 + attempt * 2500)); }
+      if(attempt < 2){ if(onStatus) onStatus('サーバーを起こしています…もう一度送ります'); await sleepMs(2500 + attempt * 2500); }
     }
     throw lastErr || new Error('アップロードに失敗しました');
+  }
+
+  // ①接続確認: imgBB に「つながる」なら true
+  async function imgbbReady(){
+    for(let attempt = 0; attempt < 2; attempt++){
+      try{
+        const ctrl = new AbortController(), to = setTimeout(()=> ctrl.abort(), 20000);
+        const r = await fetch(`${API_BASE_URL}/api/img/status`, { headers:{ 'Authorization':`Bearer ${authToken}` }, signal: ctrl.signal });
+        clearTimeout(to);
+        if(r.ok){ const d = await r.json().catch(()=>({})); return { ok: !!d.imgbb, max: d.originalMax || 16000000, reason: d.reason || '' }; }
+        if(![502, 503, 504].includes(r.status)) break;
+      }catch(e){ /* もう一度 */ }
+      await sleepMs(2000);
+    }
+    return { ok:false, max:0, reason:'' };
+  }
+
+  // JPEGの「撮影場所(GPS)・カメラ情報」などのメタ情報だけを取り除く(画像そのものは1ピクセルも変えない=画質は同じ)。
+  // 写真の向き(縦/横)の情報だけは残す(消すと、縦の写真が横向きになってしまうため)。JPEG以外はそのまま返す
+  async function stripJpegMeta(file){
+    try{
+      const buf = new Uint8Array(await file.arrayBuffer());
+      if(buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return file;
+      const kept = []; let i = 2, orient = 1;
+      while(i + 4 <= buf.length && buf[i] === 0xFF){
+        const m = buf[i + 1];
+        if(m === 0xFF){ i++; continue; }
+        if(m === 0xD9 || m === 0xDA) break;                                  // ここから先は画像データ本体
+        if(m === 0x01 || (m >= 0xD0 && m <= 0xD7)){ kept.push(buf.subarray(i, i + 2)); i += 2; continue; }
+        const len = (buf[i + 2] << 8) | buf[i + 3], end = i + 2 + len;
+        if(len < 2 || end > buf.length) return file;                          // 形がおかしい → 触らない
+        if(m === 0xE1 || m === 0xED || m === 0xFE){                           // APP1(Exif/XMP)・APP13・コメント → 外す
+          if(m === 0xE1 && buf[i + 4] === 0x45 && buf[i + 5] === 0x78 && buf[i + 6] === 0x69 && buf[i + 7] === 0x66){   // 'Exif'
+            const t = i + 10, le = buf[t] === 0x49, dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+            try{
+              const ifd = t + dv.getUint32(t + 4, le), n = dv.getUint16(ifd, le);
+              for(let k = 0; k < n; k++){ const e = ifd + 2 + k * 12; if(dv.getUint16(e, le) === 0x0112){ orient = dv.getUint16(e + 8, le) || 1; break; } }
+            }catch(e){ orient = 1; }
+          }
+        }else kept.push(buf.subarray(i, end));
+        i = end;
+      }
+      const parts = [buf.subarray(0, 2)];
+      if(orient > 1 && orient <= 8){
+        parts.push(new Uint8Array([0xFF, 0xE1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0,  0x4D, 0x4D, 0, 0x2A, 0, 0, 0, 8,  0, 1,  0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, orient, 0, 0,  0, 0, 0, 0]));
+      }
+      kept.forEach(k=> parts.push(k)); parts.push(buf.subarray(i));
+      return new Blob(parts, { type: 'image/jpeg' });
+    }catch(e){ return file; }
+  }
+
+  // 画像を選んだあとの全部(①接続確認 → ②-A オリジナルをimgBBへ / ②-B 圧縮してサーバーへ)。onStatus(文章) で進み具合を知らせる
+  async function uploadImageSmart(kind, file, onStatus, compressOpt){
+    if(!file || !/^image\//.test(file.type || '')) throw new Error('画像ファイルを選んでください');
+    const say = (t)=>{ if(onStatus) onStatus(t); };
+    say('imgBB との接続を確認しています…');
+    const st = await imgbbReady();
+    if(st.ok && file.size <= st.max){
+      try{
+        say('オリジナルの画質のまま送っています…');
+        return await uploadImageBlob(kind, file.type === 'image/jpeg' ? await stripJpegMeta(file) : file, say, 'original');
+      }catch(err){
+        if(!err || !err.fallback) throw err;                                // 圧縮でやり直しても同じ失敗(ログイン切れなど)のときは、そのまま知らせる
+        say('imgBB に送れなかったので、圧縮して送ります…');
+      }
+    }else{
+      say(st.ok ? '画像が大きいので、圧縮して送ります…' : 'imgBB につながらないので、圧縮して送ります…');
+    }
+    const blob = await compressImage(file, compressOpt);
+    return await uploadImageBlob(kind, blob, say, 'compressed');
   }
 
   // ----- 📷 画像を小さく圧縮(送る前に。容量を使いすぎないための工夫) -----
@@ -3671,11 +3773,11 @@ restartBtn.addEventListener('click', ()=>{
       document.getElementById('iconUploadBtn').addEventListener('click', ()=> file.click());
       file.addEventListener('change', async ()=>{
         const f = file.files[0]; if(!f) return;
-        show('圧縮してアップロード中…', true);
+        show('準備しています…', true);
         try{
-          const blob = await compressImage(f, { maxEdge:128, maxBytes:12000, square:true });
-          const d = await uploadImageBlob('icon', blob, (t)=> show(t, true));
-          pickEmoji = null; paint(); applied(d.icon); show(`アイコンを設定しました(${Math.ceil(blob.size/1000)}KB)`, true);
+          const d = await uploadImageSmart('icon', f, (t)=> show(t, true), { maxEdge:128, maxBytes:12000, square:true });
+          pickEmoji = null; paint(); applied(d.icon);
+          show(d.host === 'imgbb' ? 'アイコンを設定しました(オリジナルの画質)' : `アイコンを設定しました(圧縮版 ${Math.ceil(d.size/1000)}KB)`, true);
         }catch(err){ show(err.message, false); }
         file.value = '';
       });
@@ -4615,12 +4717,11 @@ restartBtn.addEventListener('click', ()=>{
     document.getElementById('chatImgRemove').addEventListener('click', clearChatImg);
     document.getElementById('chatImgFile').addEventListener('change', async (e)=>{
       const f = e.target.files[0]; if(!f) return;
-      prevBox.style.display = 'flex'; prevBox.querySelector('span').textContent = '圧縮中…';
-      try{
-        chatImgBlob = await compressImage(f, { maxEdge:800, maxBytes:70000 });
-        const im = prevBox.querySelector('img'); im.src = URL.createObjectURL(chatImgBlob);
-        prevBox.querySelector('span').textContent = `${Math.ceil(chatImgBlob.size/1000)}KB に圧縮しました(送信で3日間だけ保存されます)`;
-      }catch(err){ alert(err.message); clearChatImg(); }
+      if(!/^image\//.test(f.type || '')){ alert('画像ファイルを選んでください'); clearChatImg(); return; }
+      chatImgBlob = f;                                     // 圧縮は、送るときに「imgBB につながらなかった場合だけ」行う
+      prevBox.style.display = 'flex';
+      const im = prevBox.querySelector('img'); im.src = URL.createObjectURL(f);
+      prevBox.querySelector('span').textContent = `${f.size >= 1e6 ? (f.size / 1e6).toFixed(1) + 'MB' : Math.ceil(f.size / 1000) + 'KB'} の画像(送信すると3日間だけ保存されます)`;
     });
     document.getElementById('chatSendBtn').addEventListener('click', async () => {
       const input = document.getElementById('chatInput');
@@ -4629,7 +4730,7 @@ restartBtn.addEventListener('click', ()=>{
       if (chatImgBlob && !chatEditId) {                    // 画像つき: 先にアップロードしてから、そのIDでメッセージを送る
         const btn = document.getElementById('chatSendBtn'); btn.disabled = true;
         try{
-          const ud = await uploadImageBlob('chat', chatImgBlob, (t)=>{ prevBox.querySelector('span').textContent = t; });
+          const ud = await uploadImageSmart('chat', chatImgBlob, (t)=>{ prevBox.querySelector('span').textContent = t; }, { maxEdge:800, maxBytes:70000 });
           input.value = '';
           const ok = await sendChatMessage(msg, ud.id);
           if(ok) clearChatImg(); else if(!input.value) input.value = msg;
@@ -6921,6 +7022,10 @@ function renderOtherGamesModal(){
 
   // ===================== 更新履歴 / バージョン表示 =====================
   const CHANGELOG = [
+    { version:'4.1.0', date:'2026-10-27', items:[
+      '🔐 HWID(この端末の登録)を見直し: ログイン/新規登録でこの端末とアカウントが紐づき、ログアウトで外れます。ページを開くたびにHWIDを確認し、紐づいたアカウントがあればそのままログイン、なければゲストになります。1つの端末に複数のアカウントが紐づいていたら、いちばん新しくログインしたものにそろえます',
+      '🖼 画像のアップロードを2パターンに: imgBBにつながるときは、圧縮せず「オリジナルの画質のまま」送ってアイコン/チャットに使います。つながらないときだけ、圧縮して使います(撮影場所などの情報は自動で取り除かれます)'
+    ]},
     { version:'4.0.0', date:'2026-10-27', items:[
       '👹 ハロウィン パート3 拡張！ 新タブ「👹 ボス」: みんなのダメージを合わせて、4体のボスを順番にたおす協力イベント。ゲームやミニゲームを遊ぶだけで自動でダメージが入り、キャンディを使って「こうげき」もできます(クリティカルあり)。たおすたびに、参加した全員にごほうび',
       '🕹 新しいミニゲームを5本追加(コウモリよけ / ともしびメモリー / ガイコツ・ビート / かぼちゃふくらまし / もじならべ)。スタンプラリーは31個に、27個・29個のごほうびも追加',
