@@ -1082,6 +1082,28 @@ def img_get(img_id):
         if rows[0].get('url'):                                                    # imgBB の画像 → そちらへ案内(1日はブラウザが覚える)
             # ?s=t … 小さな表示(アイコンの丸など)用。imgBB の小さい版があればそれを、なければオリジナルを返す
             target = (rows[0].get('thumb_url') or rows[0]['url']) if request.args.get('s') == 't' else rows[0]['url']
+            if request.args.get('px') == '1':
+                # ?px=1 … サーバー経由。端末が imgBB に直接つなげないとき(iPad・フィルター・ブロッカーなど)用。
+                #         アプリ側が、直接の読み込みに失敗したときだけ、自動でこちらに切り替える
+                try:
+                    up = requests.get(target, timeout=(4, 20), stream=True)
+                    ctype = (up.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+                    if up.status_code != 200 or not ctype.startswith('image/'):
+                        return jsonify({'error': 'not found'}), 404
+                    body, size = [], 0
+                    for chunk in up.iter_content(65536):
+                        size += len(chunk)
+                        if size > IMG_ORIGINAL_MAX_BYTES + 1_000_000:
+                            return jsonify({'error': 'too large'}), 413
+                        body.append(chunk)
+                    resp = app.response_class(b''.join(body), mimetype=ctype)
+                    resp.headers['Cache-Control'] = 'public, max-age=86400'
+                    resp.headers['X-Content-Type-Options'] = 'nosniff'
+                    resp.headers['Cross-Origin-Resource-Policy'] = 'cross-origin'
+                    return resp
+                except Exception as err:
+                    print(f'img proxy error: {err}')
+                    return jsonify({'error': 'error'}), 502
             resp = redirect(target, code=302)
             resp.headers['Cache-Control'] = 'public, max-age=86400'
             return resp
