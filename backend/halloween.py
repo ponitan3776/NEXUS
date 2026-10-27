@@ -58,7 +58,8 @@ class C:
     DEX_IDS = [d[0] for d in DEX]
     # 🎪 スタンプラリーの対象になるミニゲームのID(minigames.py の GAMES と同じ並び。他のファイルに頼らず起動できるよう、ここにも持つ)
     MINI_GAME_IDS = ['g2048', 'snake', 'memory', 'whack', 'mines', 'flight', 'dino', 'breakout', 'simon', 'reflex', 'catch', 'math', 'maze', 'slide', 'lights', 'numtouch', 'stroop', 'stack',
-                     'tapspeed', 'timing', 'oddone', 'sortg', 'highlow', 'rps', 'pumpcount', 'holdexact']   # ← v3.9 パート3で+8
+                     'tapspeed', 'timing', 'oddone', 'sortg', 'highlow', 'rps', 'pumpcount', 'holdexact',
+                     'batdodge', 'glowmem', 'rhythm', 'puffpump', 'wordscr']   # ← v3.9 パート3で+8 / v4.0 で+5
     DEX_DROP_CHANCE = 0.40          # ゲーム1回ごとに、図鑑に新しい(または重複の)おばけが出会える確率
     DEX_DUP_CANDIES = {'common': 3, 'rare': 8, 'epic': 20, 'legendary': 60}   # すでに出会っていたら、キャンディに変わる
 
@@ -74,7 +75,7 @@ class C:
 
     # ===================== 🎪 ミニゲーム・スタンプラリー =====================
     # 全ミニゲームを1回ずつ遊ぶとスタンプがたまる(ゲームの数は minigames.py の GAMES から自動)
-    STAMP_STEPS = [3, 6, 9, 12, 15, 18, 21, 24, 'all']
+    STAMP_STEPS = [3, 6, 9, 12, 15, 18, 21, 24, 27, 29, 'all']
     STAMP_REWARDS = {
         3:     {'type': 'coins', 'amount': 1500},
         6:     {'type': 'ticket', 'amount': 1},
@@ -84,6 +85,8 @@ class C:
         18:    {'type': 'ticket', 'amount': 2},
         21:    {'type': 'bpxp', 'amount': 4000},
         24:    {'type': 'coins', 'amount': 12000},
+        27:    {'type': 'ticket', 'amount': 3},
+        29:    {'type': 'coins', 'amount': 20000},
         'all': {'type': 'skin', 'skinId': 'hween_trickortreat', 'extraCoins': 8000},
     }
 
@@ -146,6 +149,34 @@ class C:
         {'need': 500_000,   'rewards': [{'type': 'ticket', 'amount': 8}, {'type': 'coins', 'amount': 50000}]},
     ]
     COMMUNITY_CACHE_SEC = 30
+
+    # ===================== 👹 みんなでボス討伐(v4.0 パート3 拡張) =====================
+    # 全員のダメージを合計して、ボスを順番にたおしていく。たおすたびに、参加した全員にごほうび(受け取りは1人ずつ)。
+    #   ダメージの出どころ: ①ゲーム/ミニゲームを遊ぶ(1回ごと自動) ②キャンディを使って「こうげき」(1回 RAID_ATTACK_COST 個)
+    #   HP は環境変数 HALLOWEEN_RAID_SCALE で一括調整できる(人数が少ないなら 0.3 など。既定 1.0)
+    RAID_BOSSES = [
+        {'no': 1, 'emoji': '👻', 'name': 'ふわふわゴースト大王', 'hp': 200_000,
+         'story': 'ふわふわの体で、みんなのキャンディをねらっている！',
+         'rewards': [{'type': 'candies', 'amount': 200}, {'type': 'coins', 'amount': 5000}]},
+        {'no': 2, 'emoji': '🧛', 'name': 'ヴァンパイア伯爵', 'hp': 700_000,
+         'story': '夜になると強くなる。マントのうらに弱点が…？',
+         'rewards': [{'type': 'candies', 'amount': 400}, {'type': 'ticket', 'amount': 2}, {'type': 'bpxp', 'amount': 3000}]},
+        {'no': 3, 'emoji': '🐉', 'name': 'ナイトドラゴン', 'hp': 1_600_000,
+         'story': '真夜中の空をかける、ハロウィンの守り神(？)。',
+         'rewards': [{'type': 'candies', 'amount': 600}, {'type': 'coins', 'amount': 20000}, {'type': 'ticket', 'amount': 3}]},
+        {'no': 4, 'emoji': '👑', 'name': '巨大かぼちゃ王ジャック', 'hp': 3_500_000,
+         'story': 'すべてのかぼちゃを統べる王。みんなの力をあわせろ！',
+         'rewards': [{'type': 'candies', 'amount': 1000}, {'type': 'coins', 'amount': 50000}, {'type': 'ticket', 'amount': 5}, {'type': 'bpxp', 'amount': 8000}]},
+    ]
+    RAID_ATTACK_COST = 25              # こうげき1回に使うキャンディ(累計には影響しない=ロードの進行は減らない)
+    RAID_ATTACK_MAX_PER_DAY = 30       # 1日のこうげき回数
+    RAID_DAMAGE = (600, 1000)
+    RAID_CRIT_CHANCE = 0.12
+    RAID_CRIT_MULT = 2.5
+    RAID_PLAY_BASE = 40                # 遊ぶと自動で入るダメージ = これ + もらったキャンディ×RAID_PLAY_PER_CANDY
+    RAID_PLAY_PER_CANDY = 3
+    RAID_MIN_DMG = 300                 # この合計ダメージ以上の人だけ、ごほうびを受け取れる(見ているだけの人を除く)
+    RAID_CACHE_SEC = 8
 
     # ===================== 🍬 キャンディのボーナスタイム =====================
     # (JSTの月日ごと) 10/31 当日は3倍、前後は2倍。土日は1.5倍、毎晩20〜23時は1.5倍(いちばん高いものが1つだけ効く)
@@ -420,6 +451,13 @@ def norm_state(st):
         st['tot'] = {'date': today, 'used': 0}
     if not isinstance(st.get('ghost'), dict) or st['ghost'].get('date') != today:
         st['ghost'] = {'date': today, 'count': 0, 'last': st.get('ghost', {}).get('last', 0) if isinstance(st.get('ghost'), dict) else 0}
+    if not isinstance(st.get('raid'), dict):                 # 👹 みんなでボス討伐(個人の累計ダメージ)
+        st['raid'] = {}
+    st['raid'].setdefault('dmg', 0)
+    st['raid'].setdefault('hits', 0)
+    st['raid'].setdefault('claimed', [])
+    if not isinstance(st['raid'].get('atk'), dict) or st['raid']['atk'].get('date') != today:
+        st['raid']['atk'] = {'date': today, 'n': 0}
     if not isinstance(st.get('snack'), dict) or st['snack'].get('date') != today:
         st['snack'] = {'date': today, 'count': 0, 'last': 0}
     if not isinstance(st.get('parade'), dict) or st['parade'].get('date') != today:
@@ -478,6 +516,9 @@ def apply_reward(reward, state):
     if t == 'bpxp':
         state['bpxp'] += reward['amount']
         return f"🎫XP+{reward['amount']:,}"
+    if t == 'candies':
+        add_candies(state['st'], reward['amount'])
+        return f"🍬{reward['amount']:,}"
     if t == 'skin':
         if reward['skinId'] not in state['skins']:
             state['skins'].append(reward['skinId'])
@@ -641,6 +682,39 @@ def part3_view(st):
     return {'snack': {'count': sn['count'], 'max': C.SNACK_MAX_PER_DAY, 'left': left, 'waitSec': wait if left else 0,
                       'interval': C.SNACK_INTERVAL_SEC, 'candies': int(round(C.SNACK_CANDIES * mult)), 'ready': left > 0 and wait == 0},
             'parade': {'plays': plays, 'tiers': tiers}}
+
+
+def raid_scale():
+    try:
+        return max(0.01, float(os.environ.get('HALLOWEEN_RAID_SCALE', '1') or 1))
+    except ValueError:
+        return 1.0
+
+
+def raid_progress(total):
+    """ボスごとの [ {no, emoji, name, story, hp, hpLeft, defeated, current, rewards} ]。total = 全員のダメージの合計"""
+    scale, cum, out, current_set = raid_scale(), 0, [], False
+    for b in C.RAID_BOSSES:
+        hp = max(1, int(b['hp'] * scale))
+        start, cum = cum, cum + hp
+        defeated = total >= cum
+        left = 0 if defeated else (hp if total <= start else cum - total)
+        cur = (not defeated) and (not current_set)
+        current_set = current_set or cur
+        out.append({'no': b['no'], 'emoji': b['emoji'], 'name': b['name'], 'story': b['story'], 'hp': hp, 'hpLeft': left,
+                    'defeated': defeated, 'current': cur, 'rewards': b['rewards']})
+    return out
+
+
+def raid_view(st, total, top):
+    r = st['raid']
+    bosses = raid_progress(total)
+    for b in bosses:
+        b['claimed'] = b['no'] in r['claimed']
+        b['canClaim'] = b['defeated'] and not b['claimed'] and r['dmg'] >= C.RAID_MIN_DMG
+    return {'total': total, 'bosses': bosses, 'allDefeated': all(b['defeated'] for b in bosses), 'top': top,
+            'mine': {'dmg': r['dmg'], 'hits': r['hits'], 'attacksLeft': max(0, C.RAID_ATTACK_MAX_PER_DAY - r['atk']['n']),
+                     'max': C.RAID_ATTACK_MAX_PER_DAY, 'cost': C.RAID_ATTACK_COST, 'candies': st['candies'], 'minDmg': C.RAID_MIN_DMG}}
 
 
 def extra_view(s):
@@ -945,6 +1019,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
                     base += C.MINI_GAME_BONUS
                 gained = int(round(base * mult))
                 add_candies(st, gained)
+                st['raid']['dmg'] += int(C.RAID_PLAY_BASE + gained * C.RAID_PLAY_PER_CANDY)     # 👹 遊ぶだけでボスにダメージ
                 add_stat_both(st, 'games', 1)
                 add_stat_both(st, 'score_max', score)
                 if mini_id:
@@ -1384,6 +1459,94 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
                 st['stampClaimed'].append(k)
             return {'ok': True, 'claimedCount': len(targets), 'rewards': [r for _, r in targets], **wallet(s)}
         return jsonify(with_state(user_id, fn, ('active', 'grace')))
+
+    # --- 👹 みんなでボス討伐(v4.0 パート3 拡張): 全員のダメージの合計でボスが順番にたおれる ---
+    raid_cache = {'t': 0.0, 'total': 0, 'top': []}
+
+    def raid_snapshot(force=False):
+        if not force and time.time() - raid_cache['t'] < C.RAID_CACHE_SEC:
+            return raid_cache
+        rows = db_query("SELECT id, display_name, COALESCE((event_state->'raid'->>'dmg')::bigint, 0) AS d FROM users "
+                        "WHERE event_state->>'id' = %s AND COALESCE((event_state->'raid'->>'dmg')::bigint, 0) > 0 "
+                        "ORDER BY d DESC", [EVENT_ID])
+        raid_cache['total'] = sum(int(r['d']) for r in rows)
+        raid_cache['top'] = [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'dmg': int(r['d'])} for r in rows[:10]]
+        raid_cache['t'] = time.time()
+        return raid_cache
+
+    def raid_payload(user_id, force=False):
+        snap = raid_snapshot(force)
+        row = db_query('SELECT event_state FROM users WHERE id = %s', [user_id])
+        st = norm_state(row[0].get('event_state') if row else None)
+        return raid_view(st, snap['total'], snap['top'])
+
+    @app.get('/api/event/halloween/raid')
+    @guard
+    def hw_raid():
+        user_id = require_auth()
+        return jsonify(raid_payload(user_id))
+
+    @app.post('/api/event/halloween/raid/attack')
+    @guard
+    def hw_raid_attack():
+        user_id = require_auth()
+        times = max(1, min(10, body_int('times', 1)))
+        if all(b['defeated'] for b in raid_progress(raid_snapshot(True)['total'])):
+            raise ApiError('ボスはぜんぶ、みんなでたおしました！ 🎉', 400)
+
+        def fn(s):
+            st = s['st']
+            r = st['raid']
+            left = C.RAID_ATTACK_MAX_PER_DAY - r['atk']['n']
+            if left <= 0:
+                raise ApiError('今日はもうつかれた…！ こうげきは明日また(1日%d回まで)' % C.RAID_ATTACK_MAX_PER_DAY, 400)
+            n = min(times, left, st['candies'] // C.RAID_ATTACK_COST)
+            if n <= 0:
+                raise ApiError('キャンディが足りません(こうげき1回 🍬%d)' % C.RAID_ATTACK_COST, 400)
+            hits, total_dmg = [], 0
+            for _ in range(n):
+                d = random.randint(*C.RAID_DAMAGE)
+                crit = random.random() < C.RAID_CRIT_CHANCE
+                if crit:
+                    d = int(d * C.RAID_CRIT_MULT)
+                hits.append({'d': d, 'crit': crit})
+                total_dmg += d
+            st['candies'] -= n * C.RAID_ATTACK_COST          # 使うだけ。累計(totalCandies)は減らさない
+            r['dmg'] += total_dmg
+            r['hits'] += n
+            r['atk']['n'] += n
+            add_stat_both(st, 'raid', n)
+            return {'ok': True, 'hits': hits, 'damage': total_dmg, **wallet(s)}
+        out = with_state(user_id, fn)
+        out['raid'] = raid_payload(user_id, True)
+        return jsonify(out)
+
+    @app.post('/api/event/halloween/raid/claim')
+    @guard
+    def hw_raid_claim():
+        user_id = require_auth()
+        b = request.get_json(silent=True) or {}
+        want_all, need = bool(b.get('all')), body_int('need', -1)
+        total = raid_snapshot(True)['total']
+
+        def fn(s):
+            st = s['st']
+            r = st['raid']
+            if r['dmg'] < C.RAID_MIN_DMG:
+                raise ApiError('ボスにダメージを与えた人だけが受け取れます(合計 %d ダメージ以上)' % C.RAID_MIN_DMG, 400)
+            targets = [x for x in raid_progress(total) if x['defeated'] and x['no'] not in r['claimed'] and (want_all or x['no'] == need)]
+            if not targets:
+                raise ApiError('受け取れる報酬がありません', 400)
+            rewards = []
+            for x in targets:
+                for rw in x['rewards']:
+                    apply_reward(rw, s)
+                    rewards.append(rw)
+                r['claimed'].append(x['no'])
+            return {'ok': True, 'claimedCount': len(targets), 'rewards': rewards, **wallet(s)}
+        out = with_state(user_id, fn, ('active', 'grace'))
+        out['raid'] = raid_payload(user_id, True)
+        return jsonify(out)
 
     # --- 🌍 みんなでキャンディ大作戦(全員の累計の合計) ---
     comm_cache = {'t': 0.0, 'v': 0}
