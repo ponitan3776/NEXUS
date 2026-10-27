@@ -572,6 +572,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     """)
     print('✅ 週替わりチャレンジテーブル作成完了')
 
+    # 🔧 小さな設定の置き場(imgBB のAPIキーなど。環境変数が使えないときの予備)
+    db_execute('''
+        CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT, updated_at TIMESTAMP DEFAULT NOW());
+        ALTER TABLE app_kv ENABLE ROW LEVEL SECURITY;
+    ''')
+
     # 🕹 ミニゲームのランキング
     db_execute('''
         CREATE TABLE IF NOT EXISTS mini_scores (
@@ -717,8 +723,7 @@ def handle_api_error(err):
 #   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Renderの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
 #      キーが空、または imgBB が落ちている/失敗したときは、これまで通りサーバーのDBに保存する(下の「自前保存」)。
 #      IMG_USE_IMGBB=0 にすると、キーがあっても imgBB を使わない(手動で切り替えたいとき)。
-IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY', '').strip()
-IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1') != '0'
+IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1').strip().lower() not in ('0', 'false', 'off', 'no')
 IMGBB_ENDPOINT = 'https://api.imgbb.com/1/upload'
 ICON_MAX_BYTES = 24_000
 CHAT_IMG_MAX_BYTES = 150_000
@@ -786,37 +791,135 @@ def _test_png(w=48, h=48):
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
 
-def imgbb_upload_ex(data, name, ttl_seconds=None):
+# --- imgBB のAPIキー(v4.0で見直し) ---
+# 以前は起動時に1回だけ環境変数 IMGBB_API_KEY を読んでいたため、名前の打ち間違い・引用符つきの値・
+# 「環境変数を変えたのに再起動されていない」ときに「認識されない」状態になっていた。
+#   ① 呼ばれるたびに探す(起動後に変えても反映される)
+#   ② 名前の別名(IMGBB_KEY など)・大文字小文字・前後の空白/引用符/「KEY=」の付けまちがいを許す
+#   ③ 環境変数が使えないとき用に、管理者コマンド /imgbbkey <キー> でDBに保存できる(環境変数が優先)
+_IMGBB_NAMES = ('IMGBB_API_KEY', 'IMGBB_KEY', 'IMGBB_APIKEY', 'IMGBB_TOKEN', 'IMG_BB_API_KEY', 'IMGBB_API', 'IMGBB')
+_imgbb_db_cache = {'t': 0.0, 'v': ''}
+
+
+def _clean_imgbb_key(v):
+    v = (v or '').strip()
+    m = re.match(r'^(?:export\s+)?[A-Za-z_]*(?:KEY|TOKEN|API)[A-Za-z_]*\s*=\s*(.+)$', v, re.I | re.S)
+    if m:                                                    # 「IMGBB_API_KEY=abc…」まで貼ってしまった
+        v = m.group(1)
+    v = v.strip().strip('\'"`').strip()
+    return re.sub(r'\s+', '', v)                             # 途中の空白・改行(コピー時に入りやすい)
+
+
+def _env_imgbb_key():
+    """(キー, 見つかった環境変数名)。見つからなければ ('', None)"""
+    for n in _IMGBB_NAMES:
+        v = _clean_imgbb_key(os.environ.get(n))
+        if v:
+            return v, n
+    for n, val in os.environ.items():                        # 大文字小文字・ハイフンなどの違い(IMG_USE_IMGBB のような設定名は除く)
+        low = n.lower()
+        if 'imgbb' in low and any(w in low for w in ('key', 'api', 'token')):
+            v = _clean_imgbb_key(val)
+            if v:
+                return v, n
+    return '', None
+
+
+def _imgbb_env_names_seen():
+    """診断用: 環境変数の「名前」だけ(値は出さない)で imgbb らしいもの"""
+    return sorted(n for n in os.environ if 'imgbb' in n.lower() or n.lower().replace('_', '').startswith('imgb'))
+
+
+def get_imgbb_key():
+    """(キー, 取得元)。取得元 = 'env:名前' / 'db' / 'none'"""
+    v, name = _env_imgbb_key()
+    if v:
+        return v, f'env:{name}'
+    if time.time() - _imgbb_db_cache['t'] > 60:
+        try:
+            rows = db_query("SELECT v FROM app_kv WHERE k = 'imgbb_api_key'")
+            _imgbb_db_cache['v'] = _clean_imgbb_key(rows[0]['v']) if rows else ''
+        except Exception as err:
+            print(f'imgbb key (db) error: {err}')
+            _imgbb_db_cache['v'] = ''
+        _imgbb_db_cache['t'] = time.time()
+    if _imgbb_db_cache['v']:
+        return _imgbb_db_cache['v'], 'db'
+    return '', 'none'
+
+
+def set_imgbb_key_db(value):
+    value = _clean_imgbb_key(value)
+    if value:
+        db_execute("INSERT INTO app_kv (k, v, updated_at) VALUES ('imgbb_api_key', %s, NOW()) "
+                   "ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = NOW()", [value])
+    else:
+        db_execute("DELETE FROM app_kv WHERE k = 'imgbb_api_key'")
+    _imgbb_db_cache.update({'t': 0.0, 'v': value})
+
+
+def _key_hint(key):
+    return (key[:4] + '…' + key[-4:] + f'({len(key)}文字)') if len(key) >= 10 else (f'({len(key)}文字・短すぎます)' if key else '未設定')
+
+
+_EXT = {'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif'}
+
+
+def _imgbb_post(key, data, name, mime, ttl_seconds, as_base64):
+    """1回だけ imgBB に送る。(URL か None, 説明, APIキーの問題か)"""
+    params = {'key': key}
+    if ttl_seconds:
+        params['expiration'] = str(max(60, min(int(ttl_seconds), 15552000)))     # imgBB の範囲: 60秒〜180日
+    if as_base64:
+        files = {'image': (None, base64.b64encode(data).decode('ascii')), 'name': (None, name)}
+    else:                                                                       # 本物のファイルとして送るのが、いちばん確実
+        files = {'image': (f'{name}.{_EXT.get(mime, "bin")}', data, mime or 'application/octet-stream')}
+    r = requests.post(IMGBB_ENDPOINT, params=params, files=files, timeout=(6, 20), headers={'Accept': 'application/json'})
+    try:
+        j = r.json()
+    except ValueError:
+        j = {}
+    d = j.get('data') if isinstance(j.get('data'), dict) else {}
+    if r.status_code == 200 and j.get('success'):
+        url = d.get('url') or d.get('display_url') or (d.get('image') or {}).get('url')
+        if url and str(url).startswith('http'):
+            url = 'https://' + str(url)[len('http://'):] if str(url).startswith('http://') else str(url)
+            return url, f'成功 (HTTP 200) {url}', False
+    e = j.get('error')
+    err = (e.get('message') if isinstance(e, dict) else e) or (r.text or '')[:160]
+    code = e.get('code') if isinstance(e, dict) else None
+    bad_key = (code == 100) or r.status_code in (400, 401, 403) and 'key' in str(err).lower()
+    return None, f'失敗 (HTTP {r.status_code}) {err}', bool(bad_key)
+
+
+def imgbb_upload_ex(data, name, ttl_seconds=None, mime=None):
     """imgBB にアップロードする。(URL か None, 結果の説明) を返す。
-    imgBB の呼び出し例と同じ形: key と expiration は URL(クエリ)、画像は multipart のフォーム(--form image=...)で POST"""
-    if not IMGBB_API_KEY:
-        return None, 'IMGBB_API_KEY が空です(Renderの環境変数に入れてください)'
+    ①ファイルとして送る → ②だめならbase64で送る → ③期限つきが原因かもしれないので、期限なしでもう一度。
+    (APIキーが間違っているときは、何度やっても同じなので、すぐやめる)"""
+    key, src = get_imgbb_key()
+    if not key:
+        return None, 'APIキーが見つかりません(Renderの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
     if not IMG_USE_IMGBB:
         return None, 'IMG_USE_IMGBB=0 のため、imgBB は使いません'
-    try:
-        params = {'key': IMGBB_API_KEY}
-        if ttl_seconds:
-            params['expiration'] = str(max(60, min(int(ttl_seconds), 15552000)))     # imgBB の範囲: 60秒〜180日
-        files = {'image': (None, base64.b64encode(data).decode('ascii')), 'name': (None, name)}
-        r = requests.post(IMGBB_ENDPOINT, params=params, files=files, timeout=(5, 15))
+    mime = mime or _sniff_image(data) or ('image/png' if data[:4] == b'\x89PNG' else None)
+    tries = [(ttl_seconds, False), (ttl_seconds, True)] + ([(None, False)] if ttl_seconds else [])
+    last = ''
+    for ttl, b64 in tries:
         try:
-            j = r.json()
-        except ValueError:
-            j = {}
-        if r.status_code == 200 and j.get('success'):
-            d = j.get('data') or {}
-            url = d.get('url') or d.get('display_url')
-            if url and url.startswith('https://'):
-                return url, f'成功 (HTTP 200) {url}'
-        err = (j.get('error') or {}).get('message') if isinstance(j.get('error'), dict) else None
-        return None, f"失敗 (HTTP {r.status_code}) {err or (r.text or '')[:160]}"
-    except Exception as err:
-        return None, f'通信エラー: {err}'
+            url, msg, bad_key = _imgbb_post(key, data, name, mime, ttl, b64)
+        except Exception as err:
+            url, msg, bad_key = None, f'通信エラー: {err}', False
+        if url:
+            return url, msg
+        last = f"{'base64' if b64 else 'ファイル'}送信{'(期限なし)' if not ttl and ttl_seconds else ''}: {msg}"
+        if bad_key:
+            return None, f'{msg} → APIキーが正しくありません(取得元: {src})'
+    return None, last
 
 
-def imgbb_upload(data, name, ttl_seconds=None):
+def imgbb_upload(data, name, ttl_seconds=None, mime=None):
     """imgBB にアップロードして画像のURLを返す。使えない・失敗したときは None(呼び出し側が自前保存に切り替える)"""
-    url, msg = imgbb_upload_ex(data, name, ttl_seconds)
+    url, msg = imgbb_upload_ex(data, name, ttl_seconds, mime)
     _imgbb_last.update({'ok': bool(url), 'msg': msg, 'at': datetime.utcnow()})
     print(('☁️ imgBB OK: ' if url else '⚠️ imgBB 失敗 → 自前保存に切り替え: ') + msg)
     return url
@@ -845,7 +948,7 @@ def img_upload():
         _img_rate_check(user_id, kind)
         img_id = secrets.token_hex(8)
         ttl = IMG_CHAT_TTL_HOURS * 3600 if kind == 'chat' else None            # チャット画像は imgBB 側でも期限つき
-        url = imgbb_upload(data, f'{kind}-{img_id}', ttl)
+        url = imgbb_upload(data, f'{kind}-{img_id}', ttl, mime)
         host = 'imgbb' if url else 'local'
         if url:                                                                 # imgBB に置けた → DBには URL だけ
             db_execute('INSERT INTO images (id, owner, kind, mime, size, data, url, created_at) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)',
@@ -859,7 +962,7 @@ def img_upload():
             cache_drop('chat:', 'rank:')
         else:
             purge_images()
-        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data), 'host': host})
+        return jsonify({'ok': True, 'id': img_id, 'icon': f'i:{img_id}' if kind == 'icon' else None, 'size': len(data), 'host': host, 'url': url or None})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
@@ -2818,23 +2921,42 @@ def admin_command():
                      f"🚫 BAN: {'BAN中' if u.get('banned') else 'なし'}\n📅 作成日: {created_str}\n"
                      f"📅 最終ログイン: {last_login_str}")
 
+        elif cmd == '/imgbbkey':
+            # imgBB のAPIキーを、データベースに保存する(Renderの環境変数が使えないとき用。環境変数があれば、そちらが優先)
+            #   /imgbbkey <キー> で保存 / /imgbbkey clear で削除
+            if not args:
+                raise ValueError('使用法: /imgbbkey <imgBBのAPIキー>   (消すとき: /imgbbkey clear)')
+            if args[0].lower() == 'clear':
+                set_imgbb_key_db('')
+                result = '🗑 DBに保存した imgBB のAPIキーを削除しました'
+            else:
+                set_imgbb_key_db(' '.join(args))
+                k, src = get_imgbb_key()
+                result = (f'💾 imgBB のAPIキーを保存しました: {_key_hint(k)}(取得元: {src})\n'
+                          + ('※ 環境変数のキーがあるので、そちらが使われます\n' if src.startswith('env:') else '')
+                          + '続けて「☁️ imgBB 接続テスト」(/imgbb)で確認してください')
+
         elif cmd == '/imgbb':
             # テスト用に、小さな本物のPNG(48x48のグラデーション)を作って、実際に imgBB へ送る。
             #   ①期限つき(600秒。チャット画像と同じ種類) ②だめなら 期限なし(アイコンと同じ種類)も試して、原因を切り分ける
+            key, src = get_imgbb_key()
             png = _test_png()
             u1, m1 = imgbb_upload_ex(png, 'nexus-test', 600)
             u2, m2 = (None, '(①が成功したので省略)') if u1 else imgbb_upload_ex(png, 'nexus-test2', None)
-            key_info = (IMGBB_API_KEY[:4] + '…' + IMGBB_API_KEY[-4:] + f'({len(IMGBB_API_KEY)}文字)') if IMGBB_API_KEY else '未設定'
+            seen = _imgbb_env_names_seen()
             last = _imgbb_last
             last_s = '(まだ使われていません)' if last['ok'] is None else \
                 f"{'✅' if last['ok'] else '⚠️'} {last['at'].strftime('%m/%d %H:%M:%S')} UTC {last['msg'][:120]}"
             okay = bool(u1 or u2)
-            result = (f"☁️ imgBB 接続テスト\nAPIキー: {key_info}\n使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
-                      f"サーバーの起動: {SERVER_STARTED_AT.strftime('%m/%d %H:%M:%S')} UTC(環境変数を変えたのに、これより前なら、まだ再起動されていません)\n"
+            result = (f"☁️ imgBB 接続テスト\nAPIキー: {_key_hint(key)}  取得元: {src}\n"
+                      f"imgBBっぽい環境変数の名前: {', '.join(seen) if seen else '(1つも見つかりません → Render の Environment に入れた名前・サービスを確認)'}\n"
+                      f"使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
+                      f"サーバーの起動: {SERVER_STARTED_AT.strftime('%m/%d %H:%M:%S')} UTC\n"
                       f"①期限つき(チャット画像と同じ): {'✅ ' if u1 else '❌ '}{m1}\n"
                       f"②期限なし(アイコンと同じ): {'✅ ' if u2 else ('➖ ' if u1 else '❌ ')}{m2}\n"
                       f"直近の実際のアップロード: {last_s}\n"
-                      + ('→ imgBB は使えています。画像は imgBB に保存されます。' if okay else '→ いまは自前保存(サーバーのDB)に切り替わります。'))
+                      + ('→ imgBB は使えています。画像は imgBB に保存されます。' if okay else
+                         '→ いまは自前保存(サーバーのDB)に切り替わります。\n   キー未設定なら /imgbbkey <キー> でも設定できます。'))
 
         elif cmd == '/recovery':
             if not args:
