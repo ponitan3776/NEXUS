@@ -29,17 +29,34 @@
   const audioApi = ()=> window.CBMenuAudio || null;
   const show = (el)=>{ box.replaceChildren(el); box.hidden = false; card.classList.add('has-media'); };
 
-  function tryImage(i){
-    if(i >= IMAGES.length) return;                                   // どれも無い → 何もしない(今までの表示)
+  let still = false;                                                 // true = 動画は再生せず、最初の1コマだけ見せる(動きを減らす設定の端末で、画像が無いとき)
+  function tryImage(i, onNone){
+    if(i >= IMAGES.length){ if(onNone) onNone(); return; }           // どれも無い → 何もしない(今までの表示)
     const im = new Image();
     im.alt = ''; im.decoding = 'async';
     im.onload = ()=> show(im);
-    im.onerror = ()=> tryImage(i + 1);
+    im.onerror = ()=> tryImage(i + 1, onNone);
     im.src = BASE + IMAGES[i];
+  }
+
+  // 動画の「ブラウザが読んだ本当の向き・大きさ」に、枠を合わせる(切り取らない)。?menudebug=1 を付けて開くと、数字が画面に出る
+  function fitToVideo(v){
+    const w = v.videoWidth, h = v.videoHeight;
+    if(!w || !h) return;
+    box.style.aspectRatio = `${w} / ${h}`;
+    box.classList.toggle('portrait', h > w);                          // 本当に縦向きとして読まれたときは、高さを抑えて縦のまま表示
+    if(/[?&]menudebug\b/.test(location.search)){
+      let d = box.querySelector('.hero-debug');
+      if(!d){ d = document.createElement('div'); d.className = 'hero-debug'; box.append(d); }
+      d.textContent = `動画 ${w}×${h}(${h > w ? '縦' : w === h ? '正方形' : '横'}) / 枠 ${box.clientWidth}×${box.clientHeight}`;
+      console.log('[menu video]', d.textContent);
+    }
   }
 
   function setupVideo(v){
     show(v);
+    if(still){ try{ v.currentTime = 0.1; }catch(e){} }
+    fitToVideo(v);
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'hero-sound'; box.append(btn);
 
@@ -57,7 +74,7 @@
     }
     function apply(){
       const a = audioApi(), vis = visible && !document.hidden;
-      if(!vis){ v.pause(); if(a) a.duck(false); clearTimeout(checkTimer); return; }
+      if(!vis || still){ v.pause(); if(a) a.duck(false); clearTimeout(checkTimer); return; }
       const sound = wantSound && musicOn() && unlocked && !noAudio;
       v.muted = !sound;
       if(sound) v.volume = a ? a.volume() : 0.6;
@@ -86,18 +103,34 @@
     apply();
   }
 
-  function tryVideo(i){
-    if(i >= VIDEOS.length){ tryImage(0); return; }                   // 動画が無い/読めない → 画像へ
+  // iPad/iPhone の Safari 対策(v4.1.2):
+  //   ・画面に置いていない動画は、読み込みを始めず「loadeddata」も来ない → 先に、見えない場所に置いてから読み込む
+  //   ・iOS は preload を無視するので、読み込みの合図は loadedmetadata / loadeddata / canplay の「どれか最初の1つ」にする
+  //   ・自動再生を止められたとき(低電力モードなど)も、枠をタップすれば再生できるようにする
+  function tryVideo(i, onFail){
+    if(i >= VIDEOS.length){ (onFail || (()=> tryImage(0)))(); return; }               // 動画が無い/読めない → 画像へ
     const v = document.createElement('video');
-    v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.autoplay = false;
-    v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('aria-hidden', 'true');
+    v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
+    v.setAttribute('muted', ''); v.setAttribute('autoplay', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('aria-hidden', 'true');
     v.disablePictureInPicture = true; v.preload = 'auto';
-    v.addEventListener('error', ()=> tryVideo(i + 1), { once: true });
-    v.addEventListener('loadeddata', ()=> setupVideo(v), { once: true });
+    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';   // 読み込み中だけ、見えない場所に
+    let done = false, timer = 0;
+    const next = ()=>{ if(done) return; done = true; clearTimeout(timer); v.remove(); tryVideo(i + 1, onFail); };
+    const ready = ()=>{
+      if(done) return; done = true; clearTimeout(timer);
+      v.removeAttribute('style'); v.remove();
+      setupVideo(v);
+      box.addEventListener('click', ()=>{ if(v.paused) v.play().catch(()=>{}); });      // 自動再生を止められたとき用: 枠をタップで再生
+    };
+    v.addEventListener('error', next, { once: true });
+    ['loadedmetadata', 'loadeddata', 'canplay'].forEach(ev=> v.addEventListener(ev, ready, { once: true }));
+    timer = setTimeout(()=>{ if(v.readyState >= 1) ready(); else next(); }, 8000);       // 8秒たっても読めなければ、次(別の形式/画像)へ
+    document.body.appendChild(v);
     v.src = BASE + VIDEOS[i];
     v.load();
+    const p = v.play(); if(p && p.catch) p.catch(()=>{});                                // iOS は、再生を始めて初めて読み込みが進むことがある
   }
 
-  if(reduce || saveData) tryImage(0);                                // 動きを減らす/データ節約 → 動画は使わない
+  if(reduce || saveData) tryImage(0, ()=>{ still = true; tryVideo(0, ()=>{}); });   // 動きを減らす/データ節約 → 画像があれば画像。無ければ、動画を止めたまま(1コマ)で見せる
   else tryVideo(0);
 })();
