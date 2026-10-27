@@ -15,6 +15,7 @@
    ===================================================================== */
 (function(){
   'use strict';
+  const VER = 'menumedia 4.1.3';
   const BASE = 'icons/';
   const VIDEOS = ['menu.mp4', 'menu.webm'];
   const IMAGES = ['menu.jpg', 'menu.png', 'menu.webp'];
@@ -24,6 +25,31 @@
 
   // iPad/iPhone(iPadOS は「Macのふり」をするので、タッチ点の数でも見分ける)
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  // 🛠 診断モード: URLの最後に ?menudebug=1 を付けて開くと、画面の下に、動画の読み込み状況が出る(iPadで原因を調べる用)
+  const DEBUG = /[?&]menudebug\b/.test(location.search);
+  let dbgBox = null; const t0 = performance.now();
+  function dbg(msg){
+    if(!DEBUG) return;
+    if(!dbgBox){
+      dbgBox = document.createElement('pre');
+      dbgBox.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:45vh;overflow:auto;margin:0;padding:6px 8px;z-index:99999;font:11px/1.35 monospace;color:#0f0;background:rgba(0,0,0,.88);white-space:pre-wrap;';
+      document.body.appendChild(dbgBox);
+    }
+    dbgBox.textContent += `[${((performance.now() - t0) / 1000).toFixed(1)}s] ${msg}\n`; dbgBox.scrollTop = dbgBox.scrollHeight;
+  }
+  if(DEBUG){
+    dbg(`${VER} / UA: ${navigator.userAgent}`);
+    const tv = document.createElement('video');
+    dbg(`canPlayType  H.264: "${tv.canPlayType('video/mp4; codecs="avc1.640028, mp4a.40.2"')}"  H.265: "${tv.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"')}"  webm: "${tv.canPlayType('video/webm; codecs="vp9"')}"`);
+    dbg(`動き減らす設定: ${!!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)} / データ節約: ${!!(navigator.connection && navigator.connection.saveData)}`);
+    VIDEOS_PROBE();
+  }
+  function VIDEOS_PROBE(){
+    ['menu.mp4', 'menu.webm'].forEach(n=>{
+      fetch('icons/' + n, { method: 'HEAD', cache: 'no-store' }).then(r=> dbg(`HEAD ${n}: HTTP ${r.status} / ${r.headers.get('content-type')} / ${r.headers.get('content-length')}バイト / Range対応: ${r.headers.get('accept-ranges')}`))
+        .catch(e=> dbg(`HEAD ${n}: 失敗 ${e}`));
+    });
+  }
   const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const saveData = !!(navigator.connection && navigator.connection.saveData);
   const getPref = ()=>{ try{ return localStorage.getItem(PREF) !== '0'; }catch(e){ return true; } };
@@ -128,14 +154,23 @@
     let done = false, timer = 0;
     const next = ()=>{ if(done) return; done = true; clearTimeout(timer); v.remove(); tryVideo(i + 1, onFail); };
     const ready = ()=>{ if(done) return; done = true; clearTimeout(timer); setupVideo(v); };
-    v.addEventListener('error', next, { once: true });
+    if(DEBUG){
+      dbg(`動画 ${VIDEOS[i]} を読み込みます`);
+      ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'playing', 'pause', 'waiting', 'stalled', 'suspend', 'ended'].forEach(ev=> v.addEventListener(ev, ()=> dbg(`${ev}  (readyState ${v.readyState} / ${v.videoWidth}×${v.videoHeight} / ${v.currentTime.toFixed(1)}秒)`)));
+      let n = 0; const iv = setInterval(()=>{ dbg(`状態 paused=${v.paused} muted=${v.muted} readyState=${v.readyState} network=${v.networkState} time=${v.currentTime.toFixed(2)} err=${v.error ? v.error.code + ' ' + v.error.message : '-'}`); if(++n >= 6) clearInterval(iv); }, 1500);
+    }
+    v.addEventListener('error', (e)=>{
+      dbg(`error: code ${v.error ? v.error.code : '?'} ${v.error ? v.error.message : ''}`);
+      if(!done) next();
+      else{ box.replaceChildren(); box.hidden = true; card.classList.remove('has-media'); tryVideo(i + 1, onFail); }      // 読み込んだあとの「再生できない」エラー → 次の形式/画像へ
+    });
     ['loadedmetadata', 'loadeddata', 'canplay'].forEach(ev=> v.addEventListener(ev, ready, { once: true }));
     timer = setTimeout(()=>{ if(v.readyState >= 1) ready(); else next(); }, 8000);       // 8秒たっても読めなければ、次(別の形式/画像)へ
     // iPad/iPhone の Safari は、画面に置いていない動画を読み込まないので、最初から枠の中に置く(読み込み中は、暗い枠だけが見える)
     box.replaceChildren(v); box.hidden = false; card.classList.add('has-media');
     v.src = BASE + VIDEOS[i];
     v.load();
-    const p = v.play(); if(p && p.catch) p.catch(()=>{});
+    const p = v.play(); if(p && p.catch) p.catch((e)=> dbg(`play() が止められました: ${e && e.name} ${e && e.message}`));
   }
 
   if(reduce || saveData) tryImage(0, ()=>{ still = true; tryVideo(0, ()=>{}); });   // 動きを減らす/データ節約 → 画像があれば画像。無ければ、動画を止めたまま(1コマ)で見せる
