@@ -36,7 +36,7 @@ GAMES = {
     'stroop':   ('high', 0,  150,   '問'),     # いろいろモンスター
     'stack':    ('high', 0,  400,   '段'),     # ホーンテッド・スタック
     # --- v3.9 パート3 で追加 ---
-    'tapspeed':  ('high', 0, 999999999999999,  '回'),      # 10秒れんだ(複数の指・PCの連打でも、範囲外で無視されないよう広めに)
+    'tapspeed':  ('high', 0, None, '回'),     # 10秒れんだ(スコア上限なし。max=None は「上限を設けない」)
     'timing':    ('high', 0, 500,  '点'),      # ぴったりストップ(5回・最大500点)
     'oddone':    ('high', 0, 120,  '問'),      # ちがうのはどれ？(30秒)
     'sortg':     ('high', 0, 150,  '問'),      # おばけ仕分け(30秒)
@@ -44,6 +44,12 @@ GAMES = {
     'rps':       ('high', 0, 60,   '連勝'),    # おばけじゃんけん
     'pumpcount': ('high', 0, 60,   '問'),      # かぼちゃ数え
     'holdexact': ('low',  0, 5000, 'ms'),      # ぴったり5秒(誤差)
+    # --- v4.0 パート3 拡張で追加 ---
+    'batdodge': ('high', 0, 3000, '匹'),       # コウモリよけ
+    'glowmem':  ('high', 0, 99,   'ラウンド'), # ともしびメモリー
+    'rhythm':   ('high', 0, 1500, '点'),       # ガイコツ・ビート
+    'puffpump': ('high', 0, 3000, '点'),       # かぼちゃふくらまし
+    'wordscr':  ('high', 0, 60,   '語'),       # もじならべ
 }
 
 
@@ -57,7 +63,9 @@ def validate(game, score):
     except (TypeError, ValueError):
         return False, 0
     _, lo, hi, _ = spec
-    if s < lo or s > hi:
+    if s < lo or (hi is not None and s > hi):
+        return False, 0
+    if s > 9_000_000_000_000_000:                  # DBの BIGINT を超えるような値だけは、さすがに捨てる
         return False, 0
     return True, s
 
