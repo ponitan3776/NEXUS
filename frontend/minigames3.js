@@ -41,6 +41,7 @@
       n++; btn.classList.add('hit'); setTimeout(()=> btn.classList.remove('hit'), 60);
       if(n % 5 === 0) snd('tick'); hud();
     });
+    btn.addEventListener('keydown', (e)=>{ if((e.key === ' ' || e.key === 'Enter') && !e.repeat){ e.preventDefault(); btn.dispatchEvent(new Event('pointerdown')); } });   // パソコンのキー連打(スペース/Enter)も数える
     hud();
     return ()=>{ over = true; clearInterval(iv); };
   }
@@ -223,11 +224,15 @@
   function gamePump(stage, api){
     const wrap = $('div', 'm3-wrap'), info = $('div', 'g-score', ''), field = $('div', 'm3-field'), msg = $('div', 'm3-msg', ''), opts = $('div', 'm2-opts');
     wrap.append(info, field, msg, opts); stage.append(wrap);
-    let level = 0, over = false, timer = 0, ans = 0;
+    let level = 0, over = false, timer = 0, ans = 0, prevN = 0;
     const hud = ()=>{ info.textContent = `🎃 ${level} 問クリア`; };
     function round(){
       opts.innerHTML = ''; msg.textContent = 'よーく見て…！'; field.innerHTML = '';
-      const n = Math.min(18, 3 + level), cells = shuffle(Array.from({ length: 20 }, (_, i)=> i)).slice(0, n);
+      // 個数は「問が進むほど多くなりやすい」だけで、毎回ばらばら(+1ずつ増えるような規則性は出さない)。直前と同じ数も出さない
+      const lo = Math.min(16, 3 + Math.floor(level * 0.7)), hi = Math.min(20, lo + 2 + Math.floor(level / 3));
+      let n; do{ n = lo + rnd(hi - lo + 1); }while(n === prevN && hi > lo);
+      prevN = n;
+      const cells = shuffle(Array.from({ length: 20 }, (_, i)=> i)).slice(0, n);
       ans = n;
       cells.forEach(ci=>{
         const e = $('span', 'm3-pump', '🎃'); e.style.left = ((ci % 5) * 20 + 2 + rnd(6)) + '%'; e.style.top = (Math.floor(ci / 5) * 25 + 2 + rnd(8)) + '%'; field.append(e);
