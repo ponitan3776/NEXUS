@@ -110,6 +110,9 @@
 
     { id:'discordtest', group:'🖥 サーバー', icon:'📨', name:'外部通知の接続テスト', desc:'通知用Webhookの設定と、送信できるかを確認', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/discordtest') },
     { id:'imgbb', group:'🖥 サーバー', icon:'☁️', name:'imgBB 接続テスト', desc:'画像の保存先(imgBB)が使えているか、実際に1枚送って確かめる', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/imgbb') },
+    { id:'imgbbkey', group:'🖥 サーバー', icon:'🔑', name:'imgBB APIキーを保存', desc:'Renderの環境変数で認識されないときの予備。キーをDBに保存します(環境変数があればそちらが優先)。消すときは clear と入力',
+      fields:[ { key:'key', type:'text', label:'imgBB の APIキー(または clear)', rows:1, max:80 } ],
+      confirm:(v)=> v.key.trim().toLowerCase() === 'clear' ? '保存したキーを削除します。' : 'このキーをサーバーに保存します。', run:(v)=> CB().adminCommand('/imgbbkey ' + v.key.trim()) },
     { id:'stats', group:'🖥 サーバー', icon:'📊', name:'サーバー統計', desc:'ユーザー数・総コイン・総プレイ時間', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/stats') },
     { id:'safety', group:'🖥 サーバー', icon:'🛡', name:'セーフティモード', desc:'管理者アカウントの強制セーフティモードを切り替え',
       fields:[ { key:'mode', type:'choice', label:'設定', options:[['status', '状態を見る'], ['on', 'ONにする'], ['off', 'OFFにする']], def:'status' } ],
@@ -432,7 +435,7 @@
    ===================================================================== */
 (function(){
   'use strict';
-  const TABS = ['part3', 'tot', 'patch', 'dex', 'stamps', 'community'];
+  const TABS = ['part3', 'raid', 'tot', 'patch', 'dex', 'stamps', 'community'];
   const RARITY = { common:['ふつう', '#9fb0c8'], rare:['レア', '#5c9dff'], epic:['エピック', '#c25bff'], legendary:['伝説', '#ffc02e'] };
   const KIND_EMO = { candies:'🍬', coins:'🪙', ticket:'🎟', trick:'🤡', dex:'📖', jackpot:'🎰' };
   const fmtTime = (sec)=>{
@@ -646,7 +649,7 @@
         <div class="sub" style="margin:6px 0 8px;">今日あそんだ回数(ゲーム＋ミニゲーム)に応じて、キャンディがもらえます。毎日リセット！</div>
         <button class="primary-btn" id="hw3All" type="button" ${ready ? '' : 'disabled'}>まとめて受け取る${ready ? `(${ready}件)` : ''}</button>${tiers}</div>
       <div class="hw2-card"><div class="hw2-ct">✨ パート3のボーナス</div>
-        <div class="sub">・ミニゲーム1回ごとのおまけが 🍬+10 に増量<br>・さまようおばけが 1日20匹・20秒ごとに<br>・トリック・オア・トリートの無料回数が 1日2回に<br>・デイリー/ウィークリーミッションが6個ずつに<br>・新しいミニゲーム8本(スタンプラリーも26個に)<br>・パート3の期間中は、いつでもキャンディ 1.3倍</div></div>`;
+        <div class="sub">・ミニゲーム1回ごとのおまけが 🍬+10 に増量<br>・さまようおばけが 1日20匹・20秒ごとに<br>・トリック・オア・トリートの無料回数が 1日2回に<br>・デイリー/ウィークリーミッションが6個ずつに<br>・新しいミニゲーム13本(スタンプラリーも31個に)<br>・みんなでボス討伐(「👹 ボス」タブ)<br>・パート3の期間中は、いつでもキャンディ 1.3倍</div></div>`;
   }
   function bindPart3(root, s, ctx){
     const p = s.part3; if(!p) return;
@@ -747,11 +750,71 @@
   }
   scheduleGhost(true);
 
+  // ---------- 👹 みんなでボス討伐(v4.0 パート3 拡張) ----------
+  const escH = (t)=> String(t == null ? '' : t).replace(/[&<>"']/g, (c)=> ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  const raidRw = (ctx, r)=> r.type === 'candies' ? `🍬${ctx.fmt(r.amount)}` : ctx.rewardText(r);
+  function raidHtml(){ return `<div id="hwRaid"><div class="empty-hint">ボスをさがしています…</div></div>`; }
+  async function bindRaid(root, s, ctx){
+    const box = root.querySelector('#hwRaid'); if(!box) return;
+    let busy = false;
+    const draw = (d)=>{
+      const cur = d.bosses.find(b=> b.current) || d.bosses[d.bosses.length - 1];
+      const pct = d.allDefeated ? 0 : Math.max(0, Math.min(100, cur.hpLeft / cur.hp * 100));
+      const m = d.mine, canAtk = !d.allDefeated && m.attacksLeft > 0;
+      const btn = (n)=>{ const need = m.cost * n, can = canAtk && m.candies >= need; return `<button class="primary-btn rd-atk" data-rdatk="${n}" type="button" ${can ? '' : 'disabled'}>⚔️ ${n === 1 ? 'こうげき' : n + '回れんぞく'} 🍬${need}</button>`; };
+      const ready = d.bosses.filter(b=> b.canClaim).length;
+      box.innerHTML = `<div class="hw2-card rd-card ${d.allDefeated ? 'cleared' : ''}">
+          <div class="hw2-ct">👹 みんなでボス討伐 <span class="hw2-tag">${d.allDefeated ? '全員の勝利！' : `第${cur.no}戦`}</span></div>
+          <div class="rd-stage"><div class="rd-boss" id="rdBoss">${d.allDefeated ? '🎉' : cur.emoji}</div><div class="rd-fx" id="rdFx"></div></div>
+          <div class="rd-name">${d.allDefeated ? 'ボスはぜんぶ、たおされました！' : escH(cur.name)}</div>
+          <div class="rd-story">${d.allDefeated ? 'みんなのおかげで、ハロウィンの夜に平和がもどりました。' : escH(cur.story)}</div>
+          <div class="quest-bar-bg rd-hp"><div class="quest-bar-fill" style="width:${pct}%"></div></div>
+          <div class="sub rd-hptext">${d.allDefeated ? 'HP 0' : `HP ${ctx.fmt(cur.hpLeft)} / ${ctx.fmt(cur.hp)}`}　みんなの合計ダメージ ${ctx.fmt(d.total)}</div>
+          <div class="rd-btns">${btn(1)}${btn(5)}</div>
+          <div class="sub" style="margin-top:6px;">今日の残りこうげき ${m.attacksLeft} / ${m.max}回　あなたの累計 <b>${ctx.fmt(m.dmg)}</b> ダメージ(🍬${ctx.fmt(m.candies)} もっています)<br>
+            ゲームやミニゲームを遊ぶだけでも、自動でダメージが入ります！ たまに「クリティカル」も出るよ。</div></div>
+        <div class="hw2-card"><div class="hw2-ct">🎁 たおしたボスのごほうび</div>
+          <button class="primary-btn" id="rdClaimAll" type="button" ${ready ? '' : 'disabled'}>まとめて受け取る${ready ? `(${ready}件)` : ''}</button>
+          <div class="sub" style="margin:6px 0;">ボスがたおれたら、<b>ダメージを ${ctx.fmt(m.minDmg)} 以上与えた全員</b>が受け取れます。</div>
+          ${d.bosses.map(b=>`<div class="hw2-step ${b.claimed ? 'claimed' : (b.canClaim ? 'ready' : '')}"><div class="st-n sm">${b.defeated ? '✅' : b.emoji}</div>
+            <div class="st-r"><b>${escH(b.name)}</b><br><small>HP ${ctx.fmt(b.hp)} ／ ${b.rewards.map(r=> raidRw(ctx, r)).join(' + ')}</small></div>
+            <div class="st-a">${b.claimed ? '<span class="hw-done">済</span>' : (b.canClaim ? `<button class="claim-btn" data-rdclaim="${b.no}" type="button">受け取る</button>` : (b.defeated ? '<span class="hw-lock">ダメージ不足</span>' : '<span class="hw-lock">🔒</span>'))}</div></div>`).join('')}</div>
+        <div class="hw2-card"><div class="hw2-ct">🏆 ダメージ ランキング TOP${d.top.length || ''}</div>
+          ${d.top.length ? d.top.map((u, i)=>`<div class="rd-rank"><span>${['🥇', '🥈', '🥉'][i] || (i + 1) + '.'}</span><span class="rd-rn">${escH(u.name)}</span><b>${ctx.fmt(u.dmg)}</b></div>`).join('') : '<div class="empty-hint">まだだれも戦っていません。いちばん乗りのチャンス！</div>'}</div>`;
+      box.querySelectorAll('[data-rdatk]').forEach(b=> b.addEventListener('click', ()=> attack(+b.dataset.rdatk)));
+      box.querySelectorAll('[data-rdclaim]').forEach(b=> b.addEventListener('click', ()=> claim({ need: +b.dataset.rdclaim })));
+      const all = box.querySelector('#rdClaimAll'); if(all) all.addEventListener('click', ()=> claim({ all: true }));
+    };
+    async function attack(times){
+      if(busy) return; busy = true;
+      try{
+        const d = await ctx.api('raid/attack', 'POST', { times });
+        ctx.applyWallet(d);
+        const boss = box.querySelector('#rdBoss'), fx = box.querySelector('#rdFx'), crit = d.hits.some(h=> h.crit);
+        ctx.sound(crit ? 'win' : 'hit');
+        if(boss){ boss.classList.remove('hit'); void boss.offsetWidth; boss.classList.add('hit'); }
+        if(fx) d.hits.slice(0, 10).forEach((h, i)=> setTimeout(()=>{
+          if(!document.body.contains(fx)) return;
+          const e = document.createElement('div'); e.className = 'rd-dmg' + (h.crit ? ' crit' : ''); e.textContent = (h.crit ? '💥 ' : '') + ctx.fmt(h.d);
+          e.style.left = (20 + Math.random() * 60) + '%'; fx.appendChild(e); setTimeout(()=> e.remove(), 1000);
+        }, i * 120));
+        setTimeout(()=>{ if(document.body.contains(box)) draw(d.raid); busy = false; }, 600 + Math.min(10, d.hits.length) * 120);
+        ctx.silentRefresh();
+      }catch(err){ busy = false; alert(err.message); }
+    }
+    async function claim(body){
+      try{ const r = await ctx.api('raid/claim', 'POST', body); ctx.applyWallet(r); ctx.sound('win'); await ctx.refresh(`🎁 ボス討伐のごほうび: ${r.rewards.map(x=> raidRw(ctx, x)).join(' + ')}`); }
+      catch(err){ alert(err.message); }
+    }
+    try{ draw(await ctx.api('raid')); }catch(err){ box.innerHTML = `<div class="empty-hint">${escH(err.message)}</div>`; }
+  }
+
   window.HW2 = {
     has: (tab)=> TABS.includes(tab),
     boostBar, homeTop, guestHtml,
     render(tab, s, ctx){
       if(tab === 'part3') return part3Html(s, ctx);
+      if(tab === 'raid') return raidHtml();
       if(tab === 'tot') return totHtml(s, ctx);
       if(tab === 'patch') return patchHtml(s, ctx);
       if(tab === 'dex') return dexHtml(s, ctx);
@@ -763,6 +826,7 @@
       if(tab !== 'patch') clearInterval(patchTimer);
       if(tab !== 'part3') clearInterval(p3Timer);
       if(tab === 'part3') bindPart3(root, s, ctx);
+      if(tab === 'raid') bindRaid(root, s, ctx);
       if(tab === 'tot') bindTot(root, s, ctx);
       else if(tab === 'patch') bindPatch(root, s, ctx);
       else if(tab === 'dex') bindDex(root, s, ctx);
