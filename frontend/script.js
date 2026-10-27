@@ -27,6 +27,7 @@ const ADMIN_USER_ID = 'vortx';
   // 曲を追加するときは、この配列に1行足すだけ！
   // ファイルは frontend/bgm/ の中に置く
   const MUSIC_LIBRARY = [
+    { title:'Spooky Scary Skeletons', artist:'Andrew Gold', file:'spookyscaryskeletons.mp3', category:'その他', emoji:'💀' },
     { title:'月光 第1楽章', artist:'ベートーヴェン', file:'moonlight.mp3', category:'クラシック', emoji:'🌙' },
     { title:'月が綺麗ねと言われたい！', artist:'柿崎ユウタ', file:'beautifulmoon.mp3', category:'その他', emoji:'🌙' },
     { title:'マーシャル・マキシマイザー', artist:'柊マグネタイト', file:'marshallmaximizer.mp3', category:'その他', emoji:'🎰' },
