@@ -35,11 +35,11 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # ===================== 基本設定 =====================
 app = Flask(__name__)
 
-# GitHub Pages など、フロントエンドを置くオリジンだけに絞りたい場合は
-# 環境変数 ALLOWED_ORIGINS にカンマ区切りで指定する(例: https://ユーザー名.github.io)。
+# Surge など、フロントエンドを置くオリジンだけに絞りたい場合は
+# 環境変数 ALLOWED_ORIGINS にカンマ区切りで指定する(例: https://xxxx.surge.sh)。
 # 未設定なら従来どおり全オリジン許可。
 _allowed = [o.strip() for o in os.environ.get('ALLOWED_ORIGINS', '').split(',') if o.strip()]
-# max_age: ブラウザに「事前確認(プリフライト)の結果」を覚えさせる。無いと、GitHub Pages → Render の呼び出しのたびに
+# max_age: ブラウザに「事前確認(プリフライト)の結果」を覚えさせる。無いと、Surge → Enzonic の呼び出しのたびに
 #          本番のリクエストの前に OPTIONS が1往復余計に走っていた(Chromeは最大2時間まで覚える)
 CORS(app, origins=_allowed or '*', max_age=7200, expose_headers=['Server-Timing'])
 
@@ -67,13 +67,13 @@ DISCORD_WEBHOOK_BUG_REPORT = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_BUG_
 DISCORD_WEBHOOK_ID_CHANGE = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_ID_CHANGE'))
 
 if not DATABASE_URL:
-    print('❌ 環境変数 DATABASE_URL が設定されていません。RenderのEnvironmentタブでSupabaseの接続文字列を設定してください。')
+    print('❌ 環境変数 DATABASE_URL が設定されていません。EnzonicのパネルでSupabaseの接続文字列(環境変数 DATABASE_URL)を設定してください。')
 if JWT_SECRET == 'your-secret-key':
     print('⚠️ JWT_SECRET が未設定です。必ず推測されにくい値を環境変数に設定してください。')
 
 # ===================== DB接続プール(Supabase Postgres) =====================
 # DATABASE_URL には Supabase の「Session pooler」または「Transaction pooler」の接続文字列を使う。
-# (Renderの無料プランはIPv4のみのため、IPv6専用の Direct connection は使えない)
+# (IPv6専用の Direct connection は、IPv4だけの環境では繋がらないので使わない)
 # Supabase は SSL 必須。プーラーが長時間アイドルの接続を切ることがあるため、
 # TCP keepalive を有効にし、切れた接続は捨てて1回だけ自動リトライする。
 DB_POOL_MAX = int(os.environ.get('DB_POOL_MAX', '10'))
@@ -240,7 +240,7 @@ def to_copy_block(text, limit=1500):
 #  ・ログイン/登録/再設定の通知は「裏で送る」(Discordの応答を待たない → ログインなどが速くなる)
 #  ・ご要望/不具合の報告は、成功したか失敗したかを利用者に返すので、その場で送る(wait=True)
 #  ・429(送りすぎ)は待ち時間(retry_after)のあとに、5xx・通信エラーは少し待って、最大3回までやり直す
-#  ・失敗した理由は Render のログに「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
+#  ・失敗した理由は Enzonic のコンソール(ログ)に「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
 _discord_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='discord')
 _discord_last_error = {}
 _DISCORD_HEADERS = {'User-Agent': 'DiscordBot (https://github.com/vortx, 1.0)'}
@@ -308,7 +308,7 @@ def send_discord_notification(webhook_url, title, description, color=0x5865F2,
     """埋め込みメッセージ(必要なら画像添付)をDiscordのWebhookへ送る。
     wait=True: 送り終わるまで待って、成功したかを返す / wait=False: 裏で送る(戻り値は「受け付けたか」)"""
     if not webhook_url:
-        print('Discord通知スキップ: Webhook URL が未設定です(RenderのEnvironmentを確認してください)')
+        print('Discord通知スキップ: Webhook URL が未設定です(Enzonicの環境変数を確認してください)')
         return False
     # Discord の上限に収める(超えると 400 で丸ごと拒否される): タイトル256 / 本文4096 / 項目名256 / 項目値1024 / 項目25個まで
     safe_fields = []
@@ -681,7 +681,7 @@ def battle_pass_reward_for_level(level):
 # ===================== 🔎 速度の計測(Server-Timing) =====================
 # 各レスポンスに「このリクエストでDBに何ms・何回使ったか / サーバー全体で何msか」を付ける。
 # ブラウザの開発者ツール → Network → 遅いAPIを選ぶ → Timing で見られる。
-#   db が大きい → DB(Supabase)側が遅い / app-db が大きい → サーバー(Render)側が遅い /
+#   db が大きい → DB(Supabase)側が遅い / app-db が大きい → サーバー(Enzonic)側が遅い /
 #   どちらも小さいのに遅い → ブラウザ↔サーバー間の通信距離(リージョン違い)や、サーバーの起動待ち
 @app.before_request
 def _timing_start():
@@ -731,7 +731,7 @@ def handle_api_error(err):
 #   ② サーバー側でも上限を確認(ICON_MAX_BYTES / CHAT_IMG_MAX_BYTES を超えたら受け付けない)
 #   ③ チャット画像は IMG_CHAT_TTL_HOURS 時間たつと自動で消える。全体でも 件数・合計サイズ の上限があり、超えると古い順に消える
 #   ④ アイコンは1人1枚(新しく設定すると古いのは消える)。プリセット(絵文字)のアイコンは画像を使わない=容量ゼロ
-#   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Renderの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
+#   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Enzonicの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
 #      キーが空、または imgBB が落ちている/失敗したときは、これまで通りサーバーのDBに保存する(下の「自前保存」)。
 #      IMG_USE_IMGBB=0 にすると、キーがあっても imgBB を使わない(手動で切り替えたいとき)。
 IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1').strip().lower() not in ('0', 'false', 'off', 'no')
@@ -926,7 +926,7 @@ def imgbb_upload_full(data, name, ttl_seconds=None, mime=None):
     (APIキーが間違っているときは、何度やっても同じなので、すぐやめる。大きい画像は、時間がかかるので1回だけ)"""
     key, src = get_imgbb_key()
     if not key:
-        return None, 'APIキーが見つかりません(Renderの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
+        return None, 'APIキーが見つかりません(Enzonicの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
     if not IMG_USE_IMGBB:
         return None, 'IMG_USE_IMGBB=0 のため、imgBB は使いません'
     mime = mime or _sniff_image(data, True)
@@ -3055,7 +3055,7 @@ def admin_command():
                      f"📅 最終ログイン: {last_login_str}")
 
         elif cmd == '/imgbbkey':
-            # imgBB のAPIキーを、データベースに保存する(Renderの環境変数が使えないとき用。環境変数があれば、そちらが優先)
+            # imgBB のAPIキーを、データベースに保存する(Enzonicの環境変数が使えないとき用。環境変数があれば、そちらが優先)
             #   /imgbbkey <キー> で保存 / /imgbbkey clear で削除
             if not args:
                 raise ValueError('使用法: /imgbbkey <imgBBのAPIキー>   (消すとき: /imgbbkey clear)')
@@ -3082,7 +3082,7 @@ def admin_command():
                 f"{'✅' if last['ok'] else '⚠️'} {last['at'].strftime('%m/%d %H:%M:%S')} UTC {last['msg'][:120]}"
             okay = bool(u1 or u2)
             result = (f"☁️ imgBB 接続テスト\nAPIキー: {_key_hint(key)}  取得元: {src}\n"
-                      f"imgBBっぽい環境変数の名前: {', '.join(seen) if seen else '(1つも見つかりません → Render の Environment に入れた名前・サービスを確認)'}\n"
+                      f"imgBBっぽい環境変数の名前: {', '.join(seen) if seen else '(1つも見つかりません → Enzonic の環境変数(Startup / Variables)に入れた名前・サーバーを確認)'}\n"
                       f"使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
                       f"サーバーの起動: {SERVER_STARTED_AT.strftime('%m/%d %H:%M:%S')} UTC\n"
                       f"①期限つき(チャット画像と同じ): {'✅ ' if u1 else '❌ '}{m1}\n"
@@ -3461,9 +3461,9 @@ def healthz():
     return jsonify({'ok': True})
 
 
-# Render が自動で設定する RENDER_EXTERNAL_URL(または SELF_PING_URL)宛てに10分ごとに自分でアクセスして、
-# 無料プランの「15分アクセスなしでスリープ」を防ぐ。
-SELF_PING_URL = os.environ.get('SELF_PING_URL') or os.environ.get('RENDER_EXTERNAL_URL') or ''
+# 環境変数 SELF_PING_URL(自分自身の公開URL)を設定したときだけ、10分ごとに自分の /healthz にアクセスする。
+# Enzonic はアイドルでスリープしないので、普通は未設定のままでOK(Renderの「15分でスリープ」対策の名残り)。
+SELF_PING_URL = os.environ.get('SELF_PING_URL') or ''
 
 
 def keep_alive_ping():
@@ -3498,5 +3498,6 @@ def start_app():
 start_app()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 3000))
+    # ローカル確認用。本番(Enzonic)は backend/run.py が gunicorn で起動する。ポートは PORT か SERVER_PORT(Enzonic のパネルが渡す値)
+    port = int(os.environ.get('PORT') or os.environ.get('SERVER_PORT') or 3000)
     app.run(host='0.0.0.0', port=port)
