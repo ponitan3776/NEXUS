@@ -110,7 +110,7 @@
 
     { id:'discordtest', group:'🖥 サーバー', icon:'📨', name:'外部通知の接続テスト', desc:'通知用Webhookの設定と、送信できるかを確認', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/discordtest') },
     { id:'imgbb', group:'🖥 サーバー', icon:'☁️', name:'imgBB 接続テスト', desc:'画像の保存先(imgBB)が使えているか、実際に1枚送って確かめる', fields:[], runLabel:'テスト', run:()=> CB().adminCommand('/imgbb') },
-    { id:'imgbbkey', group:'🖥 サーバー', icon:'🔑', name:'imgBB APIキーを保存', desc:'Renderの環境変数で認識されないときの予備。キーをDBに保存します(環境変数があればそちらが優先)。消すときは clear と入力',
+    { id:'imgbbkey', group:'🖥 サーバー', icon:'🔑', name:'imgBB APIキーを保存', desc:'サーバー(Enzonic)の環境変数で認識されないときの予備。キーをDBに保存します(環境変数があればそちらが優先)。消すときは clear と入力',
       fields:[ { key:'key', type:'text', label:'imgBB の APIキー(または clear)', rows:1, max:80 } ],
       confirm:(v)=> v.key.trim().toLowerCase() === 'clear' ? '保存したキーを削除します。' : 'このキーをサーバーに保存します。', run:(v)=> CB().adminCommand('/imgbbkey ' + v.key.trim()) },
     { id:'stats', group:'🖥 サーバー', icon:'📊', name:'サーバー統計', desc:'ユーザー数・総コイン・総プレイ時間', fields:[], runLabel:'表示', run:()=> CB().adminCommand('/stats') },
