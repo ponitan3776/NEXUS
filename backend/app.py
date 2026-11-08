@@ -29,17 +29,35 @@ import psycopg2
 from flask import Flask, request, jsonify, g, has_request_context, redirect
 from flask_cors import CORS
 from psycopg2 import pool as pg_pool
+import psycopg2.extensions as _pgext
 from psycopg2.extras import RealDictCursor
 from apscheduler.schedulers.background import BackgroundScheduler
+
+# ===================== 巨大な数(v4.3) =====================
+# コイン・XP・スコアなどの列は、桁数に制限のない NUMERIC(DBの BIGINT は約9.2×10^18 で「out of range」エラーになっていた)。
+# NUMERIC は psycopg2 だと Decimal で返ってくるので、小数点のないものは Python の int(桁数の制限なし)に変換して受け取る。
+def _numeric_to_py(value, cur):
+    if value is None:
+        return None
+    if '.' in value or 'e' in value or 'E' in value or value in ('NaN', 'Infinity', '-Infinity'):
+        try:
+            f = float(value)
+            return int(f) if f == int(f) else f
+        except Exception:
+            return 0
+    return int(value)
+
+
+_pgext.register_type(_pgext.new_type(_pgext.DECIMAL.values, 'NX_NUMERIC_INT', _numeric_to_py))
 
 # ===================== 基本設定 =====================
 app = Flask(__name__)
 
-# Surge など、フロントエンドを置くオリジンだけに絞りたい場合は
-# 環境変数 ALLOWED_ORIGINS にカンマ区切りで指定する(例: https://xxxx.surge.sh)。
+# GitHub Pages など、フロントエンドを置くオリジンだけに絞りたい場合は
+# 環境変数 ALLOWED_ORIGINS にカンマ区切りで指定する(例: https://ユーザー名.github.io)。
 # 未設定なら従来どおり全オリジン許可。
 _allowed = [o.strip() for o in os.environ.get('ALLOWED_ORIGINS', '').split(',') if o.strip()]
-# max_age: ブラウザに「事前確認(プリフライト)の結果」を覚えさせる。無いと、Surge → Enzonic の呼び出しのたびに
+# max_age: ブラウザに「事前確認(プリフライト)の結果」を覚えさせる。無いと、GitHub Pages → Render の呼び出しのたびに
 #          本番のリクエストの前に OPTIONS が1往復余計に走っていた(Chromeは最大2時間まで覚える)
 CORS(app, origins=_allowed or '*', max_age=7200, expose_headers=['Server-Timing'])
 
@@ -67,13 +85,13 @@ DISCORD_WEBHOOK_BUG_REPORT = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_BUG_
 DISCORD_WEBHOOK_ID_CHANGE = _clean_webhook(os.environ.get('DISCORD_WEBHOOK_ID_CHANGE'))
 
 if not DATABASE_URL:
-    print('❌ 環境変数 DATABASE_URL が設定されていません。EnzonicのパネルでSupabaseの接続文字列(環境変数 DATABASE_URL)を設定してください。')
+    print('❌ 環境変数 DATABASE_URL が設定されていません。RenderのEnvironmentタブでSupabaseの接続文字列を設定してください。')
 if JWT_SECRET == 'your-secret-key':
     print('⚠️ JWT_SECRET が未設定です。必ず推測されにくい値を環境変数に設定してください。')
 
 # ===================== DB接続プール(Supabase Postgres) =====================
 # DATABASE_URL には Supabase の「Session pooler」または「Transaction pooler」の接続文字列を使う。
-# (IPv6専用の Direct connection は、IPv4だけの環境では繋がらないので使わない)
+# (Renderの無料プランはIPv4のみのため、IPv6専用の Direct connection は使えない)
 # Supabase は SSL 必須。プーラーが長時間アイドルの接続を切ることがあるため、
 # TCP keepalive を有効にし、切れた接続は捨てて1回だけ自動リトライする。
 DB_POOL_MAX = int(os.environ.get('DB_POOL_MAX', '10'))
@@ -240,7 +258,7 @@ def to_copy_block(text, limit=1500):
 #  ・ログイン/登録/再設定の通知は「裏で送る」(Discordの応答を待たない → ログインなどが速くなる)
 #  ・ご要望/不具合の報告は、成功したか失敗したかを利用者に返すので、その場で送る(wait=True)
 #  ・429(送りすぎ)は待ち時間(retry_after)のあとに、5xx・通信エラーは少し待って、最大3回までやり直す
-#  ・失敗した理由は Enzonic のコンソール(ログ)に「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
+#  ・失敗した理由は Render のログに「Discord通知失敗(宛先): …」と出る。管理者コマンド /discordtest で全宛先を一括確認できる
 _discord_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='discord')
 _discord_last_error = {}
 _DISCORD_HEADERS = {'User-Agent': 'DiscordBot (https://github.com/vortx, 1.0)'}
@@ -308,7 +326,7 @@ def send_discord_notification(webhook_url, title, description, color=0x5865F2,
     """埋め込みメッセージ(必要なら画像添付)をDiscordのWebhookへ送る。
     wait=True: 送り終わるまで待って、成功したかを返す / wait=False: 裏で送る(戻り値は「受け付けたか」)"""
     if not webhook_url:
-        print('Discord通知スキップ: Webhook URL が未設定です(Enzonicの環境変数を確認してください)')
+        print('Discord通知スキップ: Webhook URL が未設定です(RenderのEnvironmentを確認してください)')
         return False
     # Discord の上限に収める(超えると 400 で丸ごと拒否される): タイトル256 / 本文4096 / 項目名256 / 項目値1024 / 項目25個まで
     safe_fields = []
@@ -379,6 +397,29 @@ def require_auth():
         raise ApiError('認証エラー', 401)
 
 
+def _safe_big(v):
+    """端末から来た数 → 0〜season.BIG_MAX の整数(桁数の制限は season.BIG_DIGITS)。数でない・NaN・無限大は None"""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        if isinstance(v, float):
+            if v != v or v in (float('inf'), float('-inf')):
+                return None
+            return max(0, min(season.BIG_MAX, int(v)))
+        if isinstance(v, int):
+            return max(0, min(season.BIG_MAX, v))
+        return season.parse_big(v)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _same_as_float(exact, approx):
+    try:
+        return float(exact) == float(approx)
+    except (OverflowError, ValueError, TypeError):
+        return False
+
+
 def get_user_id_optional():
     token = get_token_from_request()
     if not token:
@@ -439,11 +480,12 @@ def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN DEFAULT FALSE;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS play_time INTEGER DEFAULT 0;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP;
-        ALTER TABLE users ALTER COLUMN coins TYPE BIGINT;
-        ALTER TABLE users ALTER COLUMN best_score TYPE BIGINT;
+        -- v4.3: BIGINT → NUMERIC(桁数の制限なし)。すでに NUMERIC なら何も起きない
+        ALTER TABLE users ALTER COLUMN coins TYPE NUMERIC;
+        ALTER TABLE users ALTER COLUMN best_score TYPE NUMERIC;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPulls":0,"pityCounter":0}';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_xp BIGINT DEFAULT 0;
-        ALTER TABLE users ALTER COLUMN battlepass_xp TYPE BIGINT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_xp NUMERIC DEFAULT 0;
+        ALTER TABLE users ALTER COLUMN battlepass_xp TYPE NUMERIC;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS battlepass_claimed JSONB DEFAULT '[]';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_forced_scores JSONB DEFAULT '{}';
     """)
@@ -549,15 +591,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         CREATE TABLE IF NOT EXISTS duels (
             id SERIAL PRIMARY KEY, challenger_id TEXT NOT NULL, opponent_id TEXT NOT NULL,
             status TEXT DEFAULT 'pending', duration INTEGER DEFAULT 60,
-            challenger_score INTEGER, opponent_score INTEGER, created_at TIMESTAMP DEFAULT NOW()
+            challenger_score NUMERIC, opponent_score NUMERIC, created_at TIMESTAMP DEFAULT NOW()
         );
+        ALTER TABLE duels ALTER COLUMN challenger_score TYPE NUMERIC;
+        ALTER TABLE duels ALTER COLUMN opponent_score TYPE NUMERIC;
     """)
     print('✅ 対決(デュエル)テーブル作成完了')
 
     db_execute("""
         CREATE TABLE IF NOT EXISTS scheduled_events (
             id SERIAL PRIMARY KEY, hour_jst INTEGER NOT NULL, ranking_mode TEXT NOT NULL,
-            rank_position INTEGER NOT NULL, reward_coins INTEGER NOT NULL,
+            rank_position INTEGER NOT NULL, reward_coins NUMERIC NOT NULL,
             last_triggered_date TEXT, created_at TIMESTAMP DEFAULT NOW()
         );
     """)
@@ -567,6 +611,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS event_year INTEGER;
         ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS event_month INTEGER;
         ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS event_day INTEGER;
+        ALTER TABLE scheduled_events ALTER COLUMN reward_coins TYPE NUMERIC;
     """)
     print('✅ スケジュールイベントテーブル作成完了')
 
@@ -577,9 +622,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
         );
         CREATE TABLE IF NOT EXISTS weekly_challenge_scores (
             id SERIAL PRIMARY KEY, week_key TEXT NOT NULL, user_id TEXT NOT NULL,
-            score INTEGER NOT NULL, created_at TIMESTAMP DEFAULT NOW(),
+            score NUMERIC NOT NULL, created_at TIMESTAMP DEFAULT NOW(),
             UNIQUE(week_key, user_id)
         );
+        ALTER TABLE weekly_challenge_scores ALTER COLUMN score TYPE NUMERIC;
     """)
     print('✅ 週替わりチャレンジテーブル作成完了')
 
@@ -592,10 +638,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     # 🕹 ミニゲームのランキング
     db_execute('''
         CREATE TABLE IF NOT EXISTS mini_scores (
-            game TEXT NOT NULL, user_id TEXT NOT NULL, best BIGINT NOT NULL,
+            game TEXT NOT NULL, user_id TEXT NOT NULL, best NUMERIC NOT NULL,
             plays INTEGER DEFAULT 0, updated_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (game, user_id)
         );
+        ALTER TABLE mini_scores ALTER COLUMN best TYPE NUMERIC;
     ''')
 
     # 🎃 イベント進行状況 / フレンド対決のゲーム種別
@@ -606,6 +653,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
     social.init_tables(db_execute)
     halloween.eng_init_tables(db_execute)          # 📆 毎日ログインボーナス
     purge_images()                                 # 🖼 期限切れ・持ち主のいない画像を片付ける
+    migrate_v43()                                  # ❄ v4.3: 巨大な数の列・ウィンターパス(シーズンの切り替え)・新しい列
     migrate_admin_id()                             # 👑 旧管理者IDを新しい管理者IDへ(1回だけ。済んでいれば何もしない)
 
     # ⚡ 読み込みを速くするための索引(無くても動くが、データが増えるほど遅くなる)
@@ -627,6 +675,53 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gacha_state JSONB DEFAULT '{"totalPul
               'weekly_challenge_scores', 'mini_scores', 'daily_bonus'):
         db_execute(f'ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;')
     print('✅ RLS有効化完了')
+
+
+def migrate_v43():
+    """v4.3.0 の移行。何度実行しても安全(済んでいれば何もしない)。1つ失敗しても、ほかは続ける。"""
+    steps = [
+        # 新しい列
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS unlocks JSONB DEFAULT '[]'::jsonb",      # バトルパス等で解放した演出・テーマ
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS v43 JSONB DEFAULT '{}'::jsonb",          # 統計・実績・クラウド保存(v43.py)
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS bp_archive JSONB DEFAULT '[]'::jsonb",   # 前のシーズンのバトルパスの記録
+        # ギフトの数も、桁数の制限なし(管理者が何桁のXP・コインを贈ってもエラーにならない)
+        'ALTER TABLE gifts ALTER COLUMN coins TYPE NUMERIC',
+        'ALTER TABLE gifts ALTER COLUMN candies TYPE NUMERIC',
+        'ALTER TABLE gifts ALTER COLUMN bp_xp TYPE NUMERIC',
+        'ALTER TABLE gifts ALTER COLUMN event_xp TYPE NUMERIC',
+        # SQLの中でレベルを出すための関数(season.level_of と同じ式。BASE=1000, STEP=25)
+        '''CREATE OR REPLACE FUNCTION nx_bp_level(xp numeric) RETURNS numeric AS $$
+           BEGIN
+             RETURN floor((sqrt(1975.0 * 1975.0 + 200.0 * GREATEST(COALESCE(xp, 0), 0)) - 1975.0) / 50.0) + 1;
+           END $$ LANGUAGE plpgsql IMMUTABLE''',
+        'CREATE INDEX IF NOT EXISTS idx_users_bpxp ON users (battlepass_xp DESC)',
+    ]
+    for sql in steps:
+        try:
+            db_execute(sql)
+        except Exception as err:
+            print(f'⚠️ v4.3 移行の一部に失敗(続けます): {sql[:60].strip()} … {err}')
+    # ❄ シーズンの切り替え: 前のバトルパスの記録を保管して、全員のXPと受け取り記録を0に戻す(1回だけ)
+    try:
+        with db_transaction() as cur:
+            cur.execute('SELECT pg_advisory_xact_lock(430001)')
+            cur.execute("SELECT v FROM app_kv WHERE k = 'bp_season'")
+            row = cur.fetchone()
+            if not row or row['v'] != season.SEASON_ID:
+                cur.execute("""
+                    UPDATE users SET
+                        bp_archive = COALESCE(bp_archive, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+                            'season', %s, 'xp', COALESCE(battlepass_xp, 0)::text, 'claimed', battlepass_claimed)),
+                        battlepass_xp = 0,
+                        battlepass_claimed = '{"upto": 0, "extra": []}'::jsonb
+                    WHERE COALESCE(battlepass_xp, 0) > 0
+                """, [row['v'] if row else 'autumn2026'])
+                n = cur.rowcount
+                cur.execute("INSERT INTO app_kv (k, v, updated_at) VALUES ('bp_season', %s, NOW()) "
+                            "ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = NOW()", [season.SEASON_ID])
+                print(f'❄ バトルパスを {season.SEASON_ID} にリセットしました({n}人の前シーズンの記録を保管)')
+    except Exception as err:
+        print(f'⚠️ バトルパスのシーズン切り替えに失敗(次回の起動で再試行します): {err}')
 
 
 # ===================== 日本時間(JST)ヘルパー =====================
@@ -652,36 +747,24 @@ GACHA_SKIN_IDS = [
 import halloween  # 🎃 期間限定イベント(別ファイル)
 import social  # 💬🗳🎁 投票・ギフト・メッセージ編集(別ファイル)
 import titles  # 🏷 称号(別ファイル)
-GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
+import season  # ❄ ウィンターパスの計算・報酬表(別ファイル)
+import v43  # 🆕 プロフィール・実績・統計・クラウド保存(別ファイル)
+GACHA_SKIN_ID_SET = set(GACHA_SKIN_IDS) | halloween.ALL_SKIN_IDS | season.ALL_SKIN_IDS   # 自称で所持できない(サーバー付与のみ)スキン
 GACHA_COST = 2000
 GACHA_RATE_PER_SKIN = 0.0003  # 1スキンあたり0.03%(8種で合計0.24%) ← とても出にくい(天井1000回で必ず1つ)
 GACHA_PITY_THRESHOLD = 1000
 GACHA_DUPLICATE_COINS = 500
 GACHA_MISS_COINS = 30
 
-BATTLEPASS_XP_PER_LEVEL = 1000
-BATTLEPASS_CYCLE_LENGTH = 10
+# ❄ バトルパス(v4.3): レベルが上がるほど必要XPが増える方式。計算と報酬表は season.py
+BATTLEPASS_XP_PER_LEVEL = season.BASE_XP       # (旧)レベル1のぶんだけ。新しい計算は season.level_of()
 WEEKLY_CHALLENGE_REWARD = 50000
-
-
-def battle_pass_reward_for_level(level):
-    cycle_pos = ((level - 1) % BATTLEPASS_CYCLE_LENGTH) + 1
-    rewards = {
-        1: {'type': 'coins', 'amount': 100}, 2: {'type': 'coins', 'amount': 150},
-        3: {'type': 'coins', 'amount': 200}, 4: {'type': 'coins', 'amount': 250},
-        5: {'type': 'gacha_ticket', 'amount': 1}, 6: {'type': 'coins', 'amount': 300},
-        7: {'type': 'coins', 'amount': 350}, 8: {'type': 'coins', 'amount': 400},
-        9: {'type': 'coins', 'amount': 500}, 10: {'type': 'gacha_ticket', 'amount': 1},
-    }
-    r = dict(rewards[cycle_pos])
-    r['level'] = level
-    return r
 
 
 # ===================== 🔎 速度の計測(Server-Timing) =====================
 # 各レスポンスに「このリクエストでDBに何ms・何回使ったか / サーバー全体で何msか」を付ける。
 # ブラウザの開発者ツール → Network → 遅いAPIを選ぶ → Timing で見られる。
-#   db が大きい → DB(Supabase)側が遅い / app-db が大きい → サーバー(Enzonic)側が遅い /
+#   db が大きい → DB(Supabase)側が遅い / app-db が大きい → サーバー(Render)側が遅い /
 #   どちらも小さいのに遅い → ブラウザ↔サーバー間の通信距離(リージョン違い)や、サーバーの起動待ち
 @app.before_request
 def _timing_start():
@@ -731,7 +814,7 @@ def handle_api_error(err):
 #   ② サーバー側でも上限を確認(ICON_MAX_BYTES / CHAT_IMG_MAX_BYTES を超えたら受け付けない)
 #   ③ チャット画像は IMG_CHAT_TTL_HOURS 時間たつと自動で消える。全体でも 件数・合計サイズ の上限があり、超えると古い順に消える
 #   ④ アイコンは1人1枚(新しく設定すると古いのは消える)。プリセット(絵文字)のアイコンは画像を使わない=容量ゼロ
-#   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Enzonicの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
+#   ⑤ v3.9: 画像の置き場は imgBB(https://imgbb.com)。Renderの環境変数 IMGBB_API_KEY に、自分のAPIキーを入れると有効になる。
 #      キーが空、または imgBB が落ちている/失敗したときは、これまで通りサーバーのDBに保存する(下の「自前保存」)。
 #      IMG_USE_IMGBB=0 にすると、キーがあっても imgBB を使わない(手動で切り替えたいとき)。
 IMG_USE_IMGBB = os.environ.get('IMG_USE_IMGBB', '1').strip().lower() not in ('0', 'false', 'off', 'no')
@@ -926,7 +1009,7 @@ def imgbb_upload_full(data, name, ttl_seconds=None, mime=None):
     (APIキーが間違っているときは、何度やっても同じなので、すぐやめる。大きい画像は、時間がかかるので1回だけ)"""
     key, src = get_imgbb_key()
     if not key:
-        return None, 'APIキーが見つかりません(Enzonicの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
+        return None, 'APIキーが見つかりません(Renderの環境変数 IMGBB_API_KEY か、管理者コマンド /imgbbkey で設定してください)'
     if not IMG_USE_IMGBB:
         return None, 'IMG_USE_IMGBB=0 のため、imgBB は使いません'
     mime = mime or _sniff_image(data, True)
@@ -1783,13 +1866,18 @@ def sync_post():
         return jsonify({'error': '認証エラー'}), 401
     try:
         body = request.get_json(silent=True) or {}
-        best_score = body.get('bestScore')
+        best_score = _safe_big(body.get('bestScore'))        # v4.3: 巨大な数・NaN・無限大でもエラーにしない
         coins = body.get('coins')
         skins = body.get('skins')
         equipped_skin = body.get('equippedSkin')
         quests = body.get('quests')
         mode = body.get('mode')
         play_time = body.get('playTime')
+        if play_time is not None:
+            try:
+                play_time = max(0, min(2_000_000_000, int(play_time)))
+            except (TypeError, ValueError, OverflowError):
+                play_time = None
 
         update_fields = []
         values = []
@@ -1818,14 +1906,21 @@ def sync_post():
                 update_fields.append('best_scores = %s')
                 values.append(json.dumps(best_scores))
             if best_score > 0:
-                current_best = (rows[0].get('best_score') if rows else 0) or 0
+                current_best = int((rows[0].get('best_score') if rows else 0) or 0)
                 if best_score > current_best:
                     update_fields.append('best_score = %s')
                     values.append(best_score)
 
         if coins is not None:
-            update_fields.append('coins = %s')
-            values.append(coins or 0)
+            # コインは桁数の制限なし。端末が送ってくるのはJavaScriptの数(約15桁を超えると丸まる)なので、
+            # 「サーバーの正確な値を丸めたものと同じ」なら、端末は変えていないとみなして上書きしない(正確な桁を守る)
+            new_coins = _safe_big(coins)
+            if new_coins is not None:
+                cur_rows = db_query('SELECT coins FROM users WHERE id = %s', [user_id])
+                cur_coins = int((cur_rows[0].get('coins') if cur_rows else 0) or 0)
+                if not (cur_coins > 2 ** 53 and _same_as_float(cur_coins, coins)):
+                    update_fields.append('coins = %s')
+                    values.append(new_coins)
         if skins is not None:
             existing_rows = db_query('SELECT skins FROM users WHERE id = %s', [user_id])
             existing_skins = json.loads((existing_rows[0]['skins'] if existing_rows else None) or '["default"]')
@@ -1900,7 +1995,7 @@ def _rank_build(mode, rtype):
     elif rtype == 'coins':
         val, where, order = 'coins', 'coins IS NOT NULL AND coins > 0', 'coins'
     else:
-        val = f"(best_scores->>'{mode}')::bigint"
+        val = f"(best_scores->>'{mode}')::numeric"
         where = f"best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'"
         order = val
     rows = db_query(f"SELECT id, display_name, icon, battlepass_xp, {val} AS value, equipped_title, COUNT(*) OVER() AS total FROM users "
@@ -2038,84 +2133,54 @@ def gacha_pull():
         return jsonify({'error': str(err) or 'サーバーエラー'}), 500
 
 
-# ===================== 🆕 バトルパス(経験値でレベルアップ、報酬はループ、上限なし) =====================
-# ★ レベルがどれだけ大きくなっても(ギフトで大量XPをもらっても)重くならないようにしてある:
+# ===================== ❄ ウィンターパス(経験値でレベルアップ。必要XPはレベルごとに増える。レベル上限なし) =====================
+# ★ レベルがどれだけ大きくなっても(ギフトで何桁ものXPをもらっても)重くならないようにしてある:
+#    ・レベル/XPの変換は、ループなしの式(整数の平方根) …… season.level_of
 #    ・受取済みは「1〜upto まで全部受取済み」+「それ以外に個別に受け取ったレベル(extra)」で保存する
-#    ・未受取の件数・合計は、10レベル周期の足し算で一瞬で計算する(1レベルずつ数えない)
-#    ・画面に返す報酬一覧は、いちばん新しい BATTLEPASS_VIEW_LIMIT レベル分だけ
-BATTLEPASS_VIEW_LIMIT = 30
-
-
-def _bp_prefix_sums():
-    coins, tickets = [0], [0]
-    for i in range(1, BATTLEPASS_CYCLE_LENGTH + 1):
-        r = battle_pass_reward_for_level(i)
-        coins.append(coins[-1] + (r['amount'] if r['type'] == 'coins' else 0))
-        tickets.append(tickets[-1] + (r['amount'] if r['type'] == 'gacha_ticket' else 0))
-    return coins, tickets
-
-
-_BP_PREFIX_COINS, _BP_PREFIX_TICKETS = _bp_prefix_sums()
-
-
-def bp_reward_totals(lo, hi):
-    """レベル lo〜hi(両端を含む)の報酬の合計 (コイン, チケット) を、ループ計算なしで返す"""
-    if hi < lo:
-        return 0, 0
-
-    def upto(n):  # レベル 1〜n の合計
-        full, rem = divmod(n, BATTLEPASS_CYCLE_LENGTH)
-        return (full * _BP_PREFIX_COINS[-1] + _BP_PREFIX_COINS[rem],
-                full * _BP_PREFIX_TICKETS[-1] + _BP_PREFIX_TICKETS[rem])
-
-    c_hi, t_hi = upto(hi)
-    c_lo, t_lo = upto(lo - 1)
-    return c_hi - c_lo, t_hi - t_lo
+#    ・未受取の件数・合計は、式で一瞬に計算する(1レベルずつ数えない)
+#    ・画面に返す報酬一覧は、「受け取れるもの(新しい順に最大30)」+「これから(12レベル)」+「特別報酬の一覧(1000レベルまで)」だけ
+# 「1000レベル限定」の報酬は、1000レベルまでしか手に入らない(1001以降は基本報酬だけが続く)
+BATTLEPASS_VIEW_LIMIT = season.VIEW_PENDING_MAX
 
 
 def bp_level_of(xp):
-    return int(xp or 0) // BATTLEPASS_XP_PER_LEVEL + 1
+    return season.level_of(xp)
 
 
-def bp_load_claimed(raw):
-    """DBの値 → (upto, extra)。旧形式(受取済みレベルのリスト)も読める"""
-    if isinstance(raw, dict):
-        upto = int(raw.get('upto') or 0)
-        extra = {int(x) for x in (raw.get('extra') or [])}
-    else:
-        upto, extra = 0, {int(x) for x in (raw or [])}
-    return bp_normalize(upto, extra)
+bp_load_claimed = season.load_claimed
+bp_normalize = season.normalize
+bp_dump_claimed = season.dump_claimed
+bp_is_claimed = season.is_claimed
 
 
-def bp_normalize(upto, extra):
-    extra = {x for x in extra if x > upto}
-    while (upto + 1) in extra:      # 連続している分は upto にまとめる
-        upto += 1
-        extra.discard(upto)
-    return upto, extra
-
-
-def bp_dump_claimed(upto, extra):
-    return json.dumps({'upto': upto, 'extra': sorted(extra)})
-
-
-def bp_is_claimed(lv, upto, extra):
-    return lv <= upto or lv in extra
-
-
-def bp_pending(level, upto, extra):
-    """到達済み・未受取の (件数, コイン合計, チケット合計)"""
-    count = max(0, level - upto)
-    coins, tickets = bp_reward_totals(upto + 1, level)
-    for lv in extra:
-        if upto < lv <= level:
-            count -= 1
-            r = battle_pass_reward_for_level(lv)
-            if r['type'] == 'coins':
-                coins -= r['amount']
-            elif r['type'] == 'gacha_ticket':
-                tickets -= r['amount']
-    return count, coins, tickets
+def _bp_grant(cur, user_id, items, u):
+    """報酬(基本 + 特別)をユーザーに付与する。u = SELECT した行(coins / gacha_state / skins / unlocks / titles)。
+    coins と gacha_state は呼び出し側が最後に書く。戻り値: (コイン合計, チケット合計, 付与したスキン, 付与した演出・テーマ)"""
+    coins = tickets = 0
+    skins_new, cos_new = [], []
+    try:
+        skins = json.loads(u.get('skins') or '["default"]') if isinstance(u.get('skins'), str) else (u.get('skins') or ['default'])
+    except Exception:
+        skins = ['default']
+    unlocks = list(u.get('unlocks') or [])
+    for it in items:
+        t = it['type']
+        if t == 'coins':
+            coins += it['amount']
+        elif t == 'ticket':
+            tickets += it['amount']
+        elif t == 'skin' and it['id'] not in skins:
+            skins.append(it['id'])
+            skins_new.append(it['id'])
+        elif t == 'cosmetic' and it['id'] not in unlocks:
+            unlocks.append(it['id'])
+            cos_new.append(it['id'])
+        # 称号('title')は、レベルに到達した時点で称号システムが自動で渡す(ここでは何もしない)
+    if skins_new:
+        cur.execute('UPDATE users SET skins = %s WHERE id = %s', [json.dumps(skins), user_id])
+    if cos_new:
+        cur.execute('UPDATE users SET unlocks = %s WHERE id = %s', [json.dumps(unlocks), user_id])
+    return coins, tickets, skins_new, cos_new
 
 
 @app.get('/api/battlepass/state')
@@ -2126,19 +2191,25 @@ def battlepass_state():
         if not rows:
             raise ApiError('ユーザーが見つかりません', 404)
         xp = int(rows[0].get('battlepass_xp') or 0)
-        upto, extra = bp_load_claimed(rows[0].get('battlepass_claimed'))
-        level = bp_level_of(xp)
-        xp_into_level = xp % BATTLEPASS_XP_PER_LEVEL
-        first = max(1, level - BATTLEPASS_VIEW_LIMIT + 1)
-        rewards = [dict(battle_pass_reward_for_level(lv), claimed=bp_is_claimed(lv, upto, extra))
-                   for lv in range(first, level + 1)]
-        p_count, p_coins, p_tickets = bp_pending(level, upto, extra)
-        return jsonify({'xp': xp, 'level': level, 'xpIntoLevel': xp_into_level,
-                        'xpPerLevel': BATTLEPASS_XP_PER_LEVEL, 'rewards': rewards,
-                        'pendingCount': p_count, 'pendingCoins': p_coins, 'pendingTickets': p_tickets})
+        upto, extra = season.load_claimed(rows[0].get('battlepass_claimed'))
+        level, into, need = season.progress_of(xp)
+        window = sorted(season.view_window(level, upto, extra), key=lambda r: r['level'])
+        # 古い画面(旧クライアント)でも読めるよう、基本報酬を type / amount でも付ける
+        for r in window:
+            p = r['items'][0]
+            r['type'], r['amount'] = p['type'], p['amount']
+        p_count, p_coins, p_tickets, p_specials = season.pending(level, upto, extra)
+        nxt = next((x for x in season.specials_view(level, upto, extra) if not x['reached']), None)
+        return jsonify({'season': {'id': season.SEASON_ID, 'name': season.SEASON_NAME, 'limitedMax': season.LIMITED_MAX},
+                        'xp': xp, 'level': level, 'xpIntoLevel': into, 'xpPerLevel': need,
+                        'rewards': window, 'specials': season.specials_view(level, upto, extra), 'nextSpecial': nxt,
+                        'pendingCount': p_count, 'pendingCoins': p_coins, 'pendingTickets': p_tickets,
+                        'pendingItems': [{'level': x['level'], 'labels': [i['label'] for i in x['items'] if i['type'] in ('skin', 'cosmetic', 'title')]} for x in p_specials
+                                         if any(i['type'] in ('skin', 'cosmetic', 'title') for i in x['items'])]})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
+        print(f'battlepass state error: {err}')
         return jsonify({'error': str(err) or 'サーバーエラー'}), 500
 
 
@@ -2147,8 +2218,13 @@ def battlepass_addxp():
     try:
         user_id = require_auth()
         body = request.get_json(silent=True) or {}
-        add_amount = max(0, min(5000, int(body.get('amount') or 0)))
-        db_execute('UPDATE users SET battlepass_xp = battlepass_xp + %s WHERE id = %s', [add_amount, user_id])
+        try:
+            add_amount = season.parse_big(body.get('amount'), 'XP')
+        except ValueError:
+            add_amount = 0
+        add_amount = max(0, min(5000, add_amount))          # ゲームの結果から増える分は、1回5000まで(ギフトや報酬は別の経路)
+        if add_amount:
+            db_execute('UPDATE users SET battlepass_xp = COALESCE(battlepass_xp, 0) + %s WHERE id = %s', [add_amount, user_id])
         return jsonify({'ok': True})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
@@ -2161,68 +2237,71 @@ def battlepass_claim():
     try:
         user_id = require_auth()
         body = request.get_json(silent=True) or {}
-        lv = int(body.get('level') or 0)
+        try:
+            lv = season.parse_big(body.get('level'), 'レベル')
+        except ValueError:
+            lv = 0
         if lv < 1:
             raise ApiError('レベルを指定してください', 400)
         with db_transaction() as cur:
-            cur.execute('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state '
+            cur.execute('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state, skins, unlocks '
                         'FROM users WHERE id = %s FOR UPDATE', [user_id])
             u = cur.fetchone()
             if not u:
                 raise ApiError('ユーザーが見つかりません', 404)
             if lv > bp_level_of(u.get('battlepass_xp')):
                 raise ApiError('まだそのレベルに到達していません', 400)
-            upto, extra = bp_load_claimed(u.get('battlepass_claimed'))
-            if bp_is_claimed(lv, upto, extra):
+            upto, extra = season.load_claimed(u.get('battlepass_claimed'))
+            if season.is_claimed(lv, upto, extra):
                 raise ApiError('すでに受け取り済みです', 400)
-            reward = battle_pass_reward_for_level(lv)
-            coins = int(u.get('coins') or 0)
+            items = season.reward_items(lv)
+            g_coins, g_tickets, skins_new, cos_new = _bp_grant(cur, user_id, items, u)
+            coins = int(u.get('coins') or 0) + g_coins
             gs = u.get('gacha_state') or {'totalPulls': 0, 'pityCounter': 0}
-            free_tickets = gs.get('freeTickets') or 0
-            if reward['type'] == 'coins':
-                coins += reward['amount']
-            elif reward['type'] == 'gacha_ticket':
-                free_tickets += reward['amount']
-                gs['freeTickets'] = free_tickets
+            gs['freeTickets'] = (gs.get('freeTickets') or 0) + g_tickets
             extra.add(lv)
-            upto, extra = bp_normalize(upto, extra)
+            upto, extra = season.normalize(upto, extra)
             cur.execute('UPDATE users SET coins=%s, battlepass_claimed=%s, gacha_state=%s WHERE id=%s',
-                        [coins, bp_dump_claimed(upto, extra), json.dumps(gs), user_id])
-        return jsonify({'ok': True, 'reward': reward, 'coins': coins, 'freeTickets': free_tickets})
+                        [coins, season.dump_claimed(upto, extra), json.dumps(gs), user_id])
+        return jsonify({'ok': True, 'reward': items[0], 'items': items, 'coins': coins, 'freeTickets': gs['freeTickets'],
+                        'newSkins': skins_new, 'newCosmetics': cos_new})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
+        print(f'battlepass claim error: {err}')
         return jsonify({'error': str(err) or 'サーバーエラー'}), 500
 
 
 @app.post('/api/battlepass/claim-all')
 def battlepass_claim_all():
-    """到達済みで未受け取りの報酬を全部まとめて受け取る(何百万レベルぶんでも一瞬)。"""
+    """到達済みで未受け取りの報酬を全部まとめて受け取る(何桁ものレベルぶんでも一瞬)。"""
     try:
         user_id = require_auth()
         with db_transaction() as cur:
-            cur.execute('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state '
+            cur.execute('SELECT coins, battlepass_xp, battlepass_claimed, gacha_state, skins, unlocks '
                         'FROM users WHERE id = %s FOR UPDATE', [user_id])
             u = cur.fetchone()
             if not u:
                 raise ApiError('ユーザーが見つかりません', 404)
             level = bp_level_of(u.get('battlepass_xp'))
-            upto, extra = bp_load_claimed(u.get('battlepass_claimed'))
-            count, total_coins, total_tickets = bp_pending(level, upto, extra)
+            upto, extra = season.load_claimed(u.get('battlepass_claimed'))
+            count, total_coins, total_tickets, specials = season.pending(level, upto, extra)
             if count <= 0:
                 raise ApiError('受け取れる報酬がありません', 400)
-
+            special_items = [i for x in specials for i in x['items'] if i['type'] in ('skin', 'cosmetic')]
+            _c, _t, skins_new, cos_new = _bp_grant(cur, user_id, special_items, u)
             coins = int(u.get('coins') or 0) + total_coins
             gs = u.get('gacha_state') or {'totalPulls': 0, 'pityCounter': 0}
             gs['freeTickets'] = (gs.get('freeTickets') or 0) + total_tickets
             cur.execute('UPDATE users SET coins=%s, battlepass_claimed=%s, gacha_state=%s WHERE id=%s',
-                        [coins, bp_dump_claimed(level, set()), json.dumps(gs), user_id])
-
+                        [coins, season.dump_claimed(level, set()), json.dumps(gs), user_id])
         return jsonify({'ok': True, 'claimedCount': count, 'totalCoins': total_coins,
-                        'totalTickets': total_tickets, 'coins': coins, 'freeTickets': gs['freeTickets']})
+                        'totalTickets': total_tickets, 'coins': coins, 'freeTickets': gs['freeTickets'],
+                        'newSkins': skins_new, 'newCosmetics': cos_new})
     except ApiError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as err:
+        print(f'battlepass claim-all error: {err}')
         return jsonify({'error': str(err) or 'サーバーエラー'}), 500
 
 
@@ -2313,7 +2392,7 @@ def run_event_scheduler():
             rank_rows = db_query(f"""
                 SELECT id FROM users
                 WHERE best_scores->>'{mode}' IS NOT NULL AND best_scores->>'{mode}' != '0'
-                ORDER BY (best_scores->>'{mode}')::bigint DESC LIMIT 1 OFFSET %s
+                ORDER BY (best_scores->>'{mode}')::numeric DESC LIMIT 1 OFFSET %s
             """, [ev['rank_position'] - 1])
             if rank_rows:
                 target_id = rank_rows[0]['id']
@@ -2707,16 +2786,15 @@ def friends_remove():
 FRIENDS_SQL = """
 SELECT
  (SELECT COALESCE(json_agg(t ORDER BY t.id), '[]'::json) FROM (
-    SELECT u.id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, u.best_score, u.coins, u.equipped_title,
+    SELECT u.id, u.display_name AS name, u.icon, nx_bp_level(u.battlepass_xp) AS lv, u.best_score, u.coins, u.equipped_title,
            (u.last_active IS NOT NULL AND u.last_active > NOW() - INTERVAL '20 seconds') AS online
     FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = %s) t) AS friends,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT fr.from_id AS id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.from_id WHERE fr.to_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS incoming,
+    SELECT fr.from_id AS id, u.display_name AS name, u.icon, nx_bp_level(u.battlepass_xp) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.from_id WHERE fr.to_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS incoming,
  (SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-    SELECT fr.to_id AS id, u.display_name AS name, u.icon, (COALESCE(u.battlepass_xp, 0) / __BPL__ + 1) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.to_id WHERE fr.from_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS outgoing
+    SELECT fr.to_id AS id, u.display_name AS name, u.icon, nx_bp_level(u.battlepass_xp) AS lv, fr.created_at FROM friend_requests fr LEFT JOIN users u ON u.id = fr.to_id WHERE fr.from_id = %s AND fr.status = 'pending' ORDER BY fr.created_at DESC) t) AS outgoing
 """
 
-FRIENDS_SQL = FRIENDS_SQL.replace('__BPL__', str(BATTLEPASS_XP_PER_LEVEL))
 
 
 def _friends_payload(user_id):
@@ -2923,9 +3001,10 @@ def admin_command():
 
     def to_int(s):
         try:
-            return int(s)
+            n = int(s)
         except (TypeError, ValueError):
             return None
+        return n if abs(n) <= season.BIG_MAX else None        # v4.3: 何桁でもOK(DBは桁数の制限なし)。300桁を超える数だけ、受け付けない
 
     try:
         if cmd == '/setcoins':
@@ -3055,7 +3134,7 @@ def admin_command():
                      f"📅 最終ログイン: {last_login_str}")
 
         elif cmd == '/imgbbkey':
-            # imgBB のAPIキーを、データベースに保存する(Enzonicの環境変数が使えないとき用。環境変数があれば、そちらが優先)
+            # imgBB のAPIキーを、データベースに保存する(Renderの環境変数が使えないとき用。環境変数があれば、そちらが優先)
             #   /imgbbkey <キー> で保存 / /imgbbkey clear で削除
             if not args:
                 raise ValueError('使用法: /imgbbkey <imgBBのAPIキー>   (消すとき: /imgbbkey clear)')
@@ -3082,7 +3161,7 @@ def admin_command():
                 f"{'✅' if last['ok'] else '⚠️'} {last['at'].strftime('%m/%d %H:%M:%S')} UTC {last['msg'][:120]}"
             okay = bool(u1 or u2)
             result = (f"☁️ imgBB 接続テスト\nAPIキー: {_key_hint(key)}  取得元: {src}\n"
-                      f"imgBBっぽい環境変数の名前: {', '.join(seen) if seen else '(1つも見つかりません → Enzonic の環境変数(Startup / Variables)に入れた名前・サーバーを確認)'}\n"
+                      f"imgBBっぽい環境変数の名前: {', '.join(seen) if seen else '(1つも見つかりません → Render の Environment に入れた名前・サービスを確認)'}\n"
                       f"使う設定: {'ON' if IMG_USE_IMGBB else 'OFF(IMG_USE_IMGBB=0)'}\n"
                       f"サーバーの起動: {SERVER_STARTED_AT.strftime('%m/%d %H:%M:%S')} UTC\n"
                       f"①期限つき(チャット画像と同じ): {'✅ ' if u1 else '❌ '}{m1}\n"
@@ -3349,7 +3428,7 @@ CHAT_CACHE_SEC = 1.5
 def _chat_load():
     rows = db_query("SELECT c.id, c.user_id, CASE WHEN COALESCE(c.deleted, FALSE) THEN '' ELSE c.message END AS message, c.timestamp, "
                     "(c.edited_at IS NOT NULL) AS edited, COALESCE(c.deleted, FALSE) AS deleted, u.equipped_title, u.display_name AS name, u.icon, "
-                    f"(COALESCE(u.battlepass_xp, 0) / {BATTLEPASS_XP_PER_LEVEL} + 1) AS lv, CASE WHEN COALESCE(c.deleted, FALSE) THEN NULL ELSE c.image_id END AS image_id "
+                    f"nx_bp_level(u.battlepass_xp) AS lv, CASE WHEN COALESCE(c.deleted, FALSE) THEN NULL ELSE c.image_id END AS image_id "
                     "FROM (SELECT * FROM chat_messages ORDER BY id DESC LIMIT 50) c LEFT JOIN users u ON u.id = c.user_id ORDER BY c.id")
     for r in rows:
         r['title'] = titles.view_of(r.pop('equipped_title', None), r['user_id'], ADMIN_USER_ID)
@@ -3437,14 +3516,18 @@ def user_profile(user_id_param):
 
 
 # ===================== 🎃 ハロウィンイベントのAPIを登録 =====================
-halloween.BP_XP_PER_LEVEL = BATTLEPASS_XP_PER_LEVEL        # ランキングに出すバトルパスLvの計算用
+halloween.BP_XP_PER_LEVEL = BATTLEPASS_XP_PER_LEVEL        # (旧)
+halloween.bp_level_of = bp_level_of                        # ランキングに出すバトルパスLv(新しい計算)
 halloween.register(app, db_query, db_transaction, require_auth, ApiError)
 import minigames  # 🕹 ミニゲームのランキング(別ファイル)
 minigames.BP_XP_PER_LEVEL = BATTLEPASS_XP_PER_LEVEL
+minigames.bp_level_of = bp_level_of
 minigames.register(app, db_query, require_auth, ApiError)
 social.register(app, db_query, db_transaction, require_auth, get_user_id_optional, ApiError, ADMIN_USER_ID,
                 on_chat_change=lambda: cache_drop('chat:'))
 titles.register(app, db_query, require_auth, ApiError, ADMIN_USER_ID)
+v43.register(app, db_query, db_transaction, require_auth, ApiError, ADMIN_USER_ID,
+             bp_level_of=bp_level_of, get_user_id_optional=get_user_id_optional)
 halloween.eng_register(app, db_query, db_transaction, require_auth, ApiError)
 
 
@@ -3461,9 +3544,9 @@ def healthz():
     return jsonify({'ok': True})
 
 
-# 環境変数 SELF_PING_URL(自分自身の公開URL)を設定したときだけ、10分ごとに自分の /healthz にアクセスする。
-# Enzonic はアイドルでスリープしないので、普通は未設定のままでOK(Renderの「15分でスリープ」対策の名残り)。
-SELF_PING_URL = os.environ.get('SELF_PING_URL') or ''
+# Render が自動で設定する RENDER_EXTERNAL_URL(または SELF_PING_URL)宛てに10分ごとに自分でアクセスして、
+# 無料プランの「15分アクセスなしでスリープ」を防ぐ。
+SELF_PING_URL = os.environ.get('SELF_PING_URL') or os.environ.get('RENDER_EXTERNAL_URL') or ''
 
 
 def keep_alive_ping():
@@ -3498,6 +3581,5 @@ def start_app():
 start_app()
 
 if __name__ == '__main__':
-    # ローカル確認用。本番(Enzonic)は backend/run.py が gunicorn で起動する。ポートは PORT か SERVER_PORT(Enzonic のパネルが渡す値)
-    port = int(os.environ.get('PORT') or os.environ.get('SERVER_PORT') or 3000)
+    port = int(os.environ.get('PORT', 3000))
     app.run(host='0.0.0.0', port=port)
