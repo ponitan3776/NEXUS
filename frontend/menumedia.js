@@ -15,7 +15,7 @@
    ===================================================================== */
 (function(){
   'use strict';
-  const VER = 'menumedia 4.1.3';
+  const VER = 'menumedia 4.1.4';
   const BASE = 'icons/';
   const VIDEOS = ['menu.mp4', 'menu.webm'];
   const IMAGES = ['menu.jpg', 'menu.png', 'menu.webp'];
