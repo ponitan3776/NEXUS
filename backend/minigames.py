@@ -11,61 +11,75 @@
 """
 from flask import request, jsonify
 
-BP_XP_PER_LEVEL = 1000                      # app.py が正しい値を入れてくれる(バトルパス1レベルに必要なXP)
+import season
+
+BP_XP_PER_LEVEL = 1000                      # (旧)
+bp_level_of = lambda xp: int(xp or 0) // 1000 + 1   # app.py が新しい計算(season.level_of)を入れてくれる
 
 # game: (better, min, max, 単位)
 #   better='high' → 大きいほど上位 / 'low' → 小さいほど上位
+#   v4.2: 記録の制限をすべて撤廃。max=None は「上限なし」、min は 0(マイナスだけは無効)。数字を足すと、また制限をかけられる
 GAMES = {
-    'g2048':  ('high', 4,  2_000_000, '点'),    # 2048(スコア)
-    'snake':  ('high', 0,  220,       '個'),    # 15×15マスなので最大でも220個
-    'memory': ('low',  8,  999,       '手'),    # 8組なので最短8手
-    'whack':  ('high', 0,  1200,      '点'),    # 30秒
-    'mines':  ('low',  4,  3599,      '秒'),    # 勝ったときのクリア秒数
-    'flight': ('high', 0,  5000,      '枚'),
+    'g2048':  ('high', 0, None, '点'),    # 2048(スコア)
+    'snake':  ('high', 0, None,       '個'),    # 15×15マスなので最大でも220個
+    'memory': ('low', 0, None,       '手'),    # 8組なので最短8手
+    'whack':  ('high', 0, None,      '点'),    # 30秒
+    'mines':  ('low', 0, None,      '秒'),    # 勝ったときのクリア秒数
+    'flight': ('high', 0, None,      '枚'),
     # --- v3.6 で追加 ---
-    'dino':     ('high', 0,  99999, '点'),     # ゴースト・ラン(走った距離)
-    'breakout': ('high', 0,  20000, '点'),     # かぼちゃブロック崩し
-    'simon':    ('high', 0,  99,    'ラウンド'),  # ろうそくシモン
-    'reflex':   ('low',  80, 2000,  'ms'),     # ガイコツ反射神経(5回の平均)
-    'catch':    ('high', 0,  2000,  '点'),     # キャンディキャッチ
-    'math':     ('high', 0,  150,   '問'),     # ばけばけ計算
-    'maze':     ('low',  3,  3599,  '秒'),     # まよいの洋館
-    'slide':    ('low',  8,  999,   '手'),     # スライドパズル
-    'lights':   ('low',  3,  999,   '手'),     # ともしびライツアウト
-    'numtouch': ('low',  30, 6000,  '0.1秒'),  # ナンバータッチ(0.1秒単位)
-    'stroop':   ('high', 0,  150,   '問'),     # いろいろモンスター
-    'stack':    ('high', 0,  400,   '段'),     # ホーンテッド・スタック
+    'dino':     ('high', 0, None, '点'),     # ゴースト・ラン(走った距離)
+    'breakout': ('high', 0, None, '点'),     # かぼちゃブロック崩し
+    'simon':    ('high', 0, None,    'ラウンド'),  # ろうそくシモン
+    'reflex':   ('low', 0, None,  'ms'),     # ガイコツ反射神経(5回の平均)
+    'catch':    ('high', 0, None,  '点'),     # キャンディキャッチ
+    'math':     ('high', 0, None,   '問'),     # ばけばけ計算
+    'maze':     ('low', 0, None,  '秒'),     # まよいの洋館
+    'slide':    ('low', 0, None,   '手'),     # スライドパズル
+    'lights':   ('low', 0, None,   '手'),     # ともしびライツアウト
+    'numtouch': ('low', 0, None,  '0.1秒'),  # ナンバータッチ(0.1秒単位)
+    'stroop':   ('high', 0, None,   '問'),     # いろいろモンスター
+    'stack':    ('high', 0, None,   '段'),     # ホーンテッド・スタック
     # --- v3.9 パート3 で追加 ---
     'tapspeed':  ('high', 0, None, '回'),     # 10秒れんだ(スコア上限なし。max=None は「上限を設けない」)
-    'timing':    ('high', 0, 500,  '点'),      # ぴったりストップ(5回・最大500点)
-    'oddone':    ('high', 0, 120,  '問'),      # ちがうのはどれ？(30秒)
-    'sortg':     ('high', 0, 150,  '問'),      # おばけ仕分け(30秒)
-    'highlow':   ('high', 0, 60,   '連勝'),    # ハイ＆ロー
-    'rps':       ('high', 0, 60,   '連勝'),    # おばけじゃんけん
-    'pumpcount': ('high', 0, 60,   '問'),      # かぼちゃ数え
-    'holdexact': ('low',  0, 5000, 'ms'),      # ぴったり5秒(誤差)
+    'timing':    ('high', 0, None,  '点'),      # ぴったりストップ(5回・最大500点)
+    'oddone':    ('high', 0, None,  '問'),      # ちがうのはどれ？(30秒)
+    'sortg':     ('high', 0, None,  '問'),      # おばけ仕分け(30秒)
+    'highlow':   ('high', 0, None,   '連勝'),    # ハイ＆ロー
+    'rps':       ('high', 0, None,   '連勝'),    # おばけじゃんけん
+    'pumpcount': ('high', 0, None,   '問'),      # かぼちゃ数え
+    'holdexact': ('low', 0, None, 'ms'),      # ぴったり5秒(誤差)
     # --- v4.0 パート3 拡張で追加 ---
-    'batdodge': ('high', 0, 3000, '匹'),       # コウモリよけ
-    'glowmem':  ('high', 0, 99,   'ラウンド'), # ともしびメモリー
-    'rhythm':   ('high', 0, 1500, '点'),       # ガイコツ・ビート
-    'puffpump': ('high', 0, 3000, '点'),       # かぼちゃふくらまし
-    'wordscr':  ('high', 0, 60,   '語'),       # もじならべ
+    'batdodge': ('high', 0, None, '匹'),       # コウモリよけ
+    'glowmem':  ('high', 0, None,   'ラウンド'), # ともしびメモリー
+    'rhythm':   ('high', 0, None, '点'),       # ガイコツ・ビート
+    'puffpump': ('high', 0, None, '点'),       # かぼちゃふくらまし
+    'wordscr':  ('high', 0, None,   '語'),       # もじならべ
 }
 
 
 def validate(game, score):
-    """(ok, score:int) を返す。範囲外や不明なゲームは ok=False"""
+    """(ok, score:int) を返す。不明なゲーム・数字でない値・マイナスは ok=False。
+    記録の上限/下限は GAMES で決める(v4.2 からは、上限なし・下限0 / v4.3 からは桁数の制限も300桁だけ)"""
     spec = GAMES.get(game)
     if not spec:
         return False, 0
     try:
-        s = int(score)
-    except (TypeError, ValueError):
+        if isinstance(score, bool):
+            return False, 0
+        if isinstance(score, float):
+            if score != score or score in (float('inf'), float('-inf')):      # NaN・無限大は数ではない
+                return False, 0
+            s = int(score)
+        elif isinstance(score, int):
+            s = score
+        else:
+            s = season.parse_big(score)                                       # '123456789012345678901234567890' のような文字列もOK
+    except (TypeError, ValueError, OverflowError):
         return False, 0
     _, lo, hi, _ = spec
-    if s < lo or (hi is not None and s > hi):
+    if (lo is not None and s < lo) or (hi is not None and s > hi):
         return False, 0
-    if s > 9_000_000_000_000_000:                  # DBの BIGINT を超えるような値だけは、さすがに捨てる
+    if s < 0 or s > season.BIG_MAX:        # v4.3: マイナスと、300桁を超える値だけを捨てる(DBは桁数制限なしの NUMERIC なのでエラーにならない)
         return False, 0
     return True, s
 
@@ -84,7 +98,7 @@ def db_top(db_query, game, better, limit=20):
     order = 'DESC' if better == 'high' else 'ASC'
     rows = db_query(f"SELECT m.user_id, m.best, u.display_name, u.icon, u.battlepass_xp FROM mini_scores m LEFT JOIN users u ON u.id = m.user_id "
                     f"WHERE m.game = %s ORDER BY m.best {order}, m.updated_at ASC LIMIT %s", [game, limit])
-    return [{'id': r['user_id'], 'name': r.get('display_name') or r['user_id'], 'icon': r.get('icon') or '', 'lv': int(r.get('battlepass_xp') or 0) // BP_XP_PER_LEVEL + 1, 'score': int(r['best'])} for r in rows]
+    return [{'id': r['user_id'], 'name': r.get('display_name') or r['user_id'], 'icon': r.get('icon') or '', 'lv': bp_level_of(r.get('battlepass_xp')), 'score': int(r['best'])} for r in rows]
 
 
 def db_mine(db_query, game, user, better):
