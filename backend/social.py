@@ -25,10 +25,11 @@ import uuid
 from flask import request, jsonify
 
 import halloween as H
+import season
 
 POLL_MIN_OPTIONS, POLL_MAX_OPTIONS = 2, 8
 POLL_Q_MAX, POLL_OPT_MAX = 120, 40
-GIFT_MAX = 10 ** 12
+GIFT_MAX = season.BIG_MAX            # v4.3: 上限は実質なし(season.BIG_DIGITS=300桁。DBは桁数制限なしの NUMERIC)
 GIFT_MSG_MAX = 300
 # プレイヤー同士のギフト(v3.9): フレンドにだけ・コインだけ。悪用防止のため、1回と1日の上限あり
 PLAYER_GIFT_MAX = 10_000          # 1回に贈れる上限
@@ -48,8 +49,8 @@ CREATE TABLE IF NOT EXISTS poll_votes (
 );
 CREATE TABLE IF NOT EXISTS gifts (
     id SERIAL PRIMARY KEY, batch_id TEXT NOT NULL, to_user TEXT NOT NULL, from_user TEXT NOT NULL,
-    message TEXT NOT NULL DEFAULT '', coins BIGINT DEFAULT 0, candies BIGINT DEFAULT 0,
-    bp_xp BIGINT DEFAULT 0, event_xp BIGINT DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '', coins NUMERIC DEFAULT 0, candies NUMERIC DEFAULT 0,
+    bp_xp NUMERIC DEFAULT 0, event_xp NUMERIC DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(), claimed_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS gifts_to_user_idx ON gifts (to_user, claimed_at);
@@ -95,13 +96,8 @@ def clean_question(q):
 
 
 def clean_amount(v, name):
-    try:
-        n = int(v or 0)
-    except (TypeError, ValueError):
-        raise ValueError(f'{name}は数字で指定してください')
-    if n < 0 or n > GIFT_MAX:
-        raise ValueError(f'{name}は0〜{GIFT_MAX:,}の範囲で指定してください')
-    return n
+    """ギフトの数。整数・数字だけの文字列・1e30 のような表記も読める。巨大な数でもエラーにならない"""
+    return season.parse_big(v, name)
 
 
 def poll_view(row, counts, my_vote):
