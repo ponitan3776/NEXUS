@@ -7,6 +7,8 @@
 * 条件を満たした称号は users.titles(JSONB)に保存され、あとで条件を下回っても(例: コインを使っても)消えない。
 * 付けている称号は users.equipped_title。ランキング・チャット・フレンド・プロフィールに名前と並んで出る。
 * rarity='admin' の称号は管理者アカウントだけが持てる(サーバーが判定。他の人は付けられない)。
+* v4.3: 管理者アカウントは「すべての称号」を自動で獲得する(条件なし)。管理者専用の称号は、他の人の一覧にも、
+  管理者の名前の横(ランキング・チャット・フレンド・プロフィール)にも出ない(HIDE_ADMIN_TITLES_FROM_OTHERS)。
 * 称号を足すときは TITLES に1行足すだけ。kind と need で条件を決める:
     score   全モードのベストスコアの最大値      coins    所持コイン(獲得した瞬間の値)
     play    プレイ時間(秒)                      bp       バトルパスのレベル
@@ -16,11 +18,18 @@
     streak  毎日ログインボーナスの最長連続日数   dex      おばけ図鑑に登録した数
     stamps  スタンプラリーのスタンプ数           tot      トリック・オア・トリートを開けた回数
     harvest かぼちゃを収穫した数                 ghost    さまようおばけをつかまえた数
+    plays   遊んだ回数(全モード合計)             playstreak  連続して遊んだ日数の最長
+    minis   遊んだミニゲームの種類               ach         獲得した実績の数            perfects  満点(★5)の回数
     always  ログインしていれば獲得(need は使わない)
     admin   管理者専用(条件では手に入らない)
 """
 import json
 from datetime import datetime
+
+import season
+
+# True: 管理者専用の称号は、管理者本人の画面以外には出さない(他の人の一覧にも、管理者の名前の横にも出ない)
+HIDE_ADMIN_TITLES_FROM_OTHERS = True
 
 from flask import request, jsonify
 
@@ -50,6 +59,9 @@ TITLES = [
     ('bp_10',       '🎫 パスの挑戦者',         'バトルパス Lv.10',                        'common',    'bp',      10),
     ('bp_50',       '🎖 パスの猛者',           'バトルパス Lv.50',                        'rare',      'bp',      50),
     ('bp_100',      '🏅 パスの覇者',           'バトルパス Lv.100',                       'epic',      'bp',      100),
+    ('bp_250',      '🏔 雪嶺の探求者',         'ウィンターパス Lv.250',                   'epic',      'bp',      250),
+    ('bp_500',      '🌌 氷原の支配者',         'ウィンターパス Lv.500',                   'legendary', 'bp',      500),
+    ('bp_1000',     '🥶 絶対零度の覇者',       'ウィンターパス Lv.1000(1000レベル限定)',   'legendary', 'bp',      1000),
     # --- ガチャ・スキン ---
     ('pull_10',     '🎰 ガチャ初心者',         'ガチャを 10 回引いた',                    'common',    'pulls',   10),
     ('pull_100',    '🎲 ガチャの申し子',       'ガチャを 100 回引いた',                   'rare',      'pulls',   100),
@@ -79,6 +91,20 @@ TITLES = [
     ('hw_tot_30',   '🚪 ドアたたきの名人',     'トリック・オア・トリートを 30 回',          'rare',      'tot',     30),
     ('hw_harvest_30', '🌾 かぼちゃ農家',       'かぼちゃを 30 個収穫した',                  'rare',      'harvest', 30),
     ('hw_ghost_60', '👻 おばけ捕り名人',       'さまようおばけを 60 回つかまえた',          'epic',      'ghost',   60),
+    # --- 遊んだ回数・続けた日数・実績(v4.3) ---
+    ('plays_100',   '🎮 遊び慣れた人',         'ゲームを 100 回遊んだ',                   'common',    'plays',   100),
+    ('plays_1000',  '🕹 ゲーム好き',           'ゲームを 1,000 回遊んだ',                 'rare',      'plays',   1000),
+    ('plays_10000', '🎖 ゲームの申し子',       'ゲームを 10,000 回遊んだ',                'epic',      'plays',   10000),
+    ('pstreak_3',   '🔥 三日坊主じゃない',     '3 日連続で遊んだ',                        'common',    'playstreak', 3),
+    ('pstreak_7',   '☃ 雪の日も欠かさず',      '7 日連続で遊んだ',                        'rare',      'playstreak', 7),
+    ('pstreak_30',  '🧊 凍てつく継続力',       '30 日連続で遊んだ',                       'epic',      'playstreak', 30),
+    ('pstreak_100', '🌨 吹雪でも止まらない',   '100 日連続で遊んだ',                      'legendary', 'playstreak', 100),
+    ('minis_10',    '🧭 ミニゲーム探検家',     'ミニゲームを 10 種類遊んだ',              'rare',      'minis',   10),
+    ('minis_all',   '🗺 ミニゲーム制覇',       'ミニゲームを全種類遊んだ',                'epic',      'minis',   31),
+    ('ach_10',      '🏆 実績ハンター',         '実績を 10 個獲得した',                    'rare',      'ach',     10),
+    ('ach_30',      '🥇 実績コレクター',       '実績を 30 個獲得した',                    'epic',      'ach',     30),
+    ('perfect_1',   '⭐ はじめての満点',       'ミニゲームで満点(★5)を取った',           'common',    'perfects', 1),
+    ('perfect_30',  '🌟 満点の常連',           'ミニゲームで満点(★5)を 30 回取った',     'epic',      'perfects', 30),
     # --- 管理者だけの称号(条件では手に入らない) ---
     ('adm_creator',   '🌌 星海の創造主',       '世界をつくった者だけが名乗れる',           'admin',     'admin',   0),
     ('adm_weaver',    '⚜ 運命の調律者',       'ルールを紡ぎ、運命を整える',               'admin',     'admin',   0),
@@ -90,7 +116,7 @@ ADMIN_TITLE_IDS = [t[0] for t in TITLES if t[3] == 'admin']
 
 STATS_SQL = """
 SELECT u.best_scores, u.coins, u.play_time, u.battlepass_xp, u.gacha_state, u.skins, u.event_state,
-       u.created_at, u.titles, u.equipped_title,
+       u.created_at, u.titles, u.equipped_title, u.v43,
        (SELECT COUNT(*) FROM friends f WHERE f.user_id = u.id) AS friends,
        (SELECT COUNT(*) FROM poll_votes v WHERE v.user_id = u.id) AS votes,
        (SELECT COALESCE(MAX(d.best_streak), 0) FROM daily_bonus d WHERE d.user_id = u.id) AS login_streak
@@ -122,9 +148,14 @@ def gather_stats(row):
     ev = _as_json(row.get('event_state'), {})
     ca = row.get('created_at')
     days = (datetime.utcnow() - ca).days if hasattr(ca, 'year') else 0
+    v43row = _as_json(row.get('v43'), {})
+    st43 = v43row.get('stats') or {}
     return {
         'score': best, 'coins': int(row.get('coins') or 0), 'play': int(row.get('play_time') or 0),
-        'bp': int(row.get('battlepass_xp') or 0) // 1000 + 1,
+        'bp': season.level_of(row.get('battlepass_xp') or 0),
+        'plays': int(st43.get('plays', 0) or 0), 'playstreak': int(st43.get('bestStreak', 0) or 0),
+        'minis': len(st43.get('minisPlayed') or []), 'ach': len(v43row.get('ach') or {}),
+        'perfects': int(st43.get('perfects', 0) or 0),
         'pulls': int(gs.get('totalPulls', 0) or 0), 'skins': len(_as_json(row.get('skins'), [])),
         'friends': int(row.get('friends') or 0), 'votes': int(row.get('votes') or 0),
         'candy': int(ev.get('totalCandies', 0) or 0), 'days': max(0, days),
@@ -137,6 +168,8 @@ def gather_stats(row):
 
 def earned_now(stats, user_id, admin_id):
     out = set()
+    if user_id == admin_id:
+        return {t[0] for t in TITLES}                         # v4.3: 管理者は、すべての称号を自動で獲得する
     for tid, _n, _d, rar, kind, need in TITLES:
         if kind == 'always':
             out.add(tid)
@@ -153,8 +186,8 @@ def view_of(tid, user_id, admin_id):
     t = BY_ID.get(tid or '')
     if not t:
         return None
-    if t[3] == 'admin' and user_id != admin_id:
-        return None
+    if t[3] == 'admin' and (user_id != admin_id or HIDE_ADMIN_TITLES_FROM_OTHERS):
+        return None                                           # 管理者専用の称号は、他の人には見せない
     return {'id': t[0], 'n': t[1], 'r': t[3]}
 
 
