@@ -1,6 +1,6 @@
 /* =====================================================================
    🌐 通信の土台 (v3.5.1) — script.js より先に読み込む
-   サーバー(Render)への fetch だけを、次のように強くする(それ以外のURLには何もしない):
+   サーバー(Enzonic)への fetch だけを、次のように強くする(それ以外のURLには何もしない):
    ① 先読み: 接続(DNS・TLS)を先に済ませておく
    ② 起こす: 眠っているサーバーを、ページを開いた瞬間に起こしておく(ロード画面の間に済む)
    ③ 再試行: 読み込み(GET)が通信エラー・502/503/504になったら、少し待って最大3回まで自動でやり直す
@@ -10,7 +10,7 @@
    ===================================================================== */
 (function(){
   'use strict';
-  const BASE = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
+  const BASE = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://YOUR-SERVER.enzonic.com').replace(/\/+$/, '');
   const orig = window.fetch.bind(window);
   const TIMEOUT_MS = 60000;
   const RETRY_STATUS = { 502:1, 503:1, 504:1 };
