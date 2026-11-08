@@ -304,7 +304,8 @@ def _env_dt(name, default):
 
 
 START = _env_dt('HALLOWEEN_START', datetime(2026, 10, 17, 0, 0, tzinfo=JST))
-END = _env_dt('HALLOWEEN_END', datetime(2026, 11, 8, 0, 0, tzinfo=JST))
+# v4.3: ハロウィン終了(2026-11-04 0:00 JST)。その後48時間(11/6 0:00まで)は、報酬の受け取りと交換所だけ使える
+END = _env_dt('HALLOWEEN_END', datetime(2026, 11, 4, 0, 0, tzinfo=JST))
 try:
     GRACE = timedelta(hours=int(os.environ.get('HALLOWEEN_GRACE_HOURS', '48')))
 except ValueError:
@@ -560,7 +561,8 @@ def time_info():
 
 
 # ===================== v3.6 パート2: ボーナス・図鑑・スタンプ・畑など =====================
-BP_XP_PER_LEVEL = 1000                      # app.py が正しい値を入れてくれる(バトルパス1レベルに必要なXP)
+BP_XP_PER_LEVEL = 1000                      # (旧)
+bp_level_of = lambda xp: int(xp or 0) // 1000 + 1   # app.py が新しい計算(season.level_of)を入れてくれる
 MINI_IDS = list(C.MINI_GAME_IDS)          # スタンプラリーの対象(ミニゲームを足したら C.MINI_GAME_IDS と minigames.py の GAMES の両方に足す)
 
 
@@ -1206,18 +1208,18 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
     def hw_ranking():
         user_id = require_auth()
         rows = db_query(
-            "SELECT id, display_name, icon, battlepass_xp, (event_state->>'totalCandies')::bigint AS total FROM users "
-            "WHERE event_state->>'id' = %s AND COALESCE((event_state->>'totalCandies')::bigint, 0) > 0 "
+            "SELECT id, display_name, icon, battlepass_xp, (event_state->>'totalCandies')::numeric AS total FROM users "
+            "WHERE event_state->>'id' = %s AND COALESCE((event_state->>'totalCandies')::numeric, 0) > 0 "
             "ORDER BY total DESC, id ASC LIMIT 20", [EVENT_ID])
-        mine = db_query("SELECT (event_state->>'totalCandies')::bigint AS total FROM users "
+        mine = db_query("SELECT (event_state->>'totalCandies')::numeric AS total FROM users "
                         "WHERE id = %s AND event_state->>'id' = %s", [user_id, EVENT_ID])
         my_total = int((mine[0]['total'] if mine else 0) or 0)
         my_rank = None
         if my_total > 0:
             r = db_query("SELECT COUNT(*) AS n FROM users WHERE event_state->>'id' = %s "
-                         "AND (event_state->>'totalCandies')::bigint > %s", [EVENT_ID, my_total])
+                         "AND (event_state->>'totalCandies')::numeric > %s", [EVENT_ID, my_total])
             my_rank = int(r[0]['n']) + 1
-        return jsonify({'ranking': [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'icon': r.get('icon') or '', 'lv': int(r.get('battlepass_xp') or 0) // BP_XP_PER_LEVEL + 1, 'total': int(r['total'])} for r in rows],
+        return jsonify({'ranking': [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'icon': r.get('icon') or '', 'lv': bp_level_of(r.get('battlepass_xp')), 'total': int(r['total'])} for r in rows],
                         'me': {'id': user_id, 'total': my_total, 'rank': my_rank}})
 
 
@@ -1466,8 +1468,8 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
     def raid_snapshot(force=False):
         if not force and time.time() - raid_cache['t'] < C.RAID_CACHE_SEC:
             return raid_cache
-        rows = db_query("SELECT id, display_name, COALESCE((event_state->'raid'->>'dmg')::bigint, 0) AS d FROM users "
-                        "WHERE event_state->>'id' = %s AND COALESCE((event_state->'raid'->>'dmg')::bigint, 0) > 0 "
+        rows = db_query("SELECT id, display_name, COALESCE((event_state->'raid'->>'dmg')::numeric, 0) AS d FROM users "
+                        "WHERE event_state->>'id' = %s AND COALESCE((event_state->'raid'->>'dmg')::numeric, 0) > 0 "
                         "ORDER BY d DESC", [EVENT_ID])
         raid_cache['total'] = sum(int(r['d']) for r in rows)
         raid_cache['top'] = [{'id': r['id'], 'name': r.get('display_name') or r['id'], 'dmg': int(r['d'])} for r in rows[:10]]
@@ -1554,7 +1556,7 @@ def register(app, db_query, db_transaction, require_auth, ApiError):
     def community_total():
         if time.time() - comm_cache['t'] < C.COMMUNITY_CACHE_SEC:
             return comm_cache['v']
-        rows = db_query("SELECT COALESCE(SUM((event_state->>'totalCandies')::bigint), 0) AS n FROM users "
+        rows = db_query("SELECT COALESCE(SUM((event_state->>'totalCandies')::numeric), 0) AS n FROM users "
                         "WHERE event_state->>'id' = %s", [EVENT_ID])
         comm_cache['v'] = int(rows[0]['n'] or 0) if rows else 0
         comm_cache['t'] = time.time()
