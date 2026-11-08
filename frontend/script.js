@@ -18,7 +18,7 @@
 (function(){
 
 // バックエンドのURLは config.js で設定する(GitHub Pagesでもここを触らずに済む)
-const API_BASE_URL = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://pinkyburst.onrender.com').replace(/\/+$/, '');
+const API_BASE_URL = String((window.NEXUS_CONFIG && window.NEXUS_CONFIG.API_BASE_URL) || 'https://YOUR-SERVER.enzonic.com').replace(/\/+$/, '');
 
 // ★管理者アカウントのID(バックエンドの ADMIN_USER_ID と必ず合わせること)
 const ADMIN_USER_ID = 'vortx';
@@ -27,7 +27,6 @@ const ADMIN_USER_ID = 'vortx';
   // 曲を追加するときは、この配列に1行足すだけ！
   // ファイルは frontend/bgm/ の中に置く
   const MUSIC_LIBRARY = [
-    { title:'Spooky Scary Skeletons', artist:'Andrew Gold', file:'spookyscaryskeletons.mp3', category:'その他', emoji:'💀' },
     { title:'月光 第1楽章', artist:'ベートーヴェン', file:'moonlight.mp3', category:'クラシック', emoji:'🌙' },
     { title:'月が綺麗ねと言われたい！', artist:'柿崎ユウタ', file:'beautifulmoon.mp3', category:'その他', emoji:'🌙' },
     { title:'マーシャル・マキシマイザー', artist:'柊マグネタイト', file:'marshallmaximizer.mp3', category:'その他', emoji:'🎰' },
@@ -40,7 +39,7 @@ const ADMIN_USER_ID = 'vortx';
   const MUSIC_CATEGORIES = ['すべて', 'クラシック', 'ゲーム', '作業用', 'その他'];
 
   // ===================== 永続化ストレージ(localStorageベース) =====================
-  // このアプリはRender上の通常のWebページとして動作するため、
+  // このアプリはSurge上の通常のWebページとして動作するため、
   // (Claudeアーティファクト専用の window.storage ではなく)標準の localStorage を使う。
   // 呼び出し側のコードは変えずに済むよう、同じインターフェースのラッパーを用意する。
   const appStorage = {
@@ -1350,7 +1349,7 @@ const PATTERN_LABELS = {
   const sleepMs = (ms)=> new Promise(res=> setTimeout(res, ms));
 
   // 📤 画像1枚をサーバーへ送る。mode='original'(オリジナルのまま・imgBBへ) / 'compressed'(圧縮版・サーバー保存)
-  //    Renderの無料サーバーは眠っていることがあるので、つながらない・502/503/504 のときは、少し待って最大3回までやり直す。
+  //    サーバーが再起動中・混み合っていることがあるので、つながらない・502/503/504 のときは、少し待って最大3回までやり直す。
   //    失敗したとき、error.fallback が true なら「圧縮版でやり直してよい」という意味
   async function uploadImageBlob(kind, blob, onStatus, mode){
     const url = `${API_BASE_URL}/api/img/upload?kind=${kind}&mode=${mode === 'original' ? 'original' : 'compressed'}`;
@@ -7945,7 +7944,7 @@ function renderOtherGamesModal(){
   };
 
   // ===================== 💤 スリープ対策 =====================
-  // ① サーバー(Render無料枠)が寝ていても、ページを開いた瞬間に起こしておく。開いている間も定期的に叩く。
+  // ① サーバーが再起動直後などで眠たい状態でも、ページを開いた瞬間に起こしておく。開いている間も定期的に叩く。
   function pingServer(){
     fetch(`${API_BASE_URL}/healthz`, { cache:'no-store' }).catch(()=>{});
   }
